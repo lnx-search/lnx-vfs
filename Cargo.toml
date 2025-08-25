@@ -7,12 +7,38 @@ edition = "2024"
 thiserror = "2"
 tracing = "0.1"
 i2o2 = "0.3"
+offset-allocator = "0.2"
+papaya = "0.2"
+lz4_flex = "0.11"
+fastrand = "2.3"
+humansize = "2.1"
+crc32fast = "1.4"
+serde = "1"
+serde_derive = "1"
+serde_json = "1"
+ahash = "0.8"
+cityhasher = "0.1"
+rkyv = "0.8"
+
+# Encryption at rest
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
 
 tokio = { version = "1", features = ["rt", "time", "sync"] }
 
 [dev-dependencies]
+rstest = "0.26"
 tracing-subscriber = "0.3"
 
 fail = { version = "0.5", features = ["failpoints"] }
 i2o2 = { version = "0.3", features = ["fail"] }
 tokio = { version = "1", features = ["full"] }
+
+[features]
+# Enables huge page allocation tests within the cache.
+test-huge-pages = []
+# Enable miri tests (and disables the rest.)
+test-miri = []
+# INTERNAL ONLY: used for enabling benchmarks
+bench-lib-unstable = []

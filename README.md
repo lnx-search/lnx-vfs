@@ -5,8 +5,6 @@ The lnx Virtual File System.
 This system performs smarter caching for read heavy IO workloads, supports encryption at rest
 and makes heavy use of io_uring for more efficient IOPS.
 
-This system is still fairly greenfield, hence why some optimisations for small files are currently missing.
-
 ## Features
 
 - 100% Durable file operations.

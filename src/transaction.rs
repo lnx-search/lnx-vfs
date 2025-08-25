@@ -1,6 +1,6 @@
 use std::ops::Range;
-use crate::core::FileSystemCore;
 
+use crate::core::FileSystemCore;
 
 /// A [FileSystemTransaction] allows you to modify multiple files in the filesystem atomically.
 pub struct FileSystemTransaction {
@@ -49,7 +49,9 @@ impl FileSystemCore for FileSystemTransaction {
 impl Drop for FileSystemTransaction {
     fn drop(&mut self) {
         if !self.complete {
-            tracing::warn!("transaction was aborted without explicitly calling commit or rollback");
+            tracing::warn!(
+                "transaction was aborted without explicitly calling commit or rollback"
+            );
         }
     }
 }

@@ -1,4 +1,5 @@
 mod core;
+mod layout;
 mod transaction;
 
 use std::ops::Range;
@@ -7,9 +8,7 @@ pub use self::core::FileSystemCore;
 pub use self::transaction::FileSystemTransaction;
 
 /// A virtual filesystem abstraction over underlying storage.
-pub struct VirtualFileSystem {
-
-}
+pub struct VirtualFileSystem {}
 
 impl VirtualFileSystem {
     /// Begin a new [FileSystemTransaction] for applying multiple
@@ -44,5 +43,3 @@ impl FileSystemCore for VirtualFileSystem {
         todo!()
     }
 }
-
-
