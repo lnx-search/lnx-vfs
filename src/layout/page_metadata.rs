@@ -18,9 +18,9 @@ pub const PAGE_BLOCK_SIZE: usize = 4096;
 pub struct PageMetadata {
     /// The block this page contains data for.
     pub(crate) group: PageGroupId,
-    /// The [PageFileId] that the next page is located at.
-    pub(crate) next_page_file_id: PageFileId,
-    /// The [PageId] of the next that is part of the group.
+    /// Currently unused.
+    pub(crate) reserved: u32,
+    /// The [PageId] of  next that is part of the group.
     pub(crate) next_page_id: PageId,
     /// The ID of the page.
     pub(crate) id: PageId,
@@ -40,7 +40,7 @@ impl PageMetadata {
         Self {
             id: PageId::TERMINATOR,
             group: PageGroupId(u64::MAX),
-            next_page_file_id: PageFileId(0),
+            reserved: 0,
             next_page_id: PageId::TERMINATOR,
             data_len: 0,
             context: [0; 40],

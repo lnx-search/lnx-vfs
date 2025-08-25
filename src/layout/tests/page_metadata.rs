@@ -8,12 +8,12 @@ use crate::layout::page_metadata::{
     decode_page_metadata_updates,
     encode_page_metadata_updates,
 };
-use crate::layout::{PageFileId, PageGroupId, PageId, encrypt};
+use crate::layout::{PageGroupId, PageId, encrypt};
 
 const SAMPLE_PAGE_METADATA: PageMetadata = PageMetadata {
     id: PageId(1),
     group: PageGroupId(1),
-    next_page_file_id: PageFileId(1),
+    reserved: 0,
     next_page_id: PageId(1),
     data_len: 124124,
     context: [1; 40],
