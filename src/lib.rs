@@ -1,6 +1,9 @@
+mod arena;
+mod buffer;
 mod core;
 mod layout;
 mod transaction;
+mod utils;
 
 use std::ops::Range;
 
