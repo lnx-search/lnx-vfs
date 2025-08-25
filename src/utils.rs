@@ -70,6 +70,17 @@ pub(super) fn create_file(
     Ok(file)
 }
 
+#[cfg(test)]
+pub(crate) fn parse_io_error_return<T>(value: Option<String>) -> Result<T, io::Error> {
+    let Some(value) = value else {
+        return Err(io::Error::other("standard delete_ring_file err"));
+    };
+    let error_code = value
+        .parse::<i32>()
+        .expect("invalid io error code provided");
+    Err(io::Error::from_raw_os_error(-error_code))
+}
+
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests {
     use std::io::ErrorKind;

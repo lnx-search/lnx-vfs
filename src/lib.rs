@@ -1,6 +1,8 @@
 mod arena;
 mod buffer;
 mod core;
+mod directory;
+mod file;
 mod layout;
 mod transaction;
 mod utils;

@@ -20,6 +20,7 @@ ahash = "0.8"
 cityhasher = "0.1"
 rkyv = "0.8"
 parking_lot = "0.12"
+enum-map = "2.7.3"
 
 # Encryption at rest
 chacha20poly1305 = "0.10"
