@@ -19,27 +19,27 @@ impl VirtualFileSystem {
 }
 
 impl FileSystemCore for VirtualFileSystem {
-    async fn create_writer(&self, fp: &str) {
+    async fn create_writer(&self, file_id: u64) {
         todo!()
     }
 
-    async fn create_reader(&self, fp: &str) {
+    async fn create_reader(&self, file_id: u64) {
         todo!()
     }
 
-    async fn read(&self, fp: &str, range: Range<u64>) {
+    async fn read(&self, file_id: u64, range: Range<u64>) {
         todo!()
     }
 
-    async fn write(&self, fp: &str, data: &[u8]) {
+    async fn write(&self, file_id: u64, data: &[u8]) {
         todo!()
     }
 
-    async fn remove(&self, fp: &str) {
+    async fn remove(&self, file_id: u64) {
         todo!()
     }
 
-    async fn rename(&self, old_fp: &str, new_fp: &str) {
+    async fn rename(&self, new_file_id: u64, old_file_id: u64) {
         todo!()
     }
 }
