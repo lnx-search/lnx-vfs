@@ -6,8 +6,6 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use crate::file;
 use crate::file::DynamicGuard;
 
