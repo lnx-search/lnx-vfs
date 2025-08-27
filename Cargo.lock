@@ -278,26 +278,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
-name = "enum-map"
-version = "2.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6866f3bfdf8207509a033af1a75a7b08abda06bbaaeae6669323fd5a097df2e9"
-dependencies = [
- "enum-map-derive",
-]
-
-[[package]]
-name = "enum-map-derive"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f282cfdfe92516eb26c2af8589c274c7c17681f5ecc03c18255fe741c6aa64eb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -455,9 +435,9 @@ dependencies = [
 
 [[package]]
 name = "i2o2"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "105e4734b79adcd53eaf3ce55e35cada4f32c6b8d430eab2ee590fca7e0efc9c"
+checksum = "af8f9c6184655765a117e18e3b85daa349d09af39556dc137a7fd24b2b9cea7e"
 dependencies = [
  "axboe-liburing",
  "crossbeam-queue",
@@ -568,12 +548,12 @@ dependencies = [
  "chacha20poly1305",
  "cityhasher",
  "crc32fast",
- "enum-map",
  "fail",
  "fastrand",
  "hmac",
  "humansize",
  "i2o2",
+ "libc",
  "lz4_flex",
  "memmap2",
  "offset-allocator",

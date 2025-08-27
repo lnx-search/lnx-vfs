@@ -3,6 +3,7 @@ use std::io;
 use std::io::ErrorKind;
 use std::ops::Deref;
 use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -20,7 +21,7 @@ pub struct FileId(u32);
 /// - The i2o2 scheduler
 const DEFAULT_FILE_REF_COUNT: usize = 2;
 
-#[derive(Debug, Copy, Clone, enum_map::Enum)]
+#[derive(Debug, Copy, Clone)]
 /// The [FileGroup] determines where a file is stored
 /// and what validations are applied.
 pub enum FileGroup {
@@ -30,6 +31,24 @@ pub enum FileGroup {
     PageTableCheckpoint,
     /// File contains a WAL of page metadata operations being applied.
     PageOpLog,
+}
+
+impl FileGroup {
+    fn extension(&self) -> &'static str {
+        match self {
+            FileGroup::PageData => "dat.lnx",
+            FileGroup::PageTableCheckpoint => "pts.lnx",
+            FileGroup::PageOpLog => "wal.lnx",
+        }
+    }
+
+    fn idx(&self) -> usize {
+        match self {
+            FileGroup::PageData => 0,
+            FileGroup::PageTableCheckpoint => 1,
+            FileGroup::PageOpLog => 2,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -47,14 +66,39 @@ impl Deref for SystemDirectory {
     }
 }
 
+impl SystemDirectory {
+    /// Open the [SystemDirectory] at a given file path.
+    ///
+    /// If the folder does not exist, it will be created.
+    pub async fn open(base_path: &Path) -> io::Result<Self> {
+        create_base_dir(base_path).await?;
+
+        let groups = [
+            FileGroupDirectory::open(FileGroup::PageData, base_path)
+                .await
+                .map(tokio::sync::RwLock::new)?,
+            FileGroupDirectory::open(FileGroup::PageTableCheckpoint, base_path)
+                .await
+                .map(tokio::sync::RwLock::new)?,
+            FileGroupDirectory::open(FileGroup::PageTableCheckpoint, base_path)
+                .await
+                .map(tokio::sync::RwLock::new)?,
+        ];
+
+        let inner = SystemDirectoryInner { groups };
+
+        Ok(Self(Arc::new(inner)))
+    }
+}
+
 pub struct SystemDirectoryInner {
-    file_groups: enum_map::EnumMap<FileGroup, tokio::sync::RwLock<FileGroupDirectory>>,
+    groups: [tokio::sync::RwLock<FileGroupDirectory>; 3],
 }
 
 impl SystemDirectoryInner {
     /// Create a new file in the target group.
     pub async fn create_new_file(&self, group: FileGroup) -> io::Result<FileId> {
-        let mut directory = self.file_groups[group].write().await;
+        let mut directory = self.groups[group.idx()].write().await;
         let file_id = directory.create_new_file().await?;
         Ok(FileId(file_id))
     }
@@ -68,7 +112,7 @@ impl SystemDirectoryInner {
         group: FileGroup,
         file_id: FileId,
     ) -> io::Result<()> {
-        let mut directory = self.file_groups[group].write().await;
+        let mut directory = self.groups[group.idx()].write().await;
         directory.remove_file(file_id.0).await
     }
 
@@ -78,7 +122,7 @@ impl SystemDirectoryInner {
         group: FileGroup,
         file_id: FileId,
     ) -> io::Result<file::ROFile> {
-        let directory = self.file_groups[group].read().await;
+        let directory = self.groups[group.idx()].read().await;
         directory.get_ro_file(file_id.0)
     }
 
@@ -88,7 +132,7 @@ impl SystemDirectoryInner {
         group: FileGroup,
         file_id: FileId,
     ) -> io::Result<file::RWFile> {
-        let directory = self.file_groups[group].read().await;
+        let directory = self.groups[group.idx()].read().await;
         directory.get_rw_file(file_id.0)
     }
 
@@ -96,13 +140,13 @@ impl SystemDirectoryInner {
     ///
     /// A list of the file IDs in the group is returned which are already open.
     pub async fn list_dir(&self, group: FileGroup) -> Vec<FileId> {
-        let directory = self.file_groups[group].read().await;
+        let directory = self.groups[group.idx()].read().await;
         directory.list_dir().map(FileId).collect()
     }
 
     /// Counts the number of currently open files in the directory.
     pub async fn num_open_files(&self, group: FileGroup) -> usize {
-        let directory = self.file_groups[group].read().await;
+        let directory = self.groups[group.idx()].read().await;
         directory.num_open_files()
     }
 }
@@ -122,6 +166,64 @@ struct FileGroupDirectory {
 }
 
 impl FileGroupDirectory {
+    /// Open a [FileGroupDirectory] targeting a specific file group located within
+    /// the parent base path.
+    async fn open(file_group: FileGroup, parent_path: &Path) -> io::Result<Self> {
+        let base_path = match file_group {
+            FileGroup::PageData => parent_path.join("data"),
+            FileGroup::PageTableCheckpoint => parent_path.join("metadata"),
+            FileGroup::PageOpLog => parent_path.join("wal"),
+        };
+
+        tokio::task::spawn_blocking(move || Self::open_inner(file_group, base_path))
+            .await
+            .expect("spawn worker thread")
+    }
+
+    #[tracing::instrument("open", skip(base_path))]
+    fn open_inner(file_group: FileGroup, base_path: PathBuf) -> io::Result<Self> {
+        match std::fs::create_dir(&base_path) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {},
+            other => other?,
+        }
+
+        let (runtime_handle, handle) = i2o2::builder()
+            .skip_unsupported_features(true)
+            .with_coop_task_run(true)
+            .try_spawn::<DynamicGuard>()?;
+
+        let directory_file = open_ring_directory(&base_path, handle.clone())?;
+
+        let mut this = Self {
+            file_group,
+            handle,
+            runtime_handle,
+            directory_file,
+            base_path,
+            files: BTreeMap::new(),
+        };
+
+        for (id, path) in list_files(file_group, &this.base_path)? {
+            let file = open_file(&path).map(Arc::new)?;
+
+            let fd = file.as_raw_fd();
+            let ring_id = this
+                .handle
+                .register_file(fd, Some(file.clone() as DynamicGuard))
+                .map_err(io::Error::other)?;
+
+            let ring_file = RingFile {
+                id,
+                ring_id,
+                inner: file,
+            };
+
+            this.files.insert(ring_id, ring_file);
+        }
+
+        Ok(this)
+    }
+
     fn list_dir(&self) -> impl Iterator<Item = u32> + '_ {
         self.files.keys().copied()
     }
@@ -133,11 +235,8 @@ impl FileGroupDirectory {
 
     /// Get the file path of a file with a given ID.
     fn file_path(&self, file_id: u32) -> PathBuf {
-        let file_name = match self.file_group {
-            FileGroup::PageData => format!("{file_id:010}-{file_id}.dat.lnx"),
-            FileGroup::PageTableCheckpoint => format!("{file_id:010}-{file_id}.pts.lnx"),
-            FileGroup::PageOpLog => format!("{file_id:010}-{file_id}.wal.lnx"),
-        };
+        let file_name =
+            format!("{file_id:010}-{file_id}.{}", self.file_group.extension());
         self.base_path.join(file_name)
     }
 
@@ -291,13 +390,18 @@ impl RingFile {
     }
 }
 
+const FILE_FLAGS: libc::c_int = libc::O_DIRECT | libc::O_CLOEXEC;
+
 async fn create_file(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .read(true)
+            .custom_flags(FILE_FLAGS)
             .open(&path)
     })
     .await
@@ -308,6 +412,83 @@ async fn remove_file(path: &Path) -> io::Result<()> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || std::fs::remove_file(&path))
         .await
-        .expect("spawn worker thread")?;
-    Ok(())
+        .expect("spawn worker thread")
+}
+
+async fn create_base_dir(path: &Path) -> io::Result<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || std::fs::create_dir_all(&path))
+        .await
+        .expect("spawn worker thread")
+}
+
+fn open_file(path: &Path) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .read(true)
+        .custom_flags(FILE_FLAGS)
+        .open(&path)
+}
+
+fn open_ring_directory(
+    path: &Path,
+    handle: i2o2::I2o2Handle<DynamicGuard>,
+) -> io::Result<file::DirFile> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .open(&path)
+        .map(Arc::new)?;
+
+    let fd = file.as_raw_fd();
+    let ring_id = handle
+        .register_file(fd, Some(file.clone() as DynamicGuard))
+        .map_err(io::Error::other)?;
+
+    let ring_file = RingFile {
+        id: 0,
+        ring_id,
+        inner: file,
+    };
+
+    Ok(file::DirFile::new(ring_file, handle))
+}
+
+#[tracing::instrument(skip(path))]
+fn list_files(file_group: FileGroup, path: &Path) -> io::Result<Vec<(u32, PathBuf)>> {
+    let mut file_ids = Vec::new();
+
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        let path = entry.path();
+
+        if metadata.is_dir() {
+            tracing::warn!(
+                path = %path.display(),
+                "unexpected directory present in system files",
+            );
+            continue;
+        }
+
+        let raw_file_name = entry.file_name();
+        let file_name = raw_file_name.to_string_lossy();
+        if !file_name.ends_with(file_group.extension()) {
+            tracing::warn!(
+                path = %path.display(),
+                "unexpected file present in system files",
+            );
+            continue;
+        }
+
+        let (_sort_id, remaining) = file_name.split_once('-').unwrap();
+        let (file_id, _remaining) = remaining.split_once('.').unwrap();
+
+        let file_id = file_id.parse::<u32>().map_err(|e| {
+            io::Error::new(ErrorKind::Other, format!("invalid file id present: {e}"))
+        })?;
+
+        file_ids.push((file_id, path));
+    }
+
+    Ok(file_ids)
 }
