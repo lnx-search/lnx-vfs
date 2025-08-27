@@ -430,11 +430,17 @@ async fn create_base_dir(path: &Path) -> io::Result<()> {
 }
 
 fn open_file(path: &Path) -> io::Result<std::fs::File> {
-    std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .write(true)
         .read(true)
         .custom_flags(FILE_FLAGS)
-        .open(&path)
+        .open(&path)?;
+
+    // On open, we always issue a full fsync to ensure we don't have random
+    // fragments sitting around from a process crash.
+    file.sync_all()?;
+
+    Ok(file)
 }
 
 fn open_ring_directory(
@@ -493,7 +499,7 @@ fn list_files(file_group: FileGroup, path: &Path) -> io::Result<Vec<(u32, PathBu
         let file_id = file_id.parse::<u32>().map_err(|e| {
             io::Error::new(ErrorKind::Other, format!("invalid file id present: {e}"))
         })?;
-        
+
         // if the file is empty, try remove it
         if metadata.len() == 0 {
             if let Err(err) = std::fs::remove_file(&path) {
