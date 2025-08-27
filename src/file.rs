@@ -257,7 +257,7 @@ impl File<Dir> {
 pub async fn wait_for_reply(reply: i2o2::ReplyReceiver) -> io::Result<usize> {
     let result = reply
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Interrupted, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Interrupted, e))?;
     if result < 0 {
         Err(io::Error::from_raw_os_error(-result))
     } else {

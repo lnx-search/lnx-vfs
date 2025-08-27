@@ -6,6 +6,8 @@ mod file;
 mod layout;
 mod transaction;
 mod utils;
+#[cfg(all(test, not(feature = "test-miri")))]
+mod tests;
 
 use std::ops::Range;
 

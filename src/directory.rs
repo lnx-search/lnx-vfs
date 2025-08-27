@@ -20,6 +20,7 @@ pub struct FileId(u32);
 /// - The directory
 /// - The i2o2 scheduler
 const DEFAULT_FILE_REF_COUNT: usize = 2;
+const MAX_REGISTERED_FILES: u32 = 32_000;
 
 #[derive(Debug, Copy, Clone)]
 /// The [FileGroup] determines where a file is stored
@@ -30,7 +31,7 @@ pub enum FileGroup {
     /// File contains a set of page metadata updates in the form of a checkpoint.
     PageTableCheckpoint,
     /// File contains a WAL of page metadata operations being applied.
-    PageOpLog,
+    Wal,
 }
 
 impl FileGroup {
@@ -38,7 +39,7 @@ impl FileGroup {
         match self {
             FileGroup::PageData => "dat.lnx",
             FileGroup::PageTableCheckpoint => "pts.lnx",
-            FileGroup::PageOpLog => "wal.lnx",
+            FileGroup::Wal => "wal.lnx",
         }
     }
 
@@ -46,7 +47,7 @@ impl FileGroup {
         match self {
             FileGroup::PageData => 0,
             FileGroup::PageTableCheckpoint => 1,
-            FileGroup::PageOpLog => 2,
+            FileGroup::Wal => 2,
         }
     }
 }
@@ -80,7 +81,7 @@ impl SystemDirectory {
             FileGroupDirectory::open(FileGroup::PageTableCheckpoint, base_path)
                 .await
                 .map(tokio::sync::RwLock::new)?,
-            FileGroupDirectory::open(FileGroup::PageTableCheckpoint, base_path)
+            FileGroupDirectory::open(FileGroup::Wal, base_path)
                 .await
                 .map(tokio::sync::RwLock::new)?,
         ];
@@ -172,7 +173,7 @@ impl FileGroupDirectory {
         let base_path = match file_group {
             FileGroup::PageData => parent_path.join("data"),
             FileGroup::PageTableCheckpoint => parent_path.join("metadata"),
-            FileGroup::PageOpLog => parent_path.join("wal"),
+            FileGroup::Wal => parent_path.join("wal"),
         };
 
         tokio::task::spawn_blocking(move || Self::open_inner(file_group, base_path))
@@ -182,16 +183,21 @@ impl FileGroupDirectory {
 
     #[tracing::instrument("open", skip(base_path))]
     fn open_inner(file_group: FileGroup, base_path: PathBuf) -> io::Result<Self> {
+        tracing::info!(path = %base_path.display(), "opening directory");
+
         match std::fs::create_dir(&base_path) {
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {},
             other => other?,
         }
 
+        tracing::info!("creating i2o2 runtime");
         let (runtime_handle, handle) = i2o2::builder()
             .skip_unsupported_features(true)
             .with_coop_task_run(true)
+            .with_num_registered_files(MAX_REGISTERED_FILES)
             .try_spawn::<DynamicGuard>()?;
 
+        tracing::info!("opening ring directory");
         let directory_file = open_ring_directory(&base_path, handle.clone())?;
 
         let mut this = Self {
@@ -203,6 +209,7 @@ impl FileGroupDirectory {
             files: BTreeMap::new(),
         };
 
+        tracing::info!("opening existing files");
         for (id, path) in list_files(file_group, &this.base_path)? {
             let file = open_file(&path).map(Arc::new)?;
 
