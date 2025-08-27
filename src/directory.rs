@@ -14,6 +14,13 @@ use crate::file::DynamicGuard;
 /// A unique identifier for a file.
 pub struct FileId(u32);
 
+impl FileId {
+    /// Returns the ID as a 32-bit integer.
+    pub fn as_u32(&self) -> u32 {
+        self.0
+    }
+}
+
 /// The default expected ref count if there are no other
 /// access to the file other than:
 ///
@@ -22,31 +29,39 @@ pub struct FileId(u32);
 const DEFAULT_FILE_REF_COUNT: usize = 2;
 const MAX_REGISTERED_FILES: u32 = 32_000;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 /// The [FileGroup] determines where a file is stored
 /// and what validations are applied.
 pub enum FileGroup {
     /// File contains page data.
-    PageData,
+    Pages,
     /// File contains a set of page metadata updates in the form of a checkpoint.
-    PageTableCheckpoint,
+    Metadata,
     /// File contains a WAL of page metadata operations being applied.
     Wal,
 }
 
 impl FileGroup {
-    fn extension(&self) -> &'static str {
+    pub(crate) fn extension(&self) -> &'static str {
         match self {
-            FileGroup::PageData => "dat.lnx",
-            FileGroup::PageTableCheckpoint => "pts.lnx",
+            FileGroup::Pages => "dat.lnx",
+            FileGroup::Metadata => "pts.lnx",
             FileGroup::Wal => "wal.lnx",
+        }
+    }
+
+    pub(crate) fn folder_name(&self) -> &'static str {
+        match self {
+            FileGroup::Pages => "pages",
+            FileGroup::Metadata => "metadata",
+            FileGroup::Wal => "wal",
         }
     }
 
     fn idx(&self) -> usize {
         match self {
-            FileGroup::PageData => 0,
-            FileGroup::PageTableCheckpoint => 1,
+            FileGroup::Pages => 0,
+            FileGroup::Metadata => 1,
             FileGroup::Wal => 2,
         }
     }
@@ -75,10 +90,10 @@ impl SystemDirectory {
         create_base_dir(base_path).await?;
 
         let groups = [
-            FileGroupDirectory::open(FileGroup::PageData, base_path)
+            FileGroupDirectory::open(FileGroup::Pages, base_path)
                 .await
                 .map(tokio::sync::RwLock::new)?,
-            FileGroupDirectory::open(FileGroup::PageTableCheckpoint, base_path)
+            FileGroupDirectory::open(FileGroup::Metadata, base_path)
                 .await
                 .map(tokio::sync::RwLock::new)?,
             FileGroupDirectory::open(FileGroup::Wal, base_path)
@@ -170,12 +185,7 @@ impl FileGroupDirectory {
     /// Open a [FileGroupDirectory] targeting a specific file group located within
     /// the parent base path.
     async fn open(file_group: FileGroup, parent_path: &Path) -> io::Result<Self> {
-        let base_path = match file_group {
-            FileGroup::PageData => parent_path.join("data"),
-            FileGroup::PageTableCheckpoint => parent_path.join("metadata"),
-            FileGroup::Wal => parent_path.join("wal"),
-        };
-
+        let base_path = parent_path.join(file_group.folder_name());
         tokio::task::spawn_blocking(move || Self::open_inner(file_group, base_path))
             .await
             .expect("spawn worker thread")
@@ -279,7 +289,7 @@ impl FileGroupDirectory {
 
         let old_value = self.files.insert(assigned_id, ring_file.clone());
         assert!(
-            old_value.is_some(),
+            old_value.is_none(),
             "BUG! Inserted file that already existed"
         );
 
@@ -334,8 +344,12 @@ impl FileGroupDirectory {
 
     /// Get the next sequential ID to assign to a new file.
     fn get_next_file_id(&mut self) -> u32 {
-        let last_file_id = self.files.keys().last().copied().unwrap_or(1000);
-        last_file_id + 1
+        self.files
+            .keys()
+            .last()
+            .copied()
+            .map(|id| id + 1)
+            .unwrap_or(1000)
     }
 
     async fn register_file_with_ring(

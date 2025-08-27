@@ -4,10 +4,10 @@ mod core;
 mod directory;
 mod file;
 mod layout;
-mod transaction;
-mod utils;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
+mod transaction;
+mod utils;
 
 use std::ops::Range;
 
