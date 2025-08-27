@@ -493,6 +493,14 @@ fn list_files(file_group: FileGroup, path: &Path) -> io::Result<Vec<(u32, PathBu
         let file_id = file_id.parse::<u32>().map_err(|e| {
             io::Error::new(ErrorKind::Other, format!("invalid file id present: {e}"))
         })?;
+        
+        // if the file is empty, try remove it
+        if metadata.len() == 0 {
+            if let Err(err) = std::fs::remove_file(&path) {
+                tracing::warn!(error = %err, "cannot remove empty file");
+            }
+            continue;
+        }
 
         file_ids.push((file_id, path));
     }
