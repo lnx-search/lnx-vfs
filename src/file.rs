@@ -1,4 +1,5 @@
-use std::any::Any;
+use std::any::{Any, type_name};
+use std::fmt::Formatter;
 use std::io;
 use std::io::ErrorKind;
 use std::marker::PhantomData;
@@ -53,6 +54,12 @@ impl<M> Clone for File<M> {
             write_lockout: self.write_lockout.clone(),
             _mode: PhantomData,
         }
+    }
+}
+
+impl<M> std::fmt::Debug for File<M> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "File(mode={}, id={})", type_name::<M>(), self.id())
     }
 }
 

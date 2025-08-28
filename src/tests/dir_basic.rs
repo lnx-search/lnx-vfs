@@ -237,3 +237,33 @@ async fn test_list_dir(tempdir: tempfile::TempDir, #[values(0, 1, 13)] num_files
     let files = directory.list_dir(FileGroup::Pages).await;
     assert_eq!(files.len(), num_files as usize);
 }
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_file_not_found(tempdir: tempfile::TempDir) {
+    let directory = SystemDirectory::open(tempdir.path())
+        .await
+        .expect("directory should be created");
+
+    let file_id = directory
+        .create_new_file(FileGroup::Pages)
+        .await
+        .expect("create new file in group");
+    assert_eq!(file_id.as_u32(), 1000);
+    directory
+        .remove_file(FileGroup::Pages, file_id)
+        .await
+        .expect("remove file in group");
+
+    let error = directory
+        .get_ro_file(FileGroup::Pages, file_id)
+        .await
+        .expect_err("file does not exist and should error");
+    assert_eq!(error.kind(), ErrorKind::NotFound);
+
+    let error = directory
+        .get_rw_file(FileGroup::Pages, file_id)
+        .await
+        .expect_err("file does not exist and should error");
+    assert_eq!(error.kind(), ErrorKind::NotFound);
+}
