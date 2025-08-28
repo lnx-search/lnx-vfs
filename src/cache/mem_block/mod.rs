@@ -342,8 +342,8 @@ impl VirtualMemoryBlock {
     /// allocated before the read is safe.
     pub fn prepare_read(&self, range: Range<PageIndex>) -> PreparedRead {
         assert!(
-            range.start.0 < self.state.len()
-                && range.end.0 <= self.state.len()
+            range.start < self.state.len()
+                && range.end <= self.state.len()
                 && range.start <= range.end,
             "invalid page range provided, this is a bug"
         );
@@ -380,7 +380,7 @@ impl VirtualMemoryBlock {
     }
 
     fn state_at(&self, index: PageIndex) -> &PageStateEntry {
-        &self.state[index.0]
+        &self.state[index]
     }
 
     fn get_or_reserve_free_permit(&self, target: PageOrRetry) -> PageFreePermit {

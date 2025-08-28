@@ -66,12 +66,12 @@ fn test_write_page(
         .expect("virtual memory block should be created");
 
     let permit = block
-        .try_prepare_for_write(PageIndex(write_page_at))
+        .try_prepare_for_write(write_page_at)
         .expect("write should be prepared successfully");
     let data = vec![1; data_size];
     block.write_page(permit, &data);
 
-    let state = block.get_page_flags(PageIndex(write_page_at));
+    let state = block.get_page_flags(write_page_at);
     assert!(state.is_allocated());
     assert!(!state.is_marked_for_eviction());
     assert!(!state.is_dirty());
@@ -86,7 +86,7 @@ fn test_write_page_err_already_allocated() {
     let block = create_block_with_1_allocated_page();
 
     let err = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect_err("write should not be permitted because page is already allocated");
     assert_eq!(
         err.to_string(),
@@ -100,18 +100,18 @@ fn test_write_page_err_locked() {
         .expect("virtual memory block should be created");
 
     let permit = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect("write should be prepared successfully");
 
     let err = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect_err("write should not be permitted because page is locked");
     assert_eq!(err.to_string(), PrepareWriteError::Locked.to_string());
 
     drop(permit);
 
     let _permit = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect("write should be prepared successfully");
 }
 
@@ -124,7 +124,7 @@ fn test_write_page_panic_check_uid() {
         .expect("virtual memory block should be created");
 
     let permit = block1
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect("write should be prepared successfully");
 
     // Panic here! The UIDs should not match.
@@ -137,10 +137,10 @@ fn test_write_page_revert_eviction_marker() {
     let block = create_block_with_1_allocated_page();
 
     let _permit = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .expect("mark page for eviction");
 
-    let state = block.get_page_flags(PageIndex(0));
+    let state = block.get_page_flags(0);
     assert!(state.is_allocated());
     assert!(state.is_marked_for_eviction());
     assert!(!state.is_dirty());
@@ -148,14 +148,14 @@ fn test_write_page_revert_eviction_marker() {
     assert_eq!(state.extract_ticket_id(), Some(2));
 
     let err = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect_err("write should revert eviction marker");
     assert_eq!(
         err.to_string(),
         PrepareWriteError::AlreadyAllocated.to_string()
     );
 
-    let state = block.get_page_flags(PageIndex(0));
+    let state = block.get_page_flags(0);
     assert!(state.is_allocated());
     assert!(!state.is_marked_for_eviction());
     assert!(!state.is_dirty());
@@ -168,10 +168,10 @@ fn test_write_page_cannot_revert_dirty_marker() {
     let block = create_block_with_1_allocated_page();
 
     let _permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .expect("mark page for eviction");
 
-    let state = block.get_page_flags(PageIndex(0));
+    let state = block.get_page_flags(0);
     assert!(!state.is_allocated());
     assert!(state.is_marked_for_eviction());
     assert!(state.is_dirty());
@@ -179,10 +179,10 @@ fn test_write_page_cannot_revert_dirty_marker() {
     assert_eq!(state.extract_ticket_id(), Some(2));
 
     let _permit = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect("write should be prepared successfully");
 
-    let state = block.get_page_flags(PageIndex(0));
+    let state = block.get_page_flags(0);
     assert!(!state.is_allocated());
     assert!(state.is_marked_for_eviction());
     assert!(state.is_dirty());
@@ -195,7 +195,7 @@ fn test_mark_dirty_page_ok() {
     let block = create_block_with_1_allocated_page();
 
     let permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .expect("mark page for eviction");
 
     block.for_test_advance_ticket_counter(256);
@@ -210,7 +210,7 @@ fn test_mark_dirty_err_in_use() {
     let block = create_block_with_1_allocated_page();
 
     let permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .expect("mark page for eviction");
 
     let err = block
@@ -225,7 +225,7 @@ fn test_mark_dirty_err_already_free() {
         .expect("virtual memory block should be created");
 
     let err = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .expect_err("mark call should error");
     assert_eq!(
         err.to_string(),
@@ -238,11 +238,11 @@ fn test_mark_dirty_err_stale() {
     let block = create_block_with_1_allocated_page();
 
     let permit1 = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .unwrap();
 
     let permit2 = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect("write should be prepared successfully");
     let data = vec![1; 8 << 10];
     block.write_page(permit2, &data);
@@ -260,10 +260,10 @@ fn test_mark_dirty_err_locked() {
     let block = VirtualMemoryBlock::allocate(1, PageSize::Std8KB)
         .expect("virtual memory block should be created");
 
-    let write_permit = block.try_prepare_for_write(PageIndex(0)).unwrap();
+    let write_permit = block.try_prepare_for_write(0).unwrap();
 
     let err = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .expect_err("call should error because lock is held");
     drop(write_permit);
     assert_eq!(err.to_string(), "page locked");
@@ -274,10 +274,10 @@ fn test_mark_dirty_retry() {
     let block = VirtualMemoryBlock::allocate(1, PageSize::Std8KB)
         .expect("virtual memory block should be created");
 
-    let write_permit = block.try_prepare_for_write(PageIndex(0)).unwrap();
+    let write_permit = block.try_prepare_for_write(0).unwrap();
 
     let err = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .expect_err("call should error because lock is held");
     drop(write_permit);
     let PrepareDirtyEvictionError::PageLocked(retry) = err else {
@@ -295,11 +295,11 @@ fn test_mark_dirty_err_on_already_dirty_page() {
     let block = create_block_with_1_allocated_page();
 
     let _permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .unwrap();
 
     let err = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .unwrap_err();
     assert_eq!(err.to_string(), "page already dirty");
 }
@@ -309,7 +309,7 @@ fn test_mark_for_revertible_eviction_ok() {
     let block = create_block_with_1_allocated_page();
 
     let permit = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .expect("mark page for eviction");
 
     block.for_test_advance_ticket_counter(256);
@@ -325,7 +325,7 @@ fn test_mark_for_revertible_eviction_err_already_free() {
         .expect("virtual memory block should be created");
 
     let err = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .expect_err("mark call should error");
     assert_eq!(
         err.to_string(),
@@ -338,11 +338,11 @@ fn test_mark_for_revertible_eviction_err_stale() {
     let block = create_block_with_1_allocated_page();
 
     let permit1 = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .unwrap();
 
     let _permit2 = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .unwrap();
 
     block.for_test_advance_ticket_counter(256);
@@ -358,11 +358,11 @@ fn test_mark_for_revertible_eviction_err_on_dirty_page() {
     let block = create_block_with_1_allocated_page();
 
     let _permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .unwrap();
 
     let err = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .unwrap_err();
     assert_eq!(err.to_string(), "page dirty");
 }
@@ -372,10 +372,10 @@ fn test_mark_for_revertible_eviction_err_locked() {
     let block = VirtualMemoryBlock::allocate(1, PageSize::Std8KB)
         .expect("virtual memory block should be created");
 
-    let write_permit = block.try_prepare_for_write(PageIndex(0)).unwrap();
+    let write_permit = block.try_prepare_for_write(0).unwrap();
 
     let err = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .expect_err("call should error because lock is held");
     drop(write_permit);
     assert_eq!(err.to_string(), "page locked");
@@ -386,10 +386,10 @@ fn test_mark_for_revertible_eviction_retry() {
     let block = VirtualMemoryBlock::allocate(1, PageSize::Std8KB)
         .expect("virtual memory block should be created");
 
-    let write_permit = block.try_prepare_for_write(PageIndex(0)).unwrap();
+    let write_permit = block.try_prepare_for_write(0).unwrap();
 
     let err = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .expect_err("call should error because lock is held");
     drop(write_permit);
     let PrepareRevertibleEvictionError::PageLocked(retry) = err else {
@@ -411,14 +411,14 @@ fn test_try_free_panic_uid() {
         .expect("virtual memory block should be created");
 
     let permit = block1
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect("write should be prepared successfully");
 
     let data = vec![1; 8 << 10];
     block1.write_page(permit, &data);
 
     let permit = block2
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .expect("mark page for eviction");
 
     // Panic! UIDs should not match
@@ -426,7 +426,7 @@ fn test_try_free_panic_uid() {
 }
 
 fn check_page_bytes(block: &VirtualMemoryBlock, page_at: usize, page_size: PageSize) {
-    let mut ptr = block.for_test_get_raw_page_ptr(PageIndex(page_at));
+    let mut ptr = block.for_test_get_raw_page_ptr(page_at);
     unsafe {
         let buf = ptr.access_uninit();
         let page = std::slice::from_raw_parts(buf.as_ptr() as *const u8, ptr.len());
@@ -441,7 +441,7 @@ fn create_block_with_1_allocated_page() -> VirtualMemoryBlock {
         .expect("virtual memory block should be created");
 
     let permit = block
-        .try_prepare_for_write(PageIndex(0))
+        .try_prepare_for_write(0)
         .expect("write should be prepared successfully");
 
     let data = vec![1; 8 << 10];

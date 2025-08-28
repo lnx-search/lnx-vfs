@@ -22,7 +22,7 @@ impl Debug for PreparedRead<'_> {
         write!(
             f,
             "PreparedRead(page_range={:?})",
-            self.page_range.start.0..self.page_range.end.0
+            self.page_range.start..self.page_range.end
         )
     }
 }
@@ -41,7 +41,7 @@ impl<'block> PreparedRead<'block> {
             outstanding_write_pages: PageSet::new(),
         };
 
-        for page in iter_pages(page_range) {
+        for page in page_range {
             let flags = slf.parent.get_page_flags(page);
             if !flags.is_readable() {
                 slf.outstanding_write_pages.push(page);
@@ -136,9 +136,4 @@ impl AsRef<[u8]> for ReadResult<'_> {
     fn as_ref(&self) -> &[u8] {
         unsafe { self.ptr.access() }
     }
-}
-
-// Eventually we can implement the `Step` trait when it is stable.
-fn iter_pages(range: Range<PageIndex>) -> impl Iterator<Item = PageIndex> {
-    (range.start.0..range.end.0).map(PageIndex)
 }

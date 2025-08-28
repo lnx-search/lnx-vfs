@@ -27,7 +27,7 @@ use crate::cache::mem_block::{PageIndex, PageOrRetry, PageSize, VirtualMemoryBlo
 fn test_memory_read_empty_block(#[case] num_pages: usize, #[case] page_size: PageSize) {
     let block = VirtualMemoryBlock::allocate(num_pages, page_size)
         .expect("virtual memory block should be created");
-    let mut prepared_read = block.prepare_read(PageIndex(0)..PageIndex(num_pages));
+    let mut prepared_read = block.prepare_read(0..num_pages);
     prepared_read = prepared_read
         .try_finish()
         .expect_err("read should not be completed as no pages are allocated");
@@ -59,7 +59,7 @@ fn test_memory_read_sub_span_empty_block(
     let block = VirtualMemoryBlock::allocate(num_pages, page_size)
         .expect("virtual memory block should be created");
     let mut prepared_read =
-        block.prepare_read(PageIndex(span.start)..PageIndex(span.end));
+        block.prepare_read(span.start..span.end);
     prepared_read = prepared_read
         .try_finish()
         .expect_err("read should not be completed as no pages are allocated");
@@ -118,7 +118,7 @@ fn test_memory_read_single_range_allocated(
     let block = create_block_with_allocation(allocate_pages, num_pages, page_size);
 
     let prepared_read =
-        block.prepare_read(PageIndex(read_pages.start)..PageIndex(read_pages.end));
+        block.prepare_read(read_pages.start..read_pages.end);
     let block = prepared_read
         .try_finish()
         .expect("prepared read should be completed as all pages are allocated");
@@ -157,7 +157,7 @@ fn test_memory_read_partially_allocated_err_outstanding_writes(
         create_block_with_allocation(allocate_pages.clone(), num_pages, page_size);
 
     let prepared_read =
-        block.prepare_read(PageIndex(read_pages.start)..PageIndex(read_pages.end));
+        block.prepare_read(read_pages.start..read_pages.end);
     let prepared_read = prepared_read
         .try_finish()
         .expect_err("not all writes are allocated, finish should error");
@@ -170,7 +170,6 @@ fn test_memory_read_partially_allocated_err_outstanding_writes(
 
     let pages_unallocated = pages_unallocated
         .into_iter()
-        .map(PageIndex)
         .collect::<Vec<_>>();
     assert_eq!(prepared_read.outstanding_writes(), &pages_unallocated);
 }
@@ -179,27 +178,27 @@ fn test_memory_read_partially_allocated_err_outstanding_writes(
 fn test_reads_respect_dirty_marker() {
     let block = create_block_with_allocation(0..8, 8, PageSize::Std8KB);
 
-    let prepared_read = block.prepare_read(PageIndex(0)..PageIndex(8));
+    let prepared_read = block.prepare_read(0..8);
     let read = prepared_read.try_finish().unwrap();
     println!("read: {:?}", read);
 
     let _permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+        .try_dirty_page(PageOrRetry::Page(0))
         .unwrap();
 
-    let prepared_read = block.prepare_read(PageIndex(0)..PageIndex(8));
+    let prepared_read = block.prepare_read(0..8);
     prepared_read.try_finish().expect_err(
         "reads after the permit should not be able to complete without writes",
     );
 
     let _permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(4)))
+        .try_dirty_page(PageOrRetry::Page(4))
         .unwrap();
     let _permit = block
-        .try_dirty_page(PageOrRetry::Page(PageIndex(5)))
+        .try_dirty_page(PageOrRetry::Page(5))
         .unwrap();
 
-    let prepared_read = block.prepare_read(PageIndex(0)..PageIndex(8));
+    let prepared_read = block.prepare_read(0..8);
     println!("read: {:?}", prepared_read);
 
     prepared_read.try_finish().expect_err(
@@ -211,27 +210,27 @@ fn test_reads_respect_dirty_marker() {
 fn test_reads_respect_marked_for_eviction_marker() {
     let block = create_block_with_allocation(0..8, 8, PageSize::Std8KB);
 
-    let prepared_read = block.prepare_read(PageIndex(0)..PageIndex(8));
+    let prepared_read = block.prepare_read(0..8);
     let read = prepared_read.try_finish().unwrap();
     println!("read: {:?}", read);
 
     let _permit = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(0)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(0))
         .unwrap();
 
-    let prepared_read = block.prepare_read(PageIndex(0)..PageIndex(8));
+    let prepared_read = block.prepare_read(0..8);
     prepared_read.try_finish().expect_err(
         "reads after the permit should not be able to complete without writes",
     );
 
     let _permit = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(4)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(4))
         .unwrap();
     let _permit = block
-        .try_mark_for_revertible_eviction(PageOrRetry::Page(PageIndex(5)))
+        .try_mark_for_revertible_eviction(PageOrRetry::Page(5))
         .unwrap();
 
-    let prepared_read = block.prepare_read(PageIndex(0)..PageIndex(8));
+    let prepared_read = block.prepare_read(0..8);
     println!("read: {:?}", prepared_read);
 
     prepared_read.try_finish().expect_err(
@@ -251,7 +250,7 @@ fn create_block_with_allocation(
 
     for page in pages {
         let permit = block
-            .try_prepare_for_write(PageIndex(page))
+            .try_prepare_for_write(page)
             .expect("get page write permit");
         block.write_page(permit, &data);
     }
