@@ -516,7 +516,8 @@ pub struct PageWritePermit<'guard> {
 }
 
 impl PageWritePermit<'_> {
-    pub(super) fn page(&self) -> PageIndex {
+    /// The index of the page this permit is for.
+    pub fn page(&self) -> PageIndex {
         self.page
     }
 }

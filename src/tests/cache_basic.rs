@@ -41,7 +41,8 @@ fn test_cache_create(
 #[case::partial1(0..2)]
 #[case::partial2(1..7)]
 #[case::partial3(3..5)]
-fn test_cache_layer_prepare_read(#[case] page_range: Range<PageIndex>) {
+fn test_cache_layer_prepare_read_range_handling(#[case] page_range: Range<PageIndex>) {
+    let page_size = page_range.len();
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer1 = cache
@@ -50,8 +51,25 @@ fn test_cache_layer_prepare_read(#[case] page_range: Range<PageIndex>) {
 
     let read = layer1.prepare_read(page_range.clone());
 
-    let permits = read.get_outstanding_write_permits().collect::<Vec<_>>();
-    assert_eq!(permits.len(), page_range.len());
+    let permits = read
+        .get_outstanding_write_permits()
+        .map(|permit| permit.page())
+        .collect::<Vec<_>>();
+    assert_eq!(permits.len(), page_size);
+    assert_eq!(permits, page_range.collect::<Vec<_>>());
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in read.get_outstanding_write_permits() {
+        read.write_page(permit, &buffer_data);
+    }
+
+    let read_view = match read.try_finish() {
+        Ok(read_view) => read_view,
+        Err(_) => panic!("read should be successful after writes have occurred"),
+    };
+
+    let expected_buffer = vec![4; page_size * (8 << 10)];
+    assert_eq!(read_view.as_ref(), &expected_buffer);
 }
 
 #[rstest::rstest]
