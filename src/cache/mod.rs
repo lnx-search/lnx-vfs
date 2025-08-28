@@ -6,10 +6,10 @@ use moka::notification::RemovalCause;
 use moka::policy::EvictionPolicy;
 use parking_lot::Mutex;
 
-use crate::layout::PageFileId;
 use crate::cache::evictions::PendingEvictions;
 use crate::cache::mem_block::{PageIndex, PageSize, VirtualMemoryBlock};
 use crate::cache::page_file::PageFileCacheLayer;
+use crate::layout::PageFileId;
 
 mod evictions;
 mod mem_block;

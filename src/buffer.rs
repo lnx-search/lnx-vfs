@@ -114,7 +114,6 @@ enum Alloc {
 
 pub(crate) struct SysBuffer {
     pub(self) data: ptr::NonNull<u8>,
-    pub(self) size: usize,
     pub(self) guard: SingleOrShared<SysBufferDropGuard>,
 }
 
@@ -128,7 +127,6 @@ impl SysBuffer {
         let data = ptr::NonNull::new(data).expect("failed to allocate buffer");
         Self {
             data,
-            size: layout.size(),
             guard: SingleOrShared::Single(SysBufferDropGuard { data, layout }),
         }
     }

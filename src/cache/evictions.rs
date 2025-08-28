@@ -1,5 +1,5 @@
+use std::cmp;
 use std::collections::VecDeque;
-use std::{cmp, io};
 
 use crossbeam_channel::{self, Receiver, Sender};
 use parking_lot::Mutex;

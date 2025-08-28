@@ -16,8 +16,8 @@ use super::mem_block::{
     TryFreeError,
     VirtualMemoryBlock,
 };
-use crate::layout::PageFileId;
 use crate::cache::evictions::PendingEvictions;
+use crate::layout::PageFileId;
 
 /// The global waker that notifies pending readers when a page has been written.
 ///

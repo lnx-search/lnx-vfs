@@ -5,7 +5,7 @@ use rkyv::rancor;
 use rkyv::ser::writer::IoWriter;
 use rkyv::util::AlignedVec;
 
-use crate::layout::{PageFileId, PageGroupId, PageId, encrypt};
+use crate::layout::{PageGroupId, PageId, encrypt};
 
 const ENTRIES_PER_BLOCK: usize = 63;
 const EXPECTED_BUFFER_SIZE: usize = 4 << 10;

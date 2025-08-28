@@ -3,12 +3,10 @@ use std::fmt::Formatter;
 use std::io;
 use std::io::ErrorKind;
 use std::ops::Deref;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use i2o2::RegisterError;
 
 use crate::file;
 use crate::file::DynamicGuard;
@@ -188,7 +186,7 @@ impl SystemDirectoryInner {
 struct FileGroupDirectory {
     file_group: FileGroup,
     handle: i2o2::I2o2Handle<DynamicGuard>,
-    runtime_handle: std::thread::JoinHandle<io::Result<()>>,
+    _runtime_handle: std::thread::JoinHandle<io::Result<()>>,
     directory_file: file::DirFile,
     base_path: PathBuf,
     files: BTreeMap<u32, RingFile>,
@@ -228,7 +226,7 @@ impl FileGroupDirectory {
         let mut this = Self {
             file_group,
             handle,
-            runtime_handle,
+            _runtime_handle: runtime_handle,
             directory_file,
             base_path,
             files: BTreeMap::new(),

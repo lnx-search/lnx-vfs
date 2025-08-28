@@ -6,8 +6,6 @@ use std::ops::Range;
 
 use memmap2::Advice;
 
-use crate::layout::PageId;
-
 #[repr(usize)]
 #[derive(Default, Copy, Clone, Eq, PartialEq)]
 /// The size of memory pages in use.
@@ -54,18 +52,6 @@ impl Debug for PageSize {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 /// The unique ID of a page within the memory block.
 pub struct PageIndex(pub(crate) usize);
-
-impl From<PageId> for PageIndex {
-    fn from(value: PageId) -> Self {
-        Self(value.0 as usize)
-    }
-}
-
-impl Into<PageId> for PageIndex {
-    fn into(self) -> PageId {
-        PageId(self.0 as u32)
-    }
-}
 
 /// A raw block of virtual memory split into pages.
 ///

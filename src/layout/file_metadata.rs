@@ -65,9 +65,6 @@ pub enum DecodeError {
     #[error("buffer missing context bytes")]
     /// The buffer is missing required context bytes.
     MissingContextBytes,
-    #[error("buffer missing length indicator")]
-    /// The buffer is missing the length of the metadata.
-    MissingMetadataLen,
     #[error("decrypt metadata fail")]
     /// The buffer was unable to be decrypted.
     DecryptionFailed,
