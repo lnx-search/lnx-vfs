@@ -60,6 +60,12 @@ impl VirtualMemoryBlock {
         self.state.len()
     }
 
+    #[inline]
+    /// Returns size of the memory pages of the block.
+    pub fn page_size(&self) -> PageSize {
+        self.inner.page_size()
+    }
+
     /// Attempt to collapse the memory pages into transparent huge pages.
     pub fn try_collapse(&self) -> io::Result<()> {
         self.inner.try_collapse()

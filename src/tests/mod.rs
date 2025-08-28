@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-mod cache_basic;
+mod cache_layer;
 mod dir_basic;
 mod dir_fault_injection;
 

@@ -141,6 +141,12 @@ impl PageFileCache {
         self.live_pages.weighted_size()
     }
 
+    #[inline]
+    /// Returns the page size used by the cache.
+    pub fn page_size(&self) -> PageSize {
+        self.page_size
+    }
+
     fn register_file_layer_with_listener(
         &self,
         file_id: PageFileId,

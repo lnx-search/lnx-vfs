@@ -9,7 +9,8 @@ use crate::layout::PageFileId;
 #[case::page_32kb(PageSize::Std32KB)]
 #[case::page_64kb(PageSize::Std64KB)]
 #[case::page_128kb(PageSize::Std128KB)]
-#[cfg_attr(feature = "test-huge-pages", case::page_2mb(PageSize::Huge2MB))]
+#[cfg_attr(not(feature = "test-huge-pages"), ignore)]
+#[case::page_2mb(PageSize::Huge2MB)]
 fn test_cache_create(
     #[values(23623578623, 987052376923, 12908673556789)] rng_seed: u64,
     #[values(0, 1, 16 << 10, 256 << 20, 1 << 30)] capacity: u64,
@@ -71,6 +72,9 @@ fn test_cache_layer_prepare_read_range_handling(#[case] page_range: Range<PageIn
     let expected_buffer = vec![4; page_size * (8 << 10)];
     assert_eq!(read_view.as_ref(), &expected_buffer);
 }
+
+#[rstest::rstest]
+fn test_cache_layer_partial_write() {}
 
 #[rstest::rstest]
 #[trace]

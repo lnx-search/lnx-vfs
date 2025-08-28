@@ -81,6 +81,19 @@ fn test_write_page(
     check_page_bytes(&block, write_page_at, page_size);
 }
 
+#[rstest::rstest]
+#[case::page_size_8kb(PageSize::Std8KB)]
+#[case::page_size_32kb(PageSize::Std32KB)]
+#[case::page_size_64kb(PageSize::Std64KB)]
+#[case::page_size_128kb(PageSize::Std128KB)]
+#[cfg_attr(not(feature = "test-huge-pages"), ignore)]
+#[case::page_size_2mb(PageSize::Huge2MB)]
+fn test_memory_block_page_size_attr(#[case] page_size: PageSize) {
+    let block = VirtualMemoryBlock::allocate(1, page_size)
+        .expect("virtual memory block should be created");
+    assert_eq!(block.page_size(), page_size);
+}
+
 #[test]
 fn test_write_page_err_already_allocated() {
     let block = create_block_with_1_allocated_page();

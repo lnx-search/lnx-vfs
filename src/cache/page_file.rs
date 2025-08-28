@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use tokio::sync::Notify;
 
-use super::LivePagesLfu;
 use super::mem_block::{
     PageFreePermit,
     PageIndex,
@@ -16,6 +15,7 @@ use super::mem_block::{
     TryFreeError,
     VirtualMemoryBlock,
 };
+use super::{LivePagesLfu, PageSize};
 use crate::cache::evictions::PendingEvictions;
 use crate::layout::PageFileId;
 
@@ -109,6 +109,12 @@ impl PageFileCacheLayer {
     /// for locks to become available to ensure the backlog is processed.
     pub fn run_cleanup(&self) {
         self.pending_evictions.cleanup(&self.memory);
+    }
+
+    #[inline]
+    /// Returns the page size used by the cache.
+    pub fn page_size(&self) -> PageSize {
+        self.memory.page_size()
     }
 
     fn free_or_add_to_backlog(&self, permit: PageFreePermit) {
