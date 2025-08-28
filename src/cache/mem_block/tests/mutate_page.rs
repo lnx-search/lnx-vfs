@@ -237,9 +237,7 @@ fn test_mark_dirty_err_already_free() {
 fn test_mark_dirty_err_stale() {
     let block = create_block_with_1_allocated_page();
 
-    let permit1 = block
-        .try_dirty_page(PageOrRetry::Page(0))
-        .unwrap();
+    let permit1 = block.try_dirty_page(PageOrRetry::Page(0)).unwrap();
 
     let permit2 = block
         .try_prepare_for_write(0)
@@ -294,13 +292,9 @@ fn test_mark_dirty_retry() {
 fn test_mark_dirty_err_on_already_dirty_page() {
     let block = create_block_with_1_allocated_page();
 
-    let _permit = block
-        .try_dirty_page(PageOrRetry::Page(0))
-        .unwrap();
+    let _permit = block.try_dirty_page(PageOrRetry::Page(0)).unwrap();
 
-    let err = block
-        .try_dirty_page(PageOrRetry::Page(0))
-        .unwrap_err();
+    let err = block.try_dirty_page(PageOrRetry::Page(0)).unwrap_err();
     assert_eq!(err.to_string(), "page already dirty");
 }
 
@@ -357,9 +351,7 @@ fn test_mark_for_revertible_eviction_err_stale() {
 fn test_mark_for_revertible_eviction_err_on_dirty_page() {
     let block = create_block_with_1_allocated_page();
 
-    let _permit = block
-        .try_dirty_page(PageOrRetry::Page(0))
-        .unwrap();
+    let _permit = block.try_dirty_page(PageOrRetry::Page(0)).unwrap();
 
     let err = block
         .try_mark_for_revertible_eviction(PageOrRetry::Page(0))

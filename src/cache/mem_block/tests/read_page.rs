@@ -58,8 +58,7 @@ fn test_memory_read_sub_span_empty_block(
 ) {
     let block = VirtualMemoryBlock::allocate(num_pages, page_size)
         .expect("virtual memory block should be created");
-    let mut prepared_read =
-        block.prepare_read(span.start..span.end);
+    let mut prepared_read = block.prepare_read(span.start..span.end);
     prepared_read = prepared_read
         .try_finish()
         .expect_err("read should not be completed as no pages are allocated");
@@ -117,8 +116,7 @@ fn test_memory_read_single_range_allocated(
 ) {
     let block = create_block_with_allocation(allocate_pages, num_pages, page_size);
 
-    let prepared_read =
-        block.prepare_read(read_pages.start..read_pages.end);
+    let prepared_read = block.prepare_read(read_pages.start..read_pages.end);
     let block = prepared_read
         .try_finish()
         .expect("prepared read should be completed as all pages are allocated");
@@ -156,8 +154,7 @@ fn test_memory_read_partially_allocated_err_outstanding_writes(
     let block =
         create_block_with_allocation(allocate_pages.clone(), num_pages, page_size);
 
-    let prepared_read =
-        block.prepare_read(read_pages.start..read_pages.end);
+    let prepared_read = block.prepare_read(read_pages.start..read_pages.end);
     let prepared_read = prepared_read
         .try_finish()
         .expect_err("not all writes are allocated, finish should error");
@@ -168,9 +165,7 @@ fn test_memory_read_partially_allocated_err_outstanding_writes(
         pages_unallocated.remove(&page);
     }
 
-    let pages_unallocated = pages_unallocated
-        .into_iter()
-        .collect::<Vec<_>>();
+    let pages_unallocated = pages_unallocated.into_iter().collect::<Vec<_>>();
     assert_eq!(prepared_read.outstanding_writes(), &pages_unallocated);
 }
 
@@ -182,21 +177,15 @@ fn test_reads_respect_dirty_marker() {
     let read = prepared_read.try_finish().unwrap();
     println!("read: {:?}", read);
 
-    let _permit = block
-        .try_dirty_page(PageOrRetry::Page(0))
-        .unwrap();
+    let _permit = block.try_dirty_page(PageOrRetry::Page(0)).unwrap();
 
     let prepared_read = block.prepare_read(0..8);
     prepared_read.try_finish().expect_err(
         "reads after the permit should not be able to complete without writes",
     );
 
-    let _permit = block
-        .try_dirty_page(PageOrRetry::Page(4))
-        .unwrap();
-    let _permit = block
-        .try_dirty_page(PageOrRetry::Page(5))
-        .unwrap();
+    let _permit = block.try_dirty_page(PageOrRetry::Page(4)).unwrap();
+    let _permit = block.try_dirty_page(PageOrRetry::Page(5)).unwrap();
 
     let prepared_read = block.prepare_read(0..8);
     println!("read: {:?}", prepared_read);

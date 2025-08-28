@@ -12,10 +12,9 @@ use parking_lot::Mutex;
 
 use self::evictions::PendingEvictions;
 use self::mem_block::VirtualMemoryBlock;
-use crate::layout::PageFileId;
-pub use self::page_file::PageFileCacheLayer;
 pub use self::mem_block::{PageIndex, PageSize};
-
+pub use self::page_file::PageFileCacheLayer;
+use crate::layout::PageFileId;
 
 type LivePagesLfu = moka::sync::Cache<(PageFileId, PageIndex), (), ahash::RandomState>;
 type LayerEvictionSenders =
@@ -117,7 +116,7 @@ impl PageFileCache {
 
         Ok(Arc::new(layer))
     }
-    
+
     #[inline]
     /// Returns the number of pages of capacity in the cache.
     pub fn page_capacity(&self) -> u64 {
@@ -135,7 +134,7 @@ impl PageFileCache {
     pub fn pages_used(&self) -> u64 {
         self.live_pages.entry_count()
     }
-    
+
     #[inline]
     /// Returns the approximate amount of memory used by the cache.
     pub fn memory_used(&self) -> u64 {

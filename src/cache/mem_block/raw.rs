@@ -416,8 +416,7 @@ mod tests {
     ) {
         let pages = RawVirtualMemoryPages::allocate(num_pages, PageSize::Std8KB)
             .expect("virtual memory pages should be created");
-        let ptr =
-            pages.read_pages(target_page_index..target_page_index + 1);
+        let ptr = pages.read_pages(target_page_index..target_page_index + 1);
         assert_eq!(ptr.pages_spanned(), 1);
 
         unsafe {

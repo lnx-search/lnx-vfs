@@ -1,9 +1,9 @@
 use std::io;
 use std::path::Path;
 
+mod cache_basic;
 mod dir_basic;
 mod dir_fault_injection;
-mod cache_basic;
 
 /// A utility for getting the files in a directory and string paths.
 fn list_files(base_path: &Path) -> io::Result<Vec<String>> {

@@ -46,10 +46,6 @@ impl PageFileCacheLayer {
     ///
     /// Once all pages are confirmed to be allocated the read can be completed.
     pub fn prepare_read(self: &Arc<Self>, page_range: Range<PageIndex>) -> PreparedRead {
-        assert!(page_range.start <= page_range.end, "page range start must be before the end");
-        assert!(page_range.start < self.memory.num_pages(), "page range start is beyond page boundaries");
-        assert!(page_range.end <= self.memory.num_pages(), "page range end is beyond page boundaries");
-
         // Register the access within the cache's policy.
         for page in page_range.clone() {
             self.live_pages.get(&(self.file_id, page));

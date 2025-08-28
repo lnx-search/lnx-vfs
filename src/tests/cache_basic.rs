@@ -1,4 +1,5 @@
 use std::ops::Range;
+
 use crate::cache::{PageFileCache, PageIndex, PageSize};
 use crate::layout::PageFileId;
 
@@ -33,13 +34,13 @@ fn test_cache_create(
 
 #[rstest::rstest]
 #[trace]
-#[case::empty1(PageIndex(0)..PageIndex(0))]
-#[case::empty2(PageIndex(5)..PageIndex(5))]
-#[case::empty3(PageIndex(9)..PageIndex(9))]
-#[case::full(PageIndex(0)..PageIndex(10))]
-#[case::partial1(PageIndex(0)..PageIndex(2))]
-#[case::partial2(PageIndex(1)..PageIndex(7))]
-#[case::partial3(PageIndex(3)..PageIndex(5))]
+#[case::empty1(0..0)]
+#[case::empty2(5..5)]
+#[case::empty3(9..9)]
+#[case::full(0..10)]
+#[case::partial1(0..2)]
+#[case::partial2(1..7)]
+#[case::partial3(3..5)]
 fn test_cache_layer_prepare_read(#[case] page_range: Range<PageIndex>) {
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
@@ -47,20 +48,17 @@ fn test_cache_layer_prepare_read(#[case] page_range: Range<PageIndex>) {
         .create_page_file_layer(PageFileId(1), 10)
         .expect("create page cache layer");
 
-    let read = layer1.prepare_read(page_range);
+    let read = layer1.prepare_read(page_range.clone());
 
-    let permits = read
-        .get_outstanding_write_permits()
-        .collect::<Vec<_>>();
-    assert_eq!(permits.len(), 1);
+    let permits = read.get_outstanding_write_permits().collect::<Vec<_>>();
+    assert_eq!(permits.len(), page_range.len());
 }
-
 
 #[rstest::rstest]
 #[trace]
-#[case::start_before_end(PageIndex(5)..PageIndex(2))]
-#[case::start_out_of_bounds(PageIndex(500)..PageIndex(550))]
-#[case::end_out_of_bounds(PageIndex(0)..PageIndex(50))]
+#[case::start_before_end(5..2)]
+#[case::start_out_of_bounds(500..550)]
+#[case::end_out_of_bounds(0..50)]
 #[should_panic]
 fn test_cache_layer_read_outside_bounds_panic(#[case] page_range: Range<PageIndex>) {
     let cache = PageFileCache::new(256 << 10, PageSize::Std8KB);

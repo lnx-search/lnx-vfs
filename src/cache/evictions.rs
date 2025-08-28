@@ -313,9 +313,7 @@ mod tests {
             memory.write_page(permit, &data);
         }
 
-        let permit = memory
-            .try_dirty_page(PageOrRetry::Page(0))
-            .unwrap();
+        let permit = memory.try_dirty_page(PageOrRetry::Page(0)).unwrap();
         evictions.process_page_dirty_permit(permit);
 
         evictions.cleanup(&memory);
