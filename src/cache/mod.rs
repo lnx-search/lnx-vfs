@@ -1,3 +1,7 @@
+mod evictions;
+mod mem_block;
+mod page_file;
+
 use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
@@ -6,15 +10,12 @@ use moka::notification::RemovalCause;
 use moka::policy::EvictionPolicy;
 use parking_lot::Mutex;
 
-use crate::cache::evictions::PendingEvictions;
-use crate::cache::mem_block::{PageIndex, PageSize, VirtualMemoryBlock};
-use crate::cache::page_file::PageFileCacheLayer;
+use self::evictions::PendingEvictions;
+use self::mem_block::VirtualMemoryBlock;
 use crate::layout::PageFileId;
+pub use self::page_file::PageFileCacheLayer;
+pub use self::mem_block::{PageIndex, PageSize};
 
-mod evictions;
-mod mem_block;
-mod page_file;
-mod tests;
 
 type LivePagesLfu = moka::sync::Cache<(PageFileId, PageIndex), (), ahash::RandomState>;
 type LayerEvictionSenders =
@@ -37,6 +38,7 @@ type LayerEvictionSenders =
 ///
 pub struct PageFileCache {
     live_pages: LivePagesLfu,
+    num_pages: u64,
     page_size: PageSize,
     layer_eviction_senders: Arc<Mutex<LayerEvictionSenders>>,
 }
@@ -87,6 +89,7 @@ impl PageFileCache {
             .build_with_hasher(ahash::RandomState::new());
 
         Self {
+            num_pages,
             live_pages,
             page_size,
             layer_eviction_senders,
@@ -113,6 +116,30 @@ impl PageFileCache {
         };
 
         Ok(Arc::new(layer))
+    }
+    
+    #[inline]
+    /// Returns the number of pages of capacity in the cache.
+    pub fn page_capacity(&self) -> u64 {
+        self.num_pages
+    }
+
+    #[inline]
+    /// Returns the capacity of the cache in bytes.
+    pub fn memory_capacity(&self) -> u64 {
+        self.num_pages * self.page_size as u64
+    }
+
+    #[inline]
+    /// Returns the approximate amount of memory used by the cache.
+    pub fn pages_used(&self) -> u64 {
+        self.live_pages.entry_count()
+    }
+    
+    #[inline]
+    /// Returns the approximate amount of memory used by the cache.
+    pub fn memory_used(&self) -> u64 {
+        self.live_pages.weighted_size()
     }
 
     fn register_file_layer_with_listener(

@@ -25,7 +25,7 @@ pub struct VirtualMemoryBlock {
     /// The raw virtual memory.
     inner: raw::RawVirtualMemoryPages,
     /// The associate state for each page within the memory.
-    state: Box<[state::PageStateEntry]>,
+    state: Box<[PageStateEntry]>,
     /// The ticket machine tracks operations and ensures thread safe access to the pages
     /// using generational GC-like patterns.
     ticket_machine: GenerationTicketMachine,
@@ -41,7 +41,7 @@ impl VirtualMemoryBlock {
 
         let mut state = Vec::with_capacity(num_pages);
         for _ in 0..num_pages {
-            state.push(state::PageStateEntry::default());
+            state.push(PageStateEntry::default());
         }
 
         let inner = raw::RawVirtualMemoryPages::allocate(num_pages, page_size)?;

@@ -49,9 +49,8 @@ impl Debug for PageSize {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 /// The unique ID of a page within the memory block.
-pub struct PageIndex(pub(crate) usize);
+pub type PageIndex = usize;
 
 /// A raw block of virtual memory split into pages.
 ///
@@ -102,18 +101,18 @@ impl RawVirtualMemoryPages {
 
     /// Get mutable pointer access to a given page.
     pub(super) fn get_mut_page(&self, page: PageIndex) -> RawMutPagePtr {
-        let span = self.get_spanning_ptr(page.0..page.0 + 1);
+        let span = self.get_spanning_ptr(page..page + 1);
         RawMutPagePtr { span }
     }
 
     /// Get read-only pointer access to a given span of pages.
     pub(super) fn read_pages(&self, pages: Range<PageIndex>) -> RawPagePtr {
-        let span = self.get_spanning_ptr(pages.start.0..pages.end.0);
+        let span = self.get_spanning_ptr(pages);
         RawPagePtr { span }
     }
 
     fn get_spanning_ptr<T>(&self, range: Range<usize>) -> SpanningPagePtr<T> {
-        let pos = self.resolve_pos(PageIndex(range.start));
+        let pos = self.resolve_pos(range.start);
         let len = range.len() * self.page_size as usize;
         let ptr = self.memory.get_ptr_at(pos);
         SpanningPagePtr {
@@ -124,7 +123,7 @@ impl RawVirtualMemoryPages {
     }
 
     fn resolve_pos(&self, page: PageIndex) -> usize {
-        page.0 * self.page_size as usize
+        page * self.page_size as usize
     }
 }
 
@@ -403,14 +402,14 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::page_read(1, PageIndex(0))]
-    #[case::page_read(2, PageIndex(1))]
+    #[case::page_read(1, 0)]
+    #[case::page_read(2, 1)]
     #[should_panic]
-    #[case::page_read(2, PageIndex(2))]
+    #[case::page_read(2, 2)]
     #[should_panic]
-    #[case::page_out_of_bounds_panic_1(0, PageIndex(0))]
+    #[case::page_out_of_bounds_panic_1(0, 0)]
     #[should_panic]
-    #[case::page_out_of_bounds_panic_2(0, PageIndex(2))]
+    #[case::page_out_of_bounds_panic_2(0, 2)]
     fn test_read_only_page_access(
         #[case] num_pages: usize,
         #[case] target_page_index: PageIndex,
@@ -418,7 +417,7 @@ mod tests {
         let pages = RawVirtualMemoryPages::allocate(num_pages, PageSize::Std8KB)
             .expect("virtual memory pages should be created");
         let ptr =
-            pages.read_pages(target_page_index..PageIndex(target_page_index.0 + 1));
+            pages.read_pages(target_page_index..target_page_index + 1);
         assert_eq!(ptr.pages_spanned(), 1);
 
         unsafe {
@@ -427,14 +426,14 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::page_read(1, PageIndex(0))]
-    #[case::page_read(2, PageIndex(1))]
+    #[case::page_read(1, 0)]
+    #[case::page_read(2, 1)]
     #[should_panic]
-    #[case::page_read(2, PageIndex(2))]
+    #[case::page_read(2, 2)]
     #[should_panic]
-    #[case::page_out_of_bounds_panic_1(0, PageIndex(0))]
+    #[case::page_out_of_bounds_panic_1(0, 0)]
     #[should_panic]
-    #[case::page_out_of_bounds_panic_2(0, PageIndex(2))]
+    #[case::page_out_of_bounds_panic_2(0, 2)]
     fn test_mut_page_access(
         #[case] num_pages: usize,
         #[case] target_page_index: PageIndex,
@@ -458,23 +457,23 @@ mod tests {
         let pages = RawVirtualMemoryPages::allocate(4, PageSize::Std8KB)
             .expect("virtual memory pages should be created");
 
-        let mut ptr1 = pages.get_mut_page(PageIndex(0));
-        let ptr2 = pages.get_mut_page(PageIndex(1));
+        let mut ptr1 = pages.get_mut_page(0);
+        let ptr2 = pages.get_mut_page(1);
         assert!(unsafe { ptr1.unsplit(ptr2).is_ok() });
         assert_eq!(ptr1.pages_spanned(), 2);
 
-        let mut ptr1 = pages.get_mut_page(PageIndex(0));
-        let ptr2 = pages.get_mut_page(PageIndex(2));
+        let mut ptr1 = pages.get_mut_page(0);
+        let ptr2 = pages.get_mut_page(2);
         assert!(unsafe { ptr1.unsplit(ptr2).is_err() });
         assert_eq!(ptr1.pages_spanned(), 1);
 
-        let mut ptr1 = pages.read_pages(PageIndex(0)..PageIndex(1));
-        let ptr2 = pages.read_pages(PageIndex(1)..PageIndex(2));
+        let mut ptr1 = pages.read_pages(0..1);
+        let ptr2 = pages.read_pages(1..2);
         assert!(unsafe { ptr1.unsplit(ptr2).is_ok() });
         assert_eq!(ptr1.pages_spanned(), 2);
 
-        let mut ptr1 = pages.read_pages(PageIndex(0)..PageIndex(1));
-        let ptr2 = pages.read_pages(PageIndex(2)..PageIndex(3));
+        let mut ptr1 = pages.read_pages(0..1);
+        let ptr2 = pages.read_pages(2..3);
         assert!(unsafe { ptr1.unsplit(ptr2).is_err() });
         assert_eq!(ptr1.pages_spanned(), 1);
     }

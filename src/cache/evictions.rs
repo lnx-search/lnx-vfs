@@ -154,9 +154,9 @@ mod tests {
         let (evictions, tx) = PendingEvictions::new();
         evictions.try_cleanup(&memory);
 
-        tx.send(PageIndex(0)).unwrap();
-        tx.send(PageIndex(2)).unwrap();
-        tx.send(PageIndex(3)).unwrap();
+        tx.send(0).unwrap();
+        tx.send(2).unwrap();
+        tx.send(3).unwrap();
         evictions.try_cleanup(&memory);
 
         assert_eq!(evictions.incoming_revertible_evictions.len(), 3);
@@ -184,13 +184,13 @@ mod tests {
         let memory = VirtualMemoryBlock::allocate(1024, PageSize::Std8KB).unwrap();
         let data = vec![1; 8 << 10];
         for id in 0..1000 {
-            let permit = memory.try_prepare_for_write(PageIndex(id)).unwrap();
+            let permit = memory.try_prepare_for_write(id).unwrap();
             memory.write_page(permit, &data);
         }
 
         let (evictions, tx) = PendingEvictions::new();
         for id in 0..1000 {
-            tx.send(PageIndex(id)).unwrap();
+            tx.send(id).unwrap();
         }
 
         evictions.try_cleanup(&memory);
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 0);
 
         for id in 0..164 {
-            let permit = memory.try_prepare_for_write(PageIndex(id)).unwrap();
+            let permit = memory.try_prepare_for_write(id).unwrap();
             memory.write_page(permit, &data);
         }
 
@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 0);
 
         memory
-            .prepare_read(PageIndex(500)..PageIndex(505))
+            .prepare_read(500..505)
             .try_finish()
             .expect_err("pages should be freed");
     }
@@ -275,18 +275,18 @@ mod tests {
         let data = vec![1; 8 << 10];
 
         for id in 0..1023 {
-            let permit = memory.try_prepare_for_write(PageIndex(id)).unwrap();
+            let permit = memory.try_prepare_for_write(id).unwrap();
             memory.write_page(permit, &data);
         }
 
         let (evictions, tx) = PendingEvictions::new();
 
-        tx.send(PageIndex(0)).unwrap();
-        tx.send(PageIndex(2)).unwrap();
-        tx.send(PageIndex(3)).unwrap();
-        tx.send(PageIndex(1023)).unwrap();
+        tx.send(0).unwrap();
+        tx.send(2).unwrap();
+        tx.send(3).unwrap();
+        tx.send(1023).unwrap();
 
-        let permit = memory.try_prepare_for_write(PageIndex(1023)).unwrap();
+        let permit = memory.try_prepare_for_write(1023).unwrap();
 
         evictions.cleanup(&memory);
         assert_eq!(
@@ -309,12 +309,12 @@ mod tests {
 
         let data = vec![1; 8 << 10];
         for id in 0..8 {
-            let permit = memory.try_prepare_for_write(PageIndex(id)).unwrap();
+            let permit = memory.try_prepare_for_write(id).unwrap();
             memory.write_page(permit, &data);
         }
 
         let permit = memory
-            .try_dirty_page(PageOrRetry::Page(PageIndex(0)))
+            .try_dirty_page(PageOrRetry::Page(0))
             .unwrap();
         evictions.process_page_dirty_permit(permit);
 

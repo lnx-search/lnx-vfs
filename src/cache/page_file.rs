@@ -46,8 +46,12 @@ impl PageFileCacheLayer {
     ///
     /// Once all pages are confirmed to be allocated the read can be completed.
     pub fn prepare_read(self: &Arc<Self>, page_range: Range<PageIndex>) -> PreparedRead {
+        assert!(page_range.start <= page_range.end, "page range start must be before the end");
+        assert!(page_range.start < self.memory.num_pages(), "page range start is beyond page boundaries");
+        assert!(page_range.end <= self.memory.num_pages(), "page range end is beyond page boundaries");
+
         // Register the access within the cache's policy.
-        for page in iter_pages(page_range.clone()) {
+        for page in page_range.clone() {
             self.live_pages.get(&(self.file_id, page));
         }
 
@@ -66,7 +70,7 @@ impl PageFileCacheLayer {
     /// This method can block due to syscall and waiting on page locks to become free.
     pub fn dirty_page_range(&self, range: Range<PageIndex>) {
         let mut retries = Vec::new();
-        for page in iter_pages(range) {
+        for page in range {
             self.live_pages.remove(&(self.file_id, page));
 
             match self.memory.try_dirty_page(PageOrRetry::Page(page)) {
@@ -129,7 +133,7 @@ impl PageFileCacheLayer {
 impl Drop for PageFileCacheLayer {
     fn drop(&mut self) {
         for page in 0..self.memory.num_pages() {
-            self.live_pages.remove(&(self.file_id, PageIndex(page)));
+            self.live_pages.remove(&(self.file_id, page));
         }
     }
 }
@@ -255,7 +259,3 @@ impl Deref for ReadRef {
 }
 
 unsafe impl stable_deref_trait::StableDeref for ReadRef {}
-
-fn iter_pages(range: Range<PageIndex>) -> impl Iterator<Item = PageIndex> {
-    (range.start.0..range.end.0).map(PageIndex)
-}
