@@ -27,6 +27,17 @@ async fn test_creation(tempdir: tempfile::TempDir) {
 
 #[rstest::rstest]
 #[tokio::test]
+async fn test_creation_not_a_directory_err() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+
+    let err = SystemDirectory::open(file.path())
+        .await
+        .expect_err("directory should not be created");
+    assert_eq!(err.kind(), ErrorKind::NotADirectory);
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn test_create_new_file_group_behaviour(
     tempdir: tempfile::TempDir,
     #[values(FileGroup::Pages, FileGroup::Metadata, FileGroup::Wal)] group: FileGroup,
@@ -77,6 +88,30 @@ async fn test_create_new_file_group_behaviour(
     } else if group == FileGroup::Wal {
         assert_eq!(&files, &["0000001000-1000.wal.lnx"]);
     }
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_create_new_file_incrementing_id(tempdir: tempfile::TempDir) {
+    let directory = SystemDirectory::open(tempdir.path())
+        .await
+        .expect("directory should be created");
+
+    let file_id = directory
+        .create_new_file(FileGroup::Pages)
+        .await
+        .expect("create new file in group");
+    assert_eq!(file_id.as_u32(), 1000);
+    let file_id = directory
+        .create_new_file(FileGroup::Pages)
+        .await
+        .expect("create new file in group");
+    assert_eq!(file_id.as_u32(), 1001);
+    let file_id = directory
+        .create_new_file(FileGroup::Pages)
+        .await
+        .expect("create new file in group");
+    assert_eq!(file_id.as_u32(), 1002);
 }
 
 #[rstest::rstest]

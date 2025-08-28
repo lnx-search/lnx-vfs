@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Formatter;
 use std::io;
 use std::io::ErrorKind;
 use std::ops::Deref;
@@ -82,6 +83,12 @@ impl Deref for SystemDirectory {
     }
 }
 
+impl std::fmt::Debug for SystemDirectory {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SystemDirectory(path={})", self.base_path.display())
+    }
+}
+
 impl SystemDirectory {
     /// Open the [SystemDirectory] at a given file path.
     ///
@@ -101,13 +108,17 @@ impl SystemDirectory {
                 .map(tokio::sync::RwLock::new)?,
         ];
 
-        let inner = SystemDirectoryInner { groups };
+        let inner = SystemDirectoryInner {
+            base_path: base_path.to_path_buf(),
+            groups,
+        };
 
         Ok(Self(Arc::new(inner)))
     }
 }
 
 pub struct SystemDirectoryInner {
+    base_path: PathBuf,
     groups: [tokio::sync::RwLock<FileGroupDirectory>; 3],
 }
 
@@ -196,7 +207,9 @@ impl FileGroupDirectory {
         tracing::info!(path = %base_path.display(), "opening directory");
 
         match std::fs::create_dir(&base_path) {
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {},
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                ensure_is_directory(&base_path)?;
+            },
             other => other?,
         }
 
@@ -426,9 +439,21 @@ async fn remove_file(path: &Path) -> io::Result<()> {
 
 async fn create_base_dir(path: &Path) -> io::Result<()> {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || std::fs::create_dir_all(&path))
-        .await
-        .expect("spawn worker thread")
+    tokio::task::spawn_blocking(move || {
+        ensure_is_directory(&path)?;
+        std::fs::create_dir_all(&path)
+    })
+    .await
+    .expect("spawn worker thread")
+}
+
+fn ensure_is_directory(path: &Path) -> io::Result<()> {
+    let metadata = path.metadata()?;
+    if !metadata.is_dir() {
+        Err(io::Error::from(ErrorKind::NotADirectory))
+    } else {
+        Ok(())
+    }
 }
 
 fn open_file(path: &Path) -> io::Result<std::fs::File> {
