@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 thiserror = "2"
 tracing = "0.1"
+arc-swap = "1"
+crossbeam-channel = "0.5"
 i2o2 = "0.4"
 offset-allocator = "0.2"
 papaya = "0.2"
@@ -21,6 +23,8 @@ cityhasher = "0.1"
 rkyv = "0.8"
 parking_lot = "0.12"
 libc = "0.2"
+smallvec = "1"
+stable_deref_trait = "1"
 
 # Encryption at rest
 chacha20poly1305 = "0.10"
@@ -28,6 +32,7 @@ sha2 = "0.10"
 hmac = "0.12"
 
 tokio = { version = "1", features = ["rt", "time", "sync"] }
+moka = { version = "0.12", features = ["sync"] }
 memmap2 = { git = "https://github.com/lnx-search/memmap2-rs.git", rev = "b4e936e" }
 
 

@@ -8,6 +8,7 @@ mod layout;
 mod tests;
 mod transaction;
 mod utils;
+mod cache;
 
 use std::ops::Range;
 
