@@ -18,3 +18,8 @@ fn list_files(base_path: &Path) -> io::Result<Vec<String>> {
 
     Ok(files)
 }
+
+#[rstest::fixture]
+pub fn tempdir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("create temp dir")
+}

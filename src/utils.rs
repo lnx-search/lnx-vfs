@@ -73,7 +73,7 @@ pub(super) fn create_file(
 #[cfg(test)]
 pub(crate) fn parse_io_error_return<T>(value: Option<String>) -> Result<T, io::Error> {
     let Some(value) = value else {
-        return Err(io::Error::other("standard delete_ring_file err"));
+        return Err(io::Error::other("standard fail point error"));
     };
     let error_code = value
         .parse::<i32>()

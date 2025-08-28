@@ -27,6 +27,8 @@ pub struct PageMetadata {
     /// The length of the buffer within the page.
     pub(crate) data_len: u32,
     /// Context bytes used for decrypting the page data.
+    ///
+    /// Alternatively, if encryption is disabled, this contains the crc32 checksum.
     pub(crate) context: [u8; 40],
 }
 

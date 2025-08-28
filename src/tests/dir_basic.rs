@@ -1,11 +1,7 @@
 use std::io::ErrorKind;
 
-use crate::directory::{FileGroup, FileId, SystemDirectory};
-
-#[rstest::fixture]
-fn tempdir() -> tempfile::TempDir {
-    tempfile::tempdir().expect("create temp dir")
-}
+use super::tempdir;
+use crate::directory::{FileGroup, SystemDirectory};
 
 #[rstest::rstest]
 #[tokio::test]

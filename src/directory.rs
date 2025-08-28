@@ -8,6 +8,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use i2o2::RegisterError;
+
 use crate::file;
 use crate::file::DynamicGuard;
 
@@ -313,12 +315,15 @@ impl FileGroupDirectory {
     ///
     /// Does nothing if the file does not exist.
     async fn remove_file(&mut self, file_id: u32) -> io::Result<()> {
-        let Some(file_ref) = self.files.remove(&file_id) else {
+        let Some(file_ref) = self.files.get(&file_id).cloned() else {
             return Ok(());
         };
 
         let ref_count = file_ref.ref_count();
-        if ref_count > DEFAULT_FILE_REF_COUNT {
+
+        // We +1 here, because of our little `cloned()` call just above, which will increment
+        // the ref count.
+        if ref_count > DEFAULT_FILE_REF_COUNT + 1 {
             return Err(io::Error::new(
                 ErrorKind::ResourceBusy,
                 "file is still in use",
@@ -326,6 +331,10 @@ impl FileGroupDirectory {
         }
 
         self.unregister_file_with_ring(&file_ref).await?;
+
+        // It is at this point we remove the file from the state, as it cannot be
+        // properly accessed anymore and not safe to retry.
+        self.files.remove(&file_id);
 
         let file_path = self.file_path(file_id);
         remove_file(&file_path).await?;
@@ -415,6 +424,11 @@ impl RingFile {
 const FILE_FLAGS: libc::c_int = libc::O_DIRECT | libc::O_CLOEXEC;
 
 async fn create_file(path: &Path) -> io::Result<std::fs::File> {
+    #[cfg(test)]
+    fail::fail_point!("directory::create_file", |_| Err(io::Error::other(
+        "create_file fail point error"
+    )));
+
     use std::os::unix::fs::OpenOptionsExt;
 
     let path = path.to_path_buf();
@@ -431,6 +445,11 @@ async fn create_file(path: &Path) -> io::Result<std::fs::File> {
 }
 
 async fn remove_file(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    fail::fail_point!("directory::remove_file", |_| Err(io::Error::other(
+        "remove_file fail point error"
+    )));
+
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || std::fs::remove_file(&path))
         .await
@@ -520,11 +539,18 @@ fn list_files(file_group: FileGroup, path: &Path) -> io::Result<Vec<(u32, PathBu
             continue;
         }
 
-        let (_sort_id, remaining) = file_name.split_once('-').unwrap();
-        let (file_id, _remaining) = remaining.split_once('.').unwrap();
+        let (_sort_id, remaining) = file_name
+            .split_once('-')
+            .ok_or_else(|| io::Error::from(ErrorKind::InvalidFilename))?;
+        let (file_id, _remaining) = remaining
+            .split_once('.')
+            .ok_or_else(|| io::Error::from(ErrorKind::InvalidFilename))?;
 
         let file_id = file_id.parse::<u32>().map_err(|e| {
-            io::Error::new(ErrorKind::Other, format!("invalid file id present: {e}"))
+            io::Error::new(
+                ErrorKind::InvalidFilename,
+                format!("invalid file id present: {e}"),
+            )
         })?;
 
         // if the file is empty, try remove it
