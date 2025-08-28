@@ -393,18 +393,6 @@ impl RingFile {
     }
 
     #[inline]
-    /// Returns the file descriptor of the file.
-    pub fn fd(&self) -> RawFd {
-        self.inner.as_raw_fd()
-    }
-
-    #[inline]
-    /// Returns the inner file reference.
-    pub fn as_std_file(&self) -> &std::fs::File {
-        &self.inner
-    }
-
-    #[inline]
     /// Returns the current strong count of the ring file.
     pub fn ref_count(&self) -> usize {
         Arc::strong_count(&self.inner)
