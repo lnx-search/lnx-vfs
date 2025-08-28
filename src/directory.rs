@@ -539,11 +539,14 @@ fn list_files(file_group: FileGroup, path: &Path) -> io::Result<Vec<(u32, PathBu
             continue;
         }
 
-        let (_sort_id, remaining) = file_name
-            .split_once('-')
+        let sort_and_file_id = file_name
+            .strip_suffix(file_group.extension())
+            .ok_or_else(|| io::Error::from(ErrorKind::InvalidFilename))?
+            .strip_suffix('.')
             .ok_or_else(|| io::Error::from(ErrorKind::InvalidFilename))?;
-        let (file_id, _remaining) = remaining
-            .split_once('.')
+
+        let (_sort_key, file_id) = sort_and_file_id
+            .split_once('-')
             .ok_or_else(|| io::Error::from(ErrorKind::InvalidFilename))?;
 
         let file_id = file_id.parse::<u32>().map_err(|e| {
@@ -564,5 +567,114 @@ fn list_files(file_group: FileGroup, path: &Path) -> io::Result<Vec<(u32, PathBu
         file_ids.push((file_id, path));
     }
 
+    file_ids.sort_unstable_by_key(|(id, _)| *id);
+
     Ok(file_ids)
+}
+
+#[cfg(test)]
+mod inner_tests {
+    use super::*;
+
+    #[test]
+    fn test_list_files_remove_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("0000001000-1000.dat.lnx"), "test").unwrap();
+        std::fs::write(dir.path().join("0000002000-2000.dat.lnx"), "").unwrap();
+
+        let files =
+            list_files(FileGroup::Pages, dir.path()).expect("list files without error");
+        assert_eq!(files.len(), 1);
+
+        let (id, path) = &files[0];
+        assert_eq!(*id, 1000);
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "0000001000-1000.dat.lnx"
+        );
+    }
+
+    #[test]
+    fn test_list_files_ignore_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("inner_oops")).unwrap();
+
+        std::fs::write(dir.path().join("0000001000-1000.dat.lnx"), "test").unwrap();
+        std::fs::write(dir.path().join("0000002000-2000.dat.lnx"), "test").unwrap();
+
+        let files =
+            list_files(FileGroup::Pages, dir.path()).expect("list files without error");
+        assert_eq!(files.len(), 2);
+
+        dbg!(&files);
+        let (id, path) = &files[0];
+        assert_eq!(*id, 1000);
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "0000001000-1000.dat.lnx"
+        );
+        let (id, path) = &files[1];
+        assert_eq!(*id, 2000);
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "0000002000-2000.dat.lnx"
+        );
+    }
+
+    #[test]
+    fn test_list_files_ignore_unknown_extensions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("0000001000-1000.invalid.lnx"), "test").unwrap();
+        std::fs::write(dir.path().join("0000002000-2000.wal.lnx"), "test").unwrap();
+
+        let files =
+            list_files(FileGroup::Wal, dir.path()).expect("list files without error");
+        assert_eq!(files.len(), 1);
+
+        let (id, path) = &files[0];
+        assert_eq!(*id, 2000);
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "0000002000-2000.wal.lnx"
+        );
+    }
+
+    #[test]
+    fn test_list_files_err_missing_hyphen_in_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("00000010001000.dat.lnx"), "test").unwrap();
+        std::fs::write(dir.path().join("0000002000-2000.dat.lnx"), "test").unwrap();
+
+        let err = list_files(FileGroup::Pages, dir.path())
+            .expect_err("list files should error");
+        assert_eq!(err.kind(), ErrorKind::InvalidFilename);
+        assert_eq!(err.to_string(), "invalid filename");
+    }
+
+    #[test]
+    fn test_list_files_err_missing_correct_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("0000001000-1000.dat.lnx"), "test").unwrap();
+        std::fs::write(dir.path().join("0000002000-2000dat.lnx"), "test").unwrap();
+
+        let err = list_files(FileGroup::Pages, dir.path())
+            .expect_err("list files should error");
+        assert_eq!(err.kind(), ErrorKind::InvalidFilename);
+        assert_eq!(err.to_string(), "invalid filename");
+    }
+
+    #[test]
+    fn test_list_files_err_parse_invalid_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("0000001000-1000.dat.lnx"), "test").unwrap();
+        std::fs::write(dir.path().join("0000002000-xyz.dat.lnx"), "test").unwrap();
+
+        let err = list_files(FileGroup::Pages, dir.path())
+            .expect_err("list files should error");
+        assert_eq!(err.kind(), ErrorKind::InvalidFilename);
+        assert_eq!(
+            err.to_string(),
+            "invalid file id present: invalid digit found in string"
+        );
+    }
 }
