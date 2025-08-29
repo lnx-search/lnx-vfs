@@ -46,10 +46,7 @@ impl PageFileCacheLayer {
     /// Prepare a new read of pages.
     ///
     /// Once all pages are confirmed to be allocated the read can be completed.
-    pub fn prepare_read(
-        self: &Arc<Self>,
-        page_range: Range<PageIndex>,
-    ) -> PreparedRead<'_> {
+    pub fn prepare_read(self: &Arc<Self>, page_range: Range<PageIndex>) -> PreparedRead {
         tracing::debug!(page_range = ?page_range, "create prepared read");
 
         // Register the access within the cache's policy.
@@ -60,9 +57,19 @@ impl PageFileCacheLayer {
         self.pending_evictions.try_cleanup(&self.memory);
 
         let inner = self.memory.prepare_read(page_range.clone());
+
+        // SAFETY: The lifetime of this read is tied to the parent, which is kept next to the read
+        //         we need to do this to avoid having several Arc's that need to be cloned and allocated.
+        let inner_with_static_lifetime = unsafe {
+            std::mem::transmute::<
+                super::mem_block::PreparedRead<'_>,
+                super::mem_block::PreparedRead<'static>,
+            >(inner)
+        };
+
         PreparedRead {
             parent: self.clone(),
-            inner,
+            inner: inner_with_static_lifetime,
             page_range,
         }
     }
@@ -190,13 +197,14 @@ impl Drop for PageFileCacheLayer {
 /// A prepared read marks a caller's intent to read a span of pages
 /// and ensures that a read can only be performed once all pages that need to be read
 /// are both allocated and valid.
-pub struct PreparedRead<'cache> {
+pub struct PreparedRead {
     parent: Arc<PageFileCacheLayer>,
-    inner: super::mem_block::PreparedRead<'cache>,
+    // NOTE: The lifetime of this is 'parent.
+    inner: super::mem_block::PreparedRead<'static>,
     page_range: Range<PageIndex>,
 }
 
-impl<'cache> PreparedRead<'cache> {
+impl PreparedRead {
     /// Produces an iterator of [PageWritePermit] for any of the pages
     /// with outstanding writes that are able to acquire the individual page locks.
     pub fn get_outstanding_write_permits(
