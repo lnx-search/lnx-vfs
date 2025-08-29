@@ -1,4 +1,6 @@
 use std::ops::Range;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::cache::{PageFileCache, PageIndex, PageSize};
 use crate::layout::PageFileId;
@@ -187,8 +189,6 @@ fn test_dirty_pages_already_free() {
 
 #[rstest::rstest]
 fn test_dirty_pages_page_locked() {
-    let _ = tracing_subscriber::fmt::try_init();
-
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
@@ -206,6 +206,7 @@ fn test_dirty_pages_page_locked() {
             assert_eq!(layer.backlog_size(), 10);
         }
     });
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     let buffer_data = vec![4; 8 << 10];
     for permit in permits {
@@ -320,4 +321,113 @@ fn test_dirty_pages_updates_memory_for_old_readers_ub() {
 
     // This is UB because our immutable buffer has changed underneath us.
     assert!(!read_view1.iter().all(|v| *v == 4));
+}
+
+#[rstest::rstest]
+fn test_lfu_does_not_evict_within_capacity() {
+    let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg(
+        "cache::eviction_callback",
+        "panic(cache should not evict pages)",
+    )
+    .unwrap();
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let prepared = layer.prepare_read(0..4);
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    scenario.teardown();
+}
+
+#[rstest::rstest]
+fn test_lfu_does_evict_when_capacity_exceeded() {
+    let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let mut prepared = layer.prepare_read(0..10);
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    // TODO: Handle this better with metrics
+    layer.run_cache_tasks();
+    assert_eq!(cache.pages_used(), 4);
+
+    let read_view = match prepared.try_finish() {
+        Ok(read_view) => read_view,
+        Err(_) => panic!("read should be successful after writes have occurred"),
+    };
+    assert!(read_view.iter().all(|v| *v == 4));
+
+    layer.run_cleanup();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_waiting_on_external_writes() {
+    let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let barrier1 = Arc::new(tokio::sync::Notify::new());
+    let barrier2 = barrier1.clone();
+
+    let prepared1 = layer.prepare_read(0..10);
+
+    tokio::spawn(async move {
+        let prepared2 = layer.prepare_read(0..10);
+
+        let permits = prepared2
+            .get_outstanding_write_permits()
+            .take(5)
+            .collect::<Vec<_>>();
+
+        barrier2.notified().await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let buffer_data = vec![4; 8 << 10];
+        for permit in permits {
+            prepared2.write_page(permit, &buffer_data);
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let page_ids = prepared1
+        .get_outstanding_write_permits()
+        .map(|permit| permit.page())
+        .collect::<Vec<_>>();
+    assert_eq!(page_ids, vec![5, 6, 7, 8, 9]);
+
+    barrier1.notify_one();
+    prepared1.wait_for_signal().await;
+
+    let buffer_data = vec![4; 8 << 10];
+    let mut pages_left = Vec::new();
+    for permit in prepared1.get_outstanding_write_permits() {
+        pages_left.push(permit.page());
+        prepared1.write_page(permit, &buffer_data);
+    }
+    assert_eq!(pages_left, vec![5, 6, 7, 8, 9]);
+
+    let read_view = match prepared1.try_finish() {
+        Ok(read_view) => read_view,
+        Err(_) => panic!("read should be successful after writes have occurred"),
+    };
+    assert!(read_view.iter().all(|v| *v == 4));
 }
