@@ -4,13 +4,13 @@ use crate::cache::{PageFileCache, PageIndex, PageSize};
 use crate::layout::PageFileId;
 
 #[rstest::rstest]
-#[trace]
 #[case::page_8kb(PageSize::Std8KB)]
 #[case::page_32kb(PageSize::Std32KB)]
 #[case::page_64kb(PageSize::Std64KB)]
 #[case::page_128kb(PageSize::Std128KB)]
 #[cfg_attr(not(feature = "test-huge-pages"), ignore)]
 #[case::page_2mb(PageSize::Huge2MB)]
+#[trace]
 fn test_cache_create(
     #[values(23623578623, 987052376923, 12908673556789)] rng_seed: u64,
     #[values(0, 1, 16 << 10, 256 << 20, 1 << 30)] capacity: u64,
@@ -34,7 +34,6 @@ fn test_cache_create(
 }
 
 #[rstest::rstest]
-#[trace]
 #[case::empty1(0..0)]
 #[case::empty2(5..5)]
 #[case::empty3(9..9)]
@@ -42,17 +41,18 @@ fn test_cache_create(
 #[case::partial1(0..2)]
 #[case::partial2(1..7)]
 #[case::partial3(3..5)]
-fn test_cache_layer_prepare_read_range_handling(#[case] page_range: Range<PageIndex>) {
+#[trace]
+fn test_prepare_read_range_handling(#[case] page_range: Range<PageIndex>) {
     let page_size = page_range.len();
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
-    let layer1 = cache
+    let layer = cache
         .create_page_file_layer(PageFileId(1), 10)
         .expect("create page cache layer");
 
-    let read = layer1.prepare_read(page_range.clone());
+    let prepared = layer.prepare_read(page_range.clone());
 
-    let permits = read
+    let permits = prepared
         .get_outstanding_write_permits()
         .map(|permit| permit.page())
         .collect::<Vec<_>>();
@@ -60,11 +60,11 @@ fn test_cache_layer_prepare_read_range_handling(#[case] page_range: Range<PageIn
     assert_eq!(permits, page_range.collect::<Vec<_>>());
 
     let buffer_data = vec![4; 8 << 10];
-    for permit in read.get_outstanding_write_permits() {
-        read.write_page(permit, &buffer_data);
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
     }
 
-    let read_view = match read.try_finish() {
+    let read_view = match prepared.try_finish() {
         Ok(read_view) => read_view,
         Err(_) => panic!("read should be successful after writes have occurred"),
     };
@@ -74,15 +74,53 @@ fn test_cache_layer_prepare_read_range_handling(#[case] page_range: Range<PageIn
 }
 
 #[rstest::rstest]
-fn test_cache_layer_partial_write() {}
+#[case::start(&[0])]
+#[case::end(&[9])]
+#[case::middle(&[4])]
+#[case::many_sparse(&[2, 7, 8])]
+#[case::many_dense(&[3, 4, 5, 6])]
+#[case::all(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]
+#[trace]
+fn test_partial_write(#[case] skip_pages: &[PageIndex]) {
+    let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let buffer_data = vec![4; 8 << 10];
+    let mut prepared = layer.prepare_read(0..10);
+    for permit in prepared.get_outstanding_write_permits() {
+        if skip_pages.contains(&permit.page()) {
+            continue;
+        }
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    prepared = match prepared.try_finish() {
+        Ok(_) => {
+            panic!("read should not be available as page data is yet to be completed")
+        },
+        Err(prepared) => prepared,
+    };
+
+    let expected_remaining_pages = (0..10)
+        .filter(|page| skip_pages.contains(page))
+        .collect::<Vec<_>>();
+    let remaining_pages = prepared
+        .get_outstanding_write_permits()
+        .map(|permit| permit.page())
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_pages, expected_remaining_pages);
+}
 
 #[rstest::rstest]
-#[trace]
 #[case::start_before_end(5..2)]
 #[case::start_out_of_bounds(500..550)]
 #[case::end_out_of_bounds(0..50)]
+#[trace]
 #[should_panic]
-fn test_cache_layer_read_outside_bounds_panic(#[case] page_range: Range<PageIndex>) {
+fn test_read_outside_bounds_panic(#[case] page_range: Range<PageIndex>) {
     let cache = PageFileCache::new(256 << 10, PageSize::Std8KB);
 
     let layer1 = cache
@@ -90,4 +128,136 @@ fn test_cache_layer_read_outside_bounds_panic(#[case] page_range: Range<PageInde
         .expect("create page cache layer");
 
     let _read = layer1.prepare_read(page_range);
+}
+
+#[rstest::rstest]
+#[case::all(0..10)]
+#[case::prefix(0..3)]
+#[case::suffix(7..9)]
+#[case::punch_hole(4..7)]
+#[trace]
+fn test_dirty_pages_invalidates_cache_with_no_live_readers(
+    #[case] page_range: Range<PageIndex>,
+) {
+    let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let prepared = layer.prepare_read(0..10);
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    let read_view = match prepared.try_finish() {
+        Ok(read_view) => read_view,
+        Err(_) => panic!("read should be successful after writes have occurred"),
+    };
+    assert!(read_view.iter().all(|v| *v == 4));
+    drop(read_view);
+
+    unsafe { layer.dirty_page_range(page_range.clone()) };
+
+    let prepared = layer.prepare_read(0..10);
+
+    let expected_missing_pages = page_range.collect::<Vec<_>>();
+    let remaining_pages = prepared
+        .get_outstanding_write_permits()
+        .map(|permit| permit.page())
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_pages, expected_missing_pages);
+}
+
+#[rstest::rstest]
+#[case::all(0..10)]
+#[case::prefix(0..3)]
+#[case::suffix(7..9)]
+#[case::punch_hole(4..7)]
+#[trace]
+fn test_dirty_pages_invalidates_cache_with_live_readers(
+    #[case] page_range: Range<PageIndex>,
+) {
+    let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let prepared = layer.prepare_read(0..10);
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    let read_view = match prepared.try_finish() {
+        Ok(read_view) => read_view,
+        Err(_) => panic!("read should be successful after writes have occurred"),
+    };
+
+    // To future self, this test put some crazy thoughts in my mind wondering
+    // how the fuck the system handles pages being dirtied while still holding
+    // references.
+    unsafe { layer.dirty_page_range(page_range.clone()) };
+
+    let prepared = layer.prepare_read(0..10);
+
+    let expected_missing_pages = page_range.collect::<Vec<_>>();
+    let remaining_pages = prepared
+        .get_outstanding_write_permits()
+        .map(|permit| permit.page())
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_pages, expected_missing_pages);
+
+    drop(read_view);
+}
+
+#[rstest::rstest]
+fn test_dirty_pages_updates_memory_for_old_readers_ub() {
+    let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let prepared = layer.prepare_read(0..10);
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    // Read view 1 should never change after the prepared read is finished.
+    let read_view1 = match prepared.try_finish() {
+        Ok(read_view) => read_view,
+        Err(_) => panic!("read should be successful after writes have occurred"),
+    };
+    assert!(read_view1.iter().all(|v| *v == 4));
+
+    // Dirty pages should invalidate the cache in the given ranges.
+    unsafe { layer.dirty_page_range(0..5) };
+
+    // Dirtying the page should not cause immediate UB.
+    assert!(read_view1.iter().all(|v| *v == 4));
+
+    let prepared = layer.prepare_read(0..10);
+
+    let buffer_data = vec![2; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    // Read view 2 should observe the new changes.
+    let read_view2 = match prepared.try_finish() {
+        Ok(read_view) => read_view,
+        Err(_) => panic!("read should be successful after writes have occurred"),
+    };
+    assert!(read_view2[..5 * (8 << 10)].iter().all(|v| *v == 2));
+    assert!(read_view2[5 * (8 << 10)..].iter().all(|v| *v == 4));
+
+    // This is UB because our immutable buffer has changed underneath us.
+    assert!(!read_view1.iter().all(|v| *v == 4));
 }

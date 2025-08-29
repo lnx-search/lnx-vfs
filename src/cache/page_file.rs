@@ -64,7 +64,21 @@ impl PageFileCacheLayer {
     /// Dirty all pages in the cache for the given file.
     ///
     /// This method can block due to syscall and waiting on page locks to become free.
-    pub fn dirty_page_range(&self, range: Range<PageIndex>) {
+    ///
+    /// # Safety
+    ///
+    /// Great care must be taken when using this method, as previous _but still alive_ reads
+    /// will observe modifications that might happen as a result of the pages being dirtied.
+    ///
+    /// The behaviour is very similar to a `mmap`, and carries the same safety risks,
+    /// if `read1` occurs observing data of a full array of `4`s, then the pages are dirtied
+    /// and new data is written filling parts with `2`s. `read1` will observe the partial change
+    /// and now be in an undefined state for the application using it.
+    ///
+    /// NOTE: The act of dirtying the page while a reader is active does not cause immediate UB
+    ///       as readers will not observe any change. However, any writes to the dirtied pages
+    ///       afterward while older readers are still active will be UB.
+    pub unsafe fn dirty_page_range(&self, range: Range<PageIndex>) {
         let mut retries = Vec::new();
         for page in range {
             self.live_pages.remove(&(self.file_id, page));
