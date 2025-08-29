@@ -40,7 +40,7 @@ impl<'block> PreparedRead<'block> {
             page_range: page_range.clone(),
             outstanding_write_pages: PageSet::new(),
         };
-        
+
         for page in page_range {
             let flags = slf.parent.get_page_flags(page);
             if !flags.is_readable() {
@@ -49,10 +49,10 @@ impl<'block> PreparedRead<'block> {
         }
 
         tracing::trace!(
-            outstanding_write_count = slf.outstanding_write_pages.len(),            
+            outstanding_write_count = slf.outstanding_write_pages.len(),
             "prepare read created",
         );
-        
+
         slf
     }
 
@@ -83,10 +83,10 @@ impl<'block> PreparedRead<'block> {
         let ptr = unsafe { self.parent.read_pages(self.page_range.clone()) };
 
         tracing::trace!(
-            ptr = ?ptr,            
+            ptr = ?ptr,
             "read completed",
         );
-        
+
         Ok(ReadResult {
             ptr,
             guard: self.guard,

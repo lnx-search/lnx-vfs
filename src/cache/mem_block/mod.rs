@@ -525,9 +525,7 @@ impl std::fmt::Debug for PageWritePermit<'_> {
         write!(
             f,
             "PageWritePermit(uid={}, ticket_id={}, page={})",
-            self.uid,
-            self.ticket_id,
-            self.page,
+            self.uid, self.ticket_id, self.page,
         )
     }
 }

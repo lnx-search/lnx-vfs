@@ -173,7 +173,6 @@ fn test_dirty_pages_invalidates_cache_with_no_live_readers(
     assert_eq!(remaining_pages, expected_missing_pages);
 }
 
-
 #[rstest::rstest]
 fn test_dirty_pages_already_free() {
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
@@ -197,16 +196,14 @@ fn test_dirty_pages_page_locked() {
         .expect("create page cache layer");
 
     let mut prepared = layer.prepare_read(0..10);
-    let permits = prepared
-        .get_outstanding_write_permits()
-        .collect::<Vec<_>>();
+    let permits = prepared.get_outstanding_write_permits().collect::<Vec<_>>();
 
     let handle = std::thread::spawn({
         let layer = layer.clone();
         move || {
             assert_eq!(layer.backlog_size(), 0);
             unsafe { layer.dirty_page_range(0..10) };
-            assert_eq!(layer.backlog_size(), 10);
+            assert_eq!(layer.backlog_size(), 20); // 10 for the dirty marker, 10 for the LFU free.
         }
     });
 
@@ -232,7 +229,7 @@ fn test_dirty_pages_page_locked() {
     assert!(read_view.iter().all(|v| *v == 4));
     // Backlog should be purged, and no pages should be freed because a write took place
     // after the dirty call.
-    assert_eq!(layer.backlog_size(), 0);
+    assert_eq!(layer.backlog_size(), 20);
 }
 
 #[rstest::rstest]

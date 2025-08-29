@@ -199,9 +199,7 @@ impl Debug for RawPagePtr {
         write!(
             f,
             "RawPagePtr(addr={:?}, len={}, page_size={})",
-            self.span.ptr,
-            self.span.len,
-            self.span.page_size as usize,
+            self.span.ptr, self.span.len, self.span.page_size as usize,
         )
     }
 }
