@@ -41,7 +41,7 @@ impl PendingEvictions {
         (slf, tx)
     }
 
-    pub(super) fn process_page_dirty_permit(&self, permit: PageFreePermit) {
+    pub(super) fn push_page_dirty_permit(&self, permit: PageFreePermit) {
         let mut backlog = self.dirty_eviction_backlog.lock();
         backlog.push_back(permit);
     }
@@ -314,7 +314,7 @@ mod tests {
         }
 
         let permit = memory.try_dirty_page(PageOrRetry::Page(0)).unwrap();
-        evictions.process_page_dirty_permit(permit);
+        evictions.push_page_dirty_permit(permit);
 
         evictions.cleanup(&memory);
         assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 1);

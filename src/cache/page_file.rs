@@ -136,7 +136,7 @@ impl PageFileCacheLayer {
             Ok(()) => {},
             Err(TryFreeError::PermitExpired) => {},
             Err(TryFreeError::InUse | TryFreeError::Locked | TryFreeError::Io(_)) => {
-                self.pending_evictions.process_page_dirty_permit(permit);
+                self.pending_evictions.push_page_dirty_permit(permit);
             },
         }
     }
