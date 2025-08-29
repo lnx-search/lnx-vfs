@@ -92,7 +92,7 @@ impl PageFileCacheLayer {
 
         let mut retries = Vec::new();
         for page in range {
-            self.live_pages.remove(&(self.file_id, page));
+            self.live_pages.invalidate(&(self.file_id, page));
 
             match self.memory.try_dirty_page(PageOrRetry::Page(page)) {
                 Ok(permit) => {
@@ -173,7 +173,7 @@ impl PageFileCacheLayer {
 impl Drop for PageFileCacheLayer {
     fn drop(&mut self) {
         for page in 0..self.memory.num_pages() {
-            self.live_pages.remove(&(self.file_id, page));
+            self.live_pages.invalidate(&(self.file_id, page));
         }
     }
 }

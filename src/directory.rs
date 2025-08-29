@@ -604,7 +604,6 @@ mod inner_tests {
             list_files(FileGroup::Pages, dir.path()).expect("list files without error");
         assert_eq!(files.len(), 2);
 
-        dbg!(&files);
         let (id, path) = &files[0];
         assert_eq!(*id, 1000);
         assert_eq!(

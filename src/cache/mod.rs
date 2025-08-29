@@ -66,7 +66,7 @@ impl PageFileCache {
             .eviction_listener({
                 let layer_eviction_senders = layer_eviction_senders.clone();
                 move |key: Arc<(PageFileId, PageIndex)>, _, cause| {
-                    if matches!(cause, RemovalCause::Size | RemovalCause::Expired) {
+                    if !matches!(cause, RemovalCause::Size | RemovalCause::Expired) {
                         return;
                     }
 

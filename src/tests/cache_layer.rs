@@ -203,7 +203,7 @@ fn test_dirty_pages_page_locked() {
         move || {
             assert_eq!(layer.backlog_size(), 0);
             unsafe { layer.dirty_page_range(0..10) };
-            assert_eq!(layer.backlog_size(), 20); // 10 for the dirty marker, 10 for the LFU free.
+            assert_eq!(layer.backlog_size(), 10);
         }
     });
 
@@ -227,9 +227,8 @@ fn test_dirty_pages_page_locked() {
 
     // Read view should still be valid.
     assert!(read_view.iter().all(|v| *v == 4));
-    // Backlog should be purged, and no pages should be freed because a write took place
-    // after the dirty call.
-    assert_eq!(layer.backlog_size(), 20);
+    // The backlog will remain because of the generation cleanup system.
+    assert_eq!(layer.backlog_size(), 10);
 }
 
 #[rstest::rstest]
