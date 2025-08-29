@@ -66,6 +66,14 @@ impl VirtualMemoryBlock {
         self.inner.page_size()
     }
 
+    /// Advance the generation in the ticket machine GC.
+    ///
+    /// This is used to prevent infrequently accessed files from
+    /// never cleaning up their memory.
+    pub fn advance_generation(&self) {
+        self.ticket_machine.advance_generation()
+    }
+
     /// Attempt to collapse the memory pages into transparent huge pages.
     pub fn try_collapse(&self) -> io::Result<()> {
         self.inner.try_collapse()

@@ -2,7 +2,6 @@ mod evictions;
 mod mem_block;
 mod page_file;
 
-use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
 
@@ -13,12 +12,14 @@ use parking_lot::Mutex;
 use self::evictions::PendingEvictions;
 use self::mem_block::VirtualMemoryBlock;
 pub use self::mem_block::{PageIndex, PageSize};
-pub use self::page_file::PageFileCacheLayer;
-use crate::layout::PageFileId;
+pub use self::page_file::CacheLayer;
 
-type LivePagesLfu = moka::sync::Cache<(PageFileId, PageIndex), (), ahash::RandomState>;
+/// A unique identifier for a cache layer.
+pub type LayerId = u32;
+
+type LivePagesLfu = moka::sync::Cache<(LayerId, PageIndex), (), ahash::RandomState>;
 type LayerEvictionSenders =
-    ahash::HashMap<PageFileId, crossbeam_channel::Sender<PageIndex>>;
+    ahash::HashMap<LayerId, crossbeam_channel::Sender<PageIndex>>;
 
 /// The page file cache
 ///
@@ -65,7 +66,7 @@ impl PageFileCache {
             .max_capacity(num_pages)
             .eviction_listener({
                 let layer_eviction_senders = layer_eviction_senders.clone();
-                move |key: Arc<(PageFileId, PageIndex)>, _, cause| {
+                move |key: Arc<(LayerId, PageIndex)>, _, cause| {
                     if !matches!(cause, RemovalCause::Size | RemovalCause::Expired) {
                         return;
                     }
@@ -95,13 +96,13 @@ impl PageFileCache {
         }
     }
 
-    /// Creates a new page file entry within the cache and allow it to hold
+    /// Creates a new layer entry within the cache and allow it to hold
     /// upto `num_pages`.
     pub fn create_page_file_layer(
         &self,
-        file_id: PageFileId,
+        layer_id: LayerId,
         num_pages: usize,
-    ) -> io::Result<Arc<PageFileCacheLayer>> {
+    ) -> io::Result<Arc<CacheLayer>> {
         let (pending_evictions, tx) = PendingEvictions::new();
         let memory = VirtualMemoryBlock::allocate(num_pages, self.page_size)?;
 
@@ -112,14 +113,14 @@ impl PageFileCache {
             ),
             num_pages = num_pages,
             page_size = %self.page_size,
-            file_id = ?file_id,
-            "creating new page file layer"
+            layer_id = ?layer_id,
+            "creating new layer"
         );
 
-        self.layer_eviction_senders.lock().insert(file_id, tx);
+        self.register_file_layer_with_listener(layer_id, tx);
 
-        let layer = PageFileCacheLayer {
-            file_id,
+        let layer = CacheLayer {
+            layer_id,
             live_pages: self.live_pages.clone(),
             memory,
             pending_evictions,
@@ -160,51 +161,10 @@ impl PageFileCache {
 
     fn register_file_layer_with_listener(
         &self,
-        file_id: PageFileId,
+        layer_id: LayerId,
         tx: crossbeam_channel::Sender<PageIndex>,
     ) {
         let mut lock = self.layer_eviction_senders.lock();
-        lock.insert(file_id, tx);
+        lock.insert(layer_id, tx);
     }
-}
-
-#[derive(Debug, Clone)]
-/// Metrics collected by the file cache.
-///
-/// This includes all allocated page files.
-pub struct GlobalCacheMetrics {
-    /// Global metrics collected.
-    pub global: BaseCacheMetrics,
-    /// Cache metrics on the page file level.
-    ///
-    /// This is a mapping of page file ID to metrics.
-    pub page_files: BTreeMap<u64, BaseCacheMetrics>,
-}
-
-#[derive(Debug, Copy, Clone)]
-/// Core metrics collected for individual page files
-/// and globally.
-pub struct BaseCacheMetrics {
-    /// The average hit ratio on the cache.
-    pub hit_ratio: f32,
-    /// The average miss ratio on the cache.
-    pub miss_ratio: f32,
-    /// The number of pages currently allocated.
-    pub pages_allocated: usize,
-    /// The total amount of virtual memory reserved in KB.
-    pub virtual_memory_allocated_kb: u64,
-    /// The total number of pages written to the cache.
-    pub total_page_writes: u64,
-    /// The total number of pages scheduled for eviction
-    /// due to memory pressure.
-    pub total_page_scheduled_revertible_evictions: u64,
-    /// The total number of pages scheduled for eviction
-    /// due to the page being dirty (old.)
-    pub total_page_scheduled_dirty_evictions: u64,
-    /// The total number of pages that were scheduled for a (revertible) eviction
-    /// and actually ended up being freed.
-    pub total_page_realised_revertible_evictions: u64,
-    /// The total number of pages that were scheduled for eviction due to being
-    /// dirty and actually ended up being freed.
-    pub total_page_realised_dirty_evictions: u64,
 }

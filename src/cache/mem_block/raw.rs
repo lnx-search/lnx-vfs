@@ -315,8 +315,7 @@ impl VirtualMemory {
         if self.collapsable {
             self.mem.advise(Advice::Collapse)
         } else {
-            Err(io::Error::new(
-                ErrorKind::Other,
+            Err(io::Error::other(
                 "kernel does not support collapsing memory",
             ))
         }

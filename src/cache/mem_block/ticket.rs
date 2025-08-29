@@ -76,11 +76,17 @@ impl GenerationTicketMachine {
         let ticket_id = self.ticket_counter.fetch_add(1, Ordering::Relaxed);
 
         if ticket_id % TICKETS_PER_GENERATION == 0 {
-            let generation = self.shared_state.replace_generation();
-            self.active_generation.store(generation);
+            self.advance_generation();
         }
 
         ticket_id
+    }
+
+    /// Replace the current active generation with the next generation.
+    pub(super) fn advance_generation(&self) {
+        println!("ticket generation advance");
+        let generation = self.shared_state.replace_generation();
+        self.active_generation.store(generation);
     }
 
     /// Increments the ticket operation counter and returns a [TicketGuard]
@@ -277,6 +283,60 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn test_state_ptr_chain_updates_oldest_ticket() {
+        let shared_state = Arc::new(SharedState {
+            oldest_alive_ticket: AtomicU64::new(0),
+            generation: Mutex::new(GenerationState {
+                next_generation_id: 0,
+                active_generations: std::ptr::null_mut(),
+            }),
+        });
+
+        let gen1 = shared_state.replace_generation();
+        assert_eq!(gen1.generation_id, 0);
+        let gen2 = shared_state.replace_generation();
+        assert_eq!(gen2.generation_id, 1);
+        let gen3 = shared_state.replace_generation();
+        assert_eq!(gen3.generation_id, 2);
+
+        drop(gen2);
+
+        // gen1 should still be taken as the oldest generation and therefore the
+        // oldest ticket must be `0`.
+        assert_eq!(shared_state.oldest_alive_ticket(), 0);
+
+        drop(gen1);
+        // now gen1 is dropped, the oldest alive ticket should become the start of
+        // the gen3 tickets aka TICKETS_PER_GENERATION * 2
+        assert_eq!(
+            shared_state.oldest_alive_ticket(),
+            TICKETS_PER_GENERATION * 2
+        );
+
+        let gen4 = shared_state.replace_generation();
+        drop(gen3);
+        assert_eq!(
+            shared_state.oldest_alive_ticket(),
+            TICKETS_PER_GENERATION * 3
+        );
+    }
+
+    #[test]
+    fn test_ticket_machine_advance_generation() {
+        let machine = GenerationTicketMachine::default();
+
+        let guard = machine.get_next_ticket();
+        assert_eq!(guard.generation.generation_id, 0);
+
+        machine.advance_generation();
+        drop(guard);
+
+        let guard = machine.get_next_ticket();
+        assert_eq!(guard.generation.generation_id, 1);
+        assert_eq!(machine.oldest_alive_ticket(), TICKETS_PER_GENERATION);
+    }
 
     #[test]
     fn test_ticket_machine_increment() {

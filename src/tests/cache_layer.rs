@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::cache::{PageFileCache, PageIndex, PageSize};
-use crate::layout::PageFileId;
 
 #[rstest::rstest]
 #[case::page_8kb(PageSize::Std8KB)]
@@ -28,10 +27,11 @@ fn test_cache_create(
     assert_eq!(cache.memory_capacity(), expected_capacity_memory);
     assert_eq!(cache.memory_used(), 0);
     assert_eq!(cache.pages_used(), 0);
+    assert_eq!(cache.page_size(), page_size);
 
     let num_pages = fastrand::usize(1..1000);
     let layer = cache
-        .create_page_file_layer(PageFileId(1), num_pages)
+        .create_page_file_layer(1, num_pages)
         .expect("create page cache layer");
     assert_eq!(layer.page_size(), page_size);
 }
@@ -50,7 +50,7 @@ fn test_prepare_read_range_handling(#[case] page_range: Range<PageIndex>) {
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let prepared = layer.prepare_read(page_range.clone());
@@ -88,7 +88,7 @@ fn test_partial_write(#[case] skip_pages: &[PageIndex]) {
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let buffer_data = vec![4; 8 << 10];
@@ -128,7 +128,7 @@ fn test_read_outside_bounds_panic(#[case] page_range: Range<PageIndex>) {
     let cache = PageFileCache::new(256 << 10, PageSize::Std8KB);
 
     let layer1 = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let _read = layer1.prepare_read(page_range);
@@ -146,7 +146,7 @@ fn test_dirty_pages_invalidates_cache_with_no_live_readers(
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let prepared = layer.prepare_read(0..10);
@@ -180,7 +180,7 @@ fn test_dirty_pages_already_free() {
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     // Should be a no-op
@@ -192,7 +192,7 @@ fn test_dirty_pages_page_locked() {
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let mut prepared = layer.prepare_read(0..10);
@@ -244,7 +244,7 @@ fn test_dirty_pages_invalidates_cache_with_live_readers(
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let prepared = layer.prepare_read(0..10);
@@ -281,7 +281,7 @@ fn test_dirty_pages_updates_memory_for_old_readers_ub() {
     let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let prepared = layer.prepare_read(0..10);
@@ -335,7 +335,7 @@ fn test_lfu_does_not_evict_within_capacity() {
     .unwrap();
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let prepared = layer.prepare_read(0..4);
@@ -353,10 +353,10 @@ fn test_lfu_does_evict_when_capacity_exceeded() {
     let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
-    let mut prepared = layer.prepare_read(0..10);
+    let prepared = layer.prepare_read(0..10);
 
     let buffer_data = vec![4; 8 << 10];
     for permit in prepared.get_outstanding_write_permits() {
@@ -377,12 +377,37 @@ fn test_lfu_does_evict_when_capacity_exceeded() {
 }
 
 #[rstest::rstest]
+fn test_lfu_eviction_with_locked_page() {
+    let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
+
+    let layer1 = cache
+        .create_page_file_layer(1, 10)
+        .expect("create page cache layer");
+
+    let prepared = layer1.prepare_read(0..10);
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    let permits = prepared.get_outstanding_write_permits().collect::<Vec<_>>();
+    layer1.run_cache_tasks();
+    drop(permits);
+    drop(prepared);
+
+    assert_eq!(layer1.backlog_size(), 6);
+    layer1.run_cleanup();
+    assert_eq!(layer1.backlog_size(), 0);
+}
+
+#[rstest::rstest]
 #[tokio::test]
 async fn test_waiting_on_external_writes() {
     let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
 
     let layer = cache
-        .create_page_file_layer(PageFileId(1), 10)
+        .create_page_file_layer(1, 10)
         .expect("create page cache layer");
 
     let barrier1 = Arc::new(tokio::sync::Notify::new());

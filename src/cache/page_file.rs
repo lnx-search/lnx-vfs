@@ -15,9 +15,8 @@ use super::mem_block::{
     TryFreeError,
     VirtualMemoryBlock,
 };
-use super::{LivePagesLfu, PageSize};
+use super::{LayerId, LivePagesLfu, PageSize};
 use crate::cache::evictions::PendingEvictions;
-use crate::layout::PageFileId;
 
 /// The global waker that notifies pending readers when a page has been written.
 ///
@@ -30,18 +29,18 @@ use crate::layout::PageFileId;
 /// by taking the file ID and selecting the waker based on the hash mod of that.
 static PAGE_WRITE_WAKER: [Notify; 32] = [const { Notify::const_new() }; 32];
 
-/// The [PageFileCacheLayer] adds an in-memory LFU cache to a page file.
+/// The [CacheLayer] adds an in-memory LFU cache to a page file.
 ///
 /// The cached pages within the file are controlled by a global LFU which allows
 /// for optimal caching across several page files.
-pub struct PageFileCacheLayer {
-    pub(super) file_id: PageFileId,
+pub struct CacheLayer {
+    pub(super) layer_id: LayerId,
     pub(super) live_pages: LivePagesLfu,
     pub(super) memory: VirtualMemoryBlock,
     pub(super) pending_evictions: PendingEvictions,
 }
 
-impl PageFileCacheLayer {
+impl CacheLayer {
     #[tracing::instrument("cache::prepare_read", skip(self))]
     /// Prepare a new read of pages.
     ///
@@ -51,7 +50,7 @@ impl PageFileCacheLayer {
 
         // Register the access within the cache's policy.
         for page in page_range.clone() {
-            self.live_pages.get(&(self.file_id, page));
+            self.live_pages.get(&(self.layer_id, page));
         }
 
         self.pending_evictions.try_cleanup(&self.memory);
@@ -102,7 +101,7 @@ impl PageFileCacheLayer {
 
         let mut retries = Vec::new();
         for page in range {
-            self.live_pages.invalidate(&(self.file_id, page));
+            self.live_pages.invalidate(&(self.layer_id, page));
 
             match self.memory.try_dirty_page(PageOrRetry::Page(page)) {
                 Ok(permit) => {
@@ -147,6 +146,7 @@ impl PageFileCacheLayer {
     /// Unlike the maintenance task that occur during reads, this will wait
     /// for locks to become available to ensure the backlog is processed.
     pub fn run_cleanup(&self) {
+        self.memory.advance_generation();
         self.pending_evictions.cleanup(&self.memory);
     }
 
@@ -181,15 +181,15 @@ impl PageFileCacheLayer {
     }
 
     fn register_page_write_in_cache(&self, page_id: PageIndex) {
-        self.live_pages.insert((self.file_id, page_id), ());
+        self.live_pages.insert((self.layer_id, page_id), ());
     }
 }
 
-impl Drop for PageFileCacheLayer {
+impl Drop for CacheLayer {
     fn drop(&mut self) {
         for page in 0..self.memory.num_pages() {
             self.live_pages
-                .invalidate(&(self.file_id, page as PageIndex));
+                .invalidate(&(self.layer_id, page as PageIndex));
         }
     }
 }
@@ -198,7 +198,7 @@ impl Drop for PageFileCacheLayer {
 /// and ensures that a read can only be performed once all pages that need to be read
 /// are both allocated and valid.
 pub struct PreparedRead {
-    parent: Arc<PageFileCacheLayer>,
+    parent: Arc<CacheLayer>,
     // NOTE: The lifetime of this is 'parent.
     inner: super::mem_block::PreparedRead<'static>,
     page_range: Range<PageIndex>,
@@ -265,7 +265,7 @@ impl PreparedRead {
     }
 
     fn get_waker(&self) -> &'static Notify {
-        let notify_id = self.parent.file_id.0 as usize % PAGE_WRITE_WAKER.len();
+        let notify_id = self.parent.layer_id as usize % PAGE_WRITE_WAKER.len();
         &PAGE_WRITE_WAKER[notify_id]
     }
 }
@@ -275,7 +275,7 @@ impl PreparedRead {
 ///
 /// This struct can be cheaply cloned as it just increments a ref-count.
 pub struct ReadRef {
-    parent: Arc<PageFileCacheLayer>,
+    parent: Arc<CacheLayer>,
     // NOTE: This is not actually `'static`, it lives only for as long as `parent`.
     inner: ReadResult<'static>,
 }
