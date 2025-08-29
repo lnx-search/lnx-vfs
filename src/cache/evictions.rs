@@ -41,6 +41,24 @@ impl PendingEvictions {
         (slf, tx)
     }
 
+    pub(super) fn size(&self) -> usize {
+        let mut size = 0;
+
+        {
+            let backlog = self.revertible_eviction_backlog.lock();
+            size += backlog.pages_to_evict.len();
+            size += backlog.pages_to_mark.len();
+        }
+
+        {
+            let backlog = self.dirty_eviction_backlog.lock();
+            size += backlog.len();
+        }
+
+        size += self.incoming_revertible_evictions.len();
+        size
+    }
+
     pub(super) fn push_page_dirty_permit(&self, permit: PageFreePermit) {
         let mut backlog = self.dirty_eviction_backlog.lock();
         backlog.push_back(permit);

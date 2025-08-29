@@ -507,7 +507,6 @@ pub struct PageFreePermit {
     ticket_id: u64,
 }
 
-#[derive(Debug)]
 /// A [PageWritePermit] represents a pending write operation to a target page.
 ///
 /// This permit allows an operation to reserve its spot and prevent other tasks
@@ -519,6 +518,18 @@ pub struct PageWritePermit<'guard> {
     page: PageIndex,
     ticket_id: u64,
     page_lock_guard: PageWriteLockGuard<'guard>,
+}
+
+impl std::fmt::Debug for PageWritePermit<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PageWritePermit(uid={}, ticket_id={}, page={})",
+            self.uid,
+            self.ticket_id,
+            self.page,
+        )
+    }
 }
 
 impl PageWritePermit<'_> {

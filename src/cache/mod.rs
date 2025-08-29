@@ -105,6 +105,17 @@ impl PageFileCache {
         let (pending_evictions, tx) = PendingEvictions::new();
         let memory = VirtualMemoryBlock::allocate(num_pages, self.page_size)?;
 
+        tracing::info!(
+            virtual_memory_allocation = %humansize::format_size(
+                num_pages as u64 * self.page_size as u64,
+                humansize::DECIMAL,
+            ),
+            num_pages = num_pages,
+            page_size = %self.page_size,
+            file_id = ?file_id,
+            "creating new page file layer"
+        );
+
         self.layer_eviction_senders.lock().insert(file_id, tx);
 
         let layer = PageFileCacheLayer {

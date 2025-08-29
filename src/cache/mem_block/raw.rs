@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::io;
 use std::io::ErrorKind;
 use std::mem::MaybeUninit;
@@ -38,6 +38,18 @@ pub enum PageSize {
 }
 
 impl Debug for PageSize {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PageSize::Std8KB => write!(f, "8KB"),
+            PageSize::Std32KB => write!(f, "32KB"),
+            PageSize::Std64KB => write!(f, "64KB"),
+            PageSize::Std128KB => write!(f, "128KB"),
+            PageSize::Huge2MB => write!(f, "2MB"),
+        }
+    }
+}
+
+impl Display for PageSize {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             PageSize::Std8KB => write!(f, "8KB"),
@@ -180,6 +192,18 @@ impl RawMutPagePtr {
 /// A raw pointer to the given page memory.
 pub(super) struct RawPagePtr {
     span: SpanningPagePtr<u8>,
+}
+
+impl Debug for RawPagePtr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "RawPagePtr(addr={:?}, len={}, page_size={})",
+            self.span.ptr,
+            self.span.len,
+            self.span.page_size as usize,
+        )
+    }
 }
 
 impl RawPagePtr {

@@ -28,9 +28,10 @@ fn test_cache_create(
     assert_eq!(cache.pages_used(), 0);
 
     let num_pages = fastrand::usize(1..1000);
-    let _layer = cache
+    let layer = cache
         .create_page_file_layer(PageFileId(1), num_pages)
         .expect("create page cache layer");
+    assert_eq!(layer.page_size(), page_size);
 }
 
 #[rstest::rstest]
@@ -115,6 +116,7 @@ fn test_partial_write(#[case] skip_pages: &[PageIndex]) {
 }
 
 #[rstest::rstest]
+#[allow(clippy::reversed_empty_ranges)]
 #[case::start_before_end(5..2)]
 #[case::start_out_of_bounds(500..550)]
 #[case::end_out_of_bounds(0..50)]
@@ -169,6 +171,68 @@ fn test_dirty_pages_invalidates_cache_with_no_live_readers(
         .map(|permit| permit.page())
         .collect::<Vec<_>>();
     assert_eq!(remaining_pages, expected_missing_pages);
+}
+
+
+#[rstest::rstest]
+fn test_dirty_pages_already_free() {
+    let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    // Should be a no-op
+    unsafe { layer.dirty_page_range(0..10) };
+}
+
+#[rstest::rstest]
+fn test_dirty_pages_page_locked() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let cache = PageFileCache::new(512 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(PageFileId(1), 10)
+        .expect("create page cache layer");
+
+    let mut prepared = layer.prepare_read(0..10);
+    let permits = prepared
+        .get_outstanding_write_permits()
+        .collect::<Vec<_>>();
+
+    let handle = std::thread::spawn({
+        let layer = layer.clone();
+        move || {
+            assert_eq!(layer.backlog_size(), 0);
+            unsafe { layer.dirty_page_range(0..10) };
+            assert_eq!(layer.backlog_size(), 10);
+        }
+    });
+
+    let buffer_data = vec![4; 8 << 10];
+    for permit in permits {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    let read_view = loop {
+        prepared = match prepared.try_finish() {
+            Ok(read_view) => break read_view,
+            Err(prepared) => prepared,
+        };
+
+        for permit in prepared.get_outstanding_write_permits() {
+            prepared.write_page(permit, &buffer_data);
+        }
+    };
+
+    handle.join().unwrap();
+
+    // Read view should still be valid.
+    assert!(read_view.iter().all(|v| *v == 4));
+    // Backlog should be purged, and no pages should be freed because a write took place
+    // after the dirty call.
+    assert_eq!(layer.backlog_size(), 0);
 }
 
 #[rstest::rstest]

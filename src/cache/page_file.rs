@@ -42,10 +42,13 @@ pub struct PageFileCacheLayer {
 }
 
 impl PageFileCacheLayer {
+    #[tracing::instrument("cache::prepare_read", skip(self))]
     /// Prepare a new read of pages.
     ///
     /// Once all pages are confirmed to be allocated the read can be completed.
     pub fn prepare_read(self: &Arc<Self>, page_range: Range<PageIndex>) -> PreparedRead {
+        tracing::debug!(page_range = ?page_range, "create prepared read");
+
         // Register the access within the cache's policy.
         for page in page_range.clone() {
             self.live_pages.get(&(self.file_id, page));
@@ -61,9 +64,15 @@ impl PageFileCacheLayer {
         }
     }
 
+    #[tracing::instrument("cache::dirty_page_range", skip(self))]
     /// Dirty all pages in the cache for the given file.
     ///
     /// This method can block due to syscall and waiting on page locks to become free.
+    ///
+    /// # Deadlock warning
+    ///
+    /// This method will wait for the page locks to become free, if the same thread currently
+    /// has a reader being prepared then this can cause a deadlock.
     ///
     /// # Safety
     ///
@@ -79,12 +88,15 @@ impl PageFileCacheLayer {
     ///       as readers will not observe any change. However, any writes to the dirtied pages
     ///       afterward while older readers are still active will be UB.
     pub unsafe fn dirty_page_range(&self, range: Range<PageIndex>) {
+        tracing::debug!("dirty pages");
+
         let mut retries = Vec::new();
         for page in range {
             self.live_pages.remove(&(self.file_id, page));
 
             match self.memory.try_dirty_page(PageOrRetry::Page(page)) {
                 Ok(permit) => {
+                    tracing::trace!("adding page free op to backlog");
                     self.free_or_add_to_backlog(permit);
                 },
                 Err(
@@ -93,10 +105,13 @@ impl PageFileCacheLayer {
                     | PrepareDirtyEvictionError::OperationStale,
                 ) => {},
                 Err(PrepareDirtyEvictionError::PageLocked(retry)) => {
+                    tracing::trace!(retry = ?retry, "page locked");
                     retries.push(retry);
                 },
             }
         }
+
+        tracing::trace!(num_retries = retries.len(), "considering pages for retry");
 
         for retry in retries {
             match self.memory.dirty_page(PageOrRetry::Retry(retry)) {
@@ -129,6 +144,15 @@ impl PageFileCacheLayer {
     /// Returns the page size used by the cache.
     pub fn page_size(&self) -> PageSize {
         self.memory.page_size()
+    }
+
+    #[inline]
+    /// Returns the size of the backlog.
+    ///
+    /// This contains freeing operations which cannot currently take place
+    /// due to locks or readers in use.
+    pub fn backlog_size(&self) -> usize {
+        self.pending_evictions.size()
     }
 
     fn free_or_add_to_backlog(&self, permit: PageFreePermit) {
