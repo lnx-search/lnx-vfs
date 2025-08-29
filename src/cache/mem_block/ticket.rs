@@ -84,7 +84,6 @@ impl GenerationTicketMachine {
 
     /// Replace the current active generation with the next generation.
     pub(super) fn advance_generation(&self) {
-        println!("ticket generation advance");
         let generation = self.shared_state.replace_generation();
         self.active_generation.store(generation);
     }

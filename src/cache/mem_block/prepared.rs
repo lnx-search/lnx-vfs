@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use super::ticket::TicketGuard;
 use super::{PageIndex, VirtualMemoryBlock};
 
-type PageSet = SmallVec<[PageIndex; 16]>;
+type PageSet = SmallVec<[PageIndex; 8]>;
 
 /// A prepared read allows for reading multiple pages while incrementally
 /// filling any gaps the span of memory may have with unallocated data.

@@ -199,7 +199,7 @@ impl Drop for CacheLayer {
 /// are both allocated and valid.
 pub struct PreparedRead {
     parent: Arc<CacheLayer>,
-    // NOTE: The lifetime of this is 'parent.
+    // NOTE: The lifetime of this is `parent`.
     inner: super::mem_block::PreparedRead<'static>,
     page_range: Range<PageIndex>,
 }
@@ -235,7 +235,7 @@ impl PreparedRead {
         self.get_waker().notify_waiters();
     }
 
-    /// Returns a future that waits until a write has been completed on the page file.
+    /// Returns a future that waits until a write operation has been completed on the page file.
     pub fn wait_for_signal(&self) -> impl Future<Output = ()> + use<'_> {
         let waker = self.get_waker();
         waker.notified()
@@ -276,7 +276,7 @@ impl PreparedRead {
 /// This struct can be cheaply cloned as it just increments a ref-count.
 pub struct ReadRef {
     parent: Arc<CacheLayer>,
-    // NOTE: This is not actually `'static`, it lives only for as long as `parent`.
+    // NOTE: This is not actually `static`, it lives only for as long as `parent`.
     inner: ReadResult<'static>,
 }
 
