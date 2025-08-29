@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-use crate::cache::mem_block::{PageIndex, PageOrRetry, PageSize, VirtualMemoryBlock};
+use crate::cache::PageIndex;
+use crate::cache::mem_block::{PageOrRetry, PageSize, VirtualMemoryBlock};
 
 #[rstest::rstest]
 #[case::read_8kb_x1_page(1, PageSize::Std8KB)]
@@ -27,7 +28,7 @@ use crate::cache::mem_block::{PageIndex, PageOrRetry, PageSize, VirtualMemoryBlo
 fn test_memory_read_empty_block(#[case] num_pages: usize, #[case] page_size: PageSize) {
     let block = VirtualMemoryBlock::allocate(num_pages, page_size)
         .expect("virtual memory block should be created");
-    let mut prepared_read = block.prepare_read(0..num_pages);
+    let mut prepared_read = block.prepare_read(0..num_pages as u32);
     prepared_read = prepared_read
         .try_finish()
         .expect_err("read should not be completed as no pages are allocated");
@@ -54,7 +55,7 @@ fn test_memory_read_empty_block(#[case] num_pages: usize, #[case] page_size: Pag
 fn test_memory_read_sub_span_empty_block(
     #[case] num_pages: usize,
     #[case] page_size: PageSize,
-    #[case] span: Range<usize>,
+    #[case] span: Range<PageIndex>,
 ) {
     let block = VirtualMemoryBlock::allocate(num_pages, page_size)
         .expect("virtual memory block should be created");
@@ -111,8 +112,8 @@ fn test_memory_read_sub_span_empty_block(
 fn test_memory_read_single_range_allocated(
     #[case] num_pages: usize,
     #[case] page_size: PageSize,
-    #[case] allocate_pages: Range<usize>,
-    #[case] read_pages: Range<usize>,
+    #[case] allocate_pages: Range<PageIndex>,
+    #[case] read_pages: Range<PageIndex>,
 ) {
     let block = create_block_with_allocation(allocate_pages, num_pages, page_size);
 
@@ -148,8 +149,8 @@ fn test_memory_read_single_range_allocated(
 fn test_memory_read_partially_allocated_err_outstanding_writes(
     #[case] num_pages: usize,
     #[case] page_size: PageSize,
-    #[case] allocate_pages: Range<usize>,
-    #[case] read_pages: Range<usize>,
+    #[case] allocate_pages: Range<PageIndex>,
+    #[case] read_pages: Range<PageIndex>,
 ) {
     let block =
         create_block_with_allocation(allocate_pages.clone(), num_pages, page_size);
@@ -228,7 +229,7 @@ fn test_reads_respect_marked_for_eviction_marker() {
 }
 
 fn create_block_with_allocation(
-    pages: Range<usize>,
+    pages: Range<PageIndex>,
     num_pages: usize,
     page_size: PageSize,
 ) -> VirtualMemoryBlock {

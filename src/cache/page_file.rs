@@ -46,7 +46,10 @@ impl PageFileCacheLayer {
     /// Prepare a new read of pages.
     ///
     /// Once all pages are confirmed to be allocated the read can be completed.
-    pub fn prepare_read(self: &Arc<Self>, page_range: Range<PageIndex>) -> PreparedRead {
+    pub fn prepare_read(
+        self: &Arc<Self>,
+        page_range: Range<PageIndex>,
+    ) -> PreparedRead<'_> {
         tracing::debug!(page_range = ?page_range, "create prepared read");
 
         // Register the access within the cache's policy.
@@ -140,6 +143,11 @@ impl PageFileCacheLayer {
         self.pending_evictions.cleanup(&self.memory);
     }
 
+    /// Runs any pending cache cleanup tasks.
+    pub fn run_cache_tasks(&self) {
+        self.live_pages.run_pending_tasks();
+    }
+
     #[inline]
     /// Returns the page size used by the cache.
     pub fn page_size(&self) -> PageSize {
@@ -173,7 +181,8 @@ impl PageFileCacheLayer {
 impl Drop for PageFileCacheLayer {
     fn drop(&mut self) {
         for page in 0..self.memory.num_pages() {
-            self.live_pages.invalidate(&(self.file_id, page));
+            self.live_pages
+                .invalidate(&(self.file_id, page as PageIndex));
         }
     }
 }
@@ -192,7 +201,7 @@ impl<'cache> PreparedRead<'cache> {
     /// with outstanding writes that are able to acquire the individual page locks.
     pub fn get_outstanding_write_permits(
         &self,
-    ) -> impl Iterator<Item = PageWritePermit> {
+    ) -> impl Iterator<Item = PageWritePermit> + use<'_> {
         self.inner.outstanding_writes().iter().filter_map(|page| {
             // If the lock is acquired or already allocated we can ignore
             // the error as the next `try_finish` call will resolve any outstanding
@@ -219,7 +228,7 @@ impl<'cache> PreparedRead<'cache> {
     }
 
     /// Returns a future that waits until a write has been completed on the page file.
-    pub fn wait_for_signal(&self) -> impl Future<Output = ()> {
+    pub fn wait_for_signal(&self) -> impl Future<Output = ()> + use<'_> {
         let waker = self.get_waker();
         waker.notified()
     }

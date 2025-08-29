@@ -58,7 +58,7 @@ fn test_create_memory_block(#[case] num_pages: usize, #[case] page_size: PageSiz
 #[case::write_huge_data_too_small(1, 0, PageSize::Huge2MB, 1 << 20)]
 fn test_write_page(
     #[case] num_pages: usize,
-    #[case] write_page_at: usize,
+    #[case] write_page_at: PageIndex,
     #[case] page_size: PageSize,
     #[case] data_size: usize,
 ) {
@@ -430,7 +430,11 @@ fn test_try_free_panic_uid() {
     block1.try_free(&permit).unwrap();
 }
 
-fn check_page_bytes(block: &VirtualMemoryBlock, page_at: usize, page_size: PageSize) {
+fn check_page_bytes(
+    block: &VirtualMemoryBlock,
+    page_at: PageIndex,
+    page_size: PageSize,
+) {
     let mut ptr = block.for_test_get_raw_page_ptr(page_at);
     unsafe {
         let buf = ptr.access_uninit();

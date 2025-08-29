@@ -348,8 +348,8 @@ impl VirtualMemoryBlock {
     /// allocated before the read is safe.
     pub fn prepare_read(&self, range: Range<PageIndex>) -> PreparedRead {
         assert!(
-            range.start < self.state.len()
-                && range.end <= self.state.len()
+            range.start < self.state.len() as u32
+                && range.end <= self.state.len() as u32
                 && range.start <= range.end,
             "invalid page range provided, this is a bug"
         );
@@ -386,7 +386,7 @@ impl VirtualMemoryBlock {
     }
 
     fn state_at(&self, index: PageIndex) -> &PageStateEntry {
-        &self.state[index]
+        &self.state[index as usize]
     }
 
     fn get_or_reserve_free_permit(&self, target: PageOrRetry) -> PageFreePermit {
@@ -537,10 +537,7 @@ impl PageWritePermit<'_> {
     }
 }
 
-fn flags_tagged_with_ticket(
-    state: &state::PageStateEntry,
-    expected_generation: u64,
-) -> bool {
+fn flags_tagged_with_ticket(state: &PageStateEntry, expected_generation: u64) -> bool {
     let flags = state.flags();
     if let Some(active_generation) = flags.extract_ticket_id() {
         active_generation == expected_generation

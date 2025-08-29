@@ -62,7 +62,7 @@ impl Display for PageSize {
 }
 
 /// The unique ID of a page within the memory block.
-pub type PageIndex = usize;
+pub type PageIndex = u32;
 
 /// A raw block of virtual memory split into pages.
 ///
@@ -123,7 +123,7 @@ impl RawVirtualMemoryPages {
         RawPagePtr { span }
     }
 
-    fn get_spanning_ptr<T>(&self, range: Range<usize>) -> SpanningPagePtr<T> {
+    fn get_spanning_ptr<T>(&self, range: Range<u32>) -> SpanningPagePtr<T> {
         let pos = self.resolve_pos(range.start);
         let len = range.len() * self.page_size as usize;
         let ptr = self.memory.get_ptr_at(pos);
@@ -135,7 +135,7 @@ impl RawVirtualMemoryPages {
     }
 
     fn resolve_pos(&self, page: PageIndex) -> usize {
-        page * self.page_size as usize
+        page as usize * self.page_size as usize
     }
 }
 
