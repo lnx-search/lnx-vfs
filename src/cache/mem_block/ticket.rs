@@ -320,6 +320,7 @@ mod tests {
             shared_state.oldest_alive_ticket(),
             TICKETS_PER_GENERATION * 3
         );
+        drop(gen4);
     }
 
     #[test]

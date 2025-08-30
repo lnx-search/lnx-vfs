@@ -203,7 +203,7 @@ impl File<RW> {
         self.ensure_writeable()?;
 
         let guard = buffer.share_guard();
-        let op = i2o2::opcode::Read::new(
+        let op = i2o2::opcode::Write::new(
             i2o2::types::Fixed(self.file_ref.ring_id()),
             buffer.as_mut_ptr(),
             len,
@@ -234,6 +234,11 @@ impl File<RW> {
         wait_for_reply(reply).await
     }
 
+    /// Signals whether the writer is writeable or not.
+    pub fn is_writeable(&self) -> bool {
+        !self.write_lockout.load(Ordering::Acquire)
+    }
+
     /// Lockout any future mutations to the file, this is normally
     /// because a fsync error is not safe to retry, and we might lose data
     /// even if we technically _do_ use `O_DIRECT`.
@@ -242,7 +247,7 @@ impl File<RW> {
     }
 
     pub(self) fn ensure_writeable(&self) -> io::Result<()> {
-        if self.write_lockout.load(Ordering::Acquire) {
+        if !self.is_writeable() {
             Err(io::Error::new(
                 ErrorKind::ReadOnlyFilesystem,
                 "file is read-only due to a prior fsync failure",

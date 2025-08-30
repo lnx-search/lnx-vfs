@@ -95,12 +95,6 @@ pub struct StreamReader {
 
 impl StreamReader {
     #[inline]
-    /// Returns a reference to the inner file.
-    pub fn file(&self) -> &file::ROFile {
-        &self.file
-    }
-
-    #[inline]
     /// Returns the unique ID assigned to the file.
     pub fn file_id(&self) -> directory::FileId {
         self.file.id()
@@ -212,11 +206,4 @@ impl StreamReader {
         self.read_buffer_cursor += take_n;
         take_n
     }
-}
-
-struct ScheduledRead {
-    reply: i2o2::ReplyReceiver,
-    buffer_start_pos: usize,
-    buffer_end_pos: usize,
-    offset: u64,
 }

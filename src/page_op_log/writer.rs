@@ -1,6 +1,6 @@
+use std::io;
 use std::io::ErrorKind;
 use std::sync::Arc;
-use std::{io, mem};
 
 use crate::buffer::DmaBuffer;
 use crate::file::DISK_ALIGN;
@@ -8,7 +8,7 @@ use crate::layout::log::LogEntry;
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageId, log};
 use crate::utils::{align_down, align_up};
-use crate::{ctx, directory, file};
+use crate::{ctx, file};
 
 const BUFFER_SIZE: usize = 128 << 10;
 const SEQUENCE_ID_START: u32 = 1;
@@ -89,21 +89,9 @@ impl LogFileWriter {
     }
 
     #[inline]
-    /// Returns writer file ID.
-    pub fn id(&self) -> directory::FileId {
-        self.file.id()
-    }
-
-    #[inline]
-    /// Returns whether the file is closed.
-    pub fn is_closed(&self) -> bool {
-        self.file.is_closed()
-    }
-
-    #[inline]
     /// Returns whether the file is locked out due to a prior error.
     pub fn is_locked_out(&self) -> bool {
-        self.file.is_locked_out() || self.locked_out
+        self.file.is_writeable() || self.locked_out
     }
 
     #[inline]
@@ -122,7 +110,7 @@ impl LogFileWriter {
     }
 
     /// Consume the writer and return the inner ring file.
-    pub fn into_ring_file(self) -> scheduler::RingFile {
+    pub fn into_file(self) -> file::RWFile {
         self.file
     }
 
@@ -155,11 +143,6 @@ impl LogFileWriter {
             self.locked_out = true;
         }
         result
-    }
-
-    /// Close the writer file.
-    pub async fn close(&mut self) -> io::Result<()> {
-        self.file.close().await
     }
 
     pub(self) async fn write_log_inner(
@@ -238,12 +221,9 @@ impl LogFileWriter {
         let expected_write_size = buffer.len();
         let write_offset = self.log_offset + self.current_pos;
 
-        let buffer_ptr = buffer.as_ptr();
-        let buffer_len = buffer.len();
-
         tracing::debug!(
             offset = write_offset,
-            len = buffer_len,
+            len = expected_write_size,
             "flushing memory buffer to disk"
         );
 
@@ -256,21 +236,14 @@ impl LogFileWriter {
         // we only advance the cursor by aligned steps.
         self.current_pos += align_down(delta_len, DISK_ALIGN) as u64;
 
-        let guard = if self.block_offset >= self.block_buffer.len() {
-            let buffer = self.take_memory_buffer();
-            Arc::new(buffer) as DynamicGuard
-        } else {
-            self.block_buffer.share_guard() as DynamicGuard
-        };
+        if self.block_offset >= self.block_buffer.len() {
+            self.rest_block_buffer_cursors();
+        }
 
-        // SAFETY: our op is safe to send across the thread boundaries and the buffer
-        //         is guaranteed to live at least as long as the ring requires as it
-        //         is passed to our ring guard.
-        let reply = unsafe {
-            self.file
-                .submit_write(buffer_ptr, buffer_len, write_offset, Some(guard))
-                .await?
-        };
+        let reply = self
+            .file
+            .submit_write(&mut self.block_buffer, expected_write_size, write_offset)
+            .await?;
 
         let iop = InflightIop {
             reply,
@@ -293,21 +266,19 @@ impl LogFileWriter {
     }
 
     fn ensure_file_writeable(&mut self) -> io::Result<()> {
-        if self.locked_out {
-            return Err(io::Error::new(
+        if self.locked_out || !self.file.is_writeable() {
+            Err(io::Error::new(
                 ErrorKind::ReadOnlyFilesystem,
                 "writer is locked due to prior error",
-            ));
+            ))
+        } else {
+            Ok(())
         }
-        self.file.ensure_safe_state()
     }
 
-    fn take_memory_buffer(&mut self) -> DmaBuffer {
-        let new_buffer = self.ctx.alloc::<BUFFER_SIZE>();
-        let block_buffer = mem::replace(&mut self.block_buffer, new_buffer);
+    fn rest_block_buffer_cursors(&mut self) {
         self.block_buffer_write_pos = 0;
         self.block_offset = log::LOG_BLOCK_SIZE;
-        block_buffer
     }
 }
 
@@ -317,17 +288,9 @@ async fn complete_iop(iop: InflightIop) -> io::Result<()> {
         expected_write_size,
     } = iop;
 
-    let result = if let Ok(result) = reply.try_get_result() {
-        result
-    } else {
-        reply
-            .await
-            .map_err(|_| io::Error::other("io scheduler panicked"))?
-    };
-
-    if result < 0 {
-        Err(io::Error::from_raw_os_error(-result))
-    } else if result as usize != expected_write_size {
+    let result = file::wait_for_reply(reply).await?;
+    dbg!(&result, expected_write_size);
+    if result != expected_write_size {
         Err(io::Error::new(
             ErrorKind::StorageFull,
             "storage failed to allocate",
@@ -345,19 +308,14 @@ struct InflightIop {
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests {
     use super::*;
+    use crate::directory::FileGroup;
+    use crate::layout::PageFileId;
     use crate::layout::log::LogOp;
-    use crate::{PageFileId, PageId};
 
     #[tokio::test]
     async fn test_writer_sequence_id() {
-        let ctx = Arc::new(ctx::FileContext::for_test(false));
-        let scheduler = scheduler::IoScheduler::for_test();
-        let tmp_file = tempfile::tempfile().unwrap();
-
-        let file = scheduler
-            .make_ring_file(1, tmp_file)
-            .await
-            .expect("Failed to make ring file");
+        let ctx = ctx::FileContext::for_test(false).await;
+        let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
         let mut writer = LogFileWriter::new(ctx, file, 0);
 

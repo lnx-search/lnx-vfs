@@ -69,7 +69,6 @@ impl CacheLayer {
         PreparedRead {
             parent: self.clone(),
             inner: inner_with_static_lifetime,
-            page_range,
         }
     }
 
@@ -201,7 +200,6 @@ pub struct PreparedRead {
     parent: Arc<CacheLayer>,
     // NOTE: The lifetime of this is `parent`.
     inner: super::mem_block::PreparedRead<'static>,
-    page_range: Range<PageIndex>,
 }
 
 impl PreparedRead {

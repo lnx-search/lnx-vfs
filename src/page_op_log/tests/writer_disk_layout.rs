@@ -1,25 +1,18 @@
-use std::sync::Arc;
-
+use crate::ctx;
+use crate::directory::FileGroup;
+use crate::file::DISK_ALIGN;
 use crate::layout::log::{LogEntry, LogOp};
 use crate::layout::{PageFileId, PageId, log};
 use crate::page_op_log::writer::LogFileWriter;
-use crate::{ctx, scheduler};
 
 #[tokio::test]
 async fn test_single_entry_write_layout() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = Arc::new(ctx::FileContext::for_test(false));
-    let scheduler = scheduler::IoScheduler::for_test();
-    let tmp_file = tempfile::NamedTempFile::new().unwrap();
-    let (file, path) = tmp_file.into_parts();
+    let ctx = ctx::FileContext::for_test(false).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let file = scheduler
-        .make_ring_file(1, file)
-        .await
-        .expect("Failed to make ring file");
-
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
 
     let entry = LogEntry {
         sequence_id: 1,
@@ -32,6 +25,10 @@ async fn test_single_entry_write_layout() {
     writer.write_log(entry, None).await.unwrap();
     writer.sync().await.unwrap();
 
+    let path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Wal, file.id())
+        .await;
     let mut content = std::fs::read(&path).expect("read log file");
     assert_eq!(content.len(), DISK_ALIGN);
 
@@ -48,17 +45,10 @@ async fn test_single_entry_write_layout() {
 async fn test_non_zero_log_offset() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = Arc::new(ctx::FileContext::for_test(false));
-    let scheduler = scheduler::IoScheduler::for_test();
-    let tmp_file = tempfile::NamedTempFile::new().unwrap();
-    let (file, path) = tmp_file.into_parts();
+    let ctx = ctx::FileContext::for_test(false).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let file = scheduler
-        .make_ring_file(1, file)
-        .await
-        .expect("Failed to make ring file");
-
-    let mut writer = LogFileWriter::new(ctx, file, 4096);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 4096);
 
     let entry = LogEntry {
         sequence_id: 1,
@@ -71,6 +61,10 @@ async fn test_non_zero_log_offset() {
     writer.write_log(entry, None).await.unwrap();
     writer.sync().await.unwrap();
 
+    let path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Wal, file.id())
+        .await;
     let mut content = std::fs::read(&path).expect("read log file");
     assert_eq!(content.len(), DISK_ALIGN * 2);
 
@@ -87,17 +81,10 @@ async fn test_non_zero_log_offset() {
 async fn test_multiple_block_write_layout() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = Arc::new(ctx::FileContext::for_test(false));
-    let scheduler = scheduler::IoScheduler::for_test();
-    let tmp_file = tempfile::NamedTempFile::new().unwrap();
-    let (file, path) = tmp_file.into_parts();
+    let ctx = ctx::FileContext::for_test(false).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let file = scheduler
-        .make_ring_file(1, file)
-        .await
-        .expect("Failed to make ring file");
-
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
 
     for page_id in 0..15 {
         let entry = LogEntry {
@@ -112,6 +99,10 @@ async fn test_multiple_block_write_layout() {
     }
     writer.sync().await.unwrap();
 
+    let path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Wal, file.id())
+        .await;
     let mut content = std::fs::read(&path).expect("read log file");
     assert_eq!(content.len(), DISK_ALIGN);
 
@@ -161,17 +152,10 @@ async fn test_multiple_pages_write_layout() {
 
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = Arc::new(ctx::FileContext::for_test(false));
-    let scheduler = scheduler::IoScheduler::for_test();
-    let tmp_file = tempfile::NamedTempFile::new().unwrap();
-    let (file, path) = tmp_file.into_parts();
+    let ctx = ctx::FileContext::for_test(false).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let file = scheduler
-        .make_ring_file(1, file)
-        .await
-        .expect("Failed to make ring file");
-
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
 
     for _ in 0..NUM_BLOCKS * 11 {
         let entry = LogEntry {
@@ -186,6 +170,10 @@ async fn test_multiple_pages_write_layout() {
     }
     writer.sync().await.unwrap();
 
+    let path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Wal, file.id())
+        .await;
     let mut content = std::fs::read(&path).expect("read log file");
     assert_eq!(content.len(), DISK_ALIGN * 2);
 

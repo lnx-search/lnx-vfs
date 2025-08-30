@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::arena::ArenaAllocator;
 use crate::buffer;
 use crate::buffer::ALLOC_PAGE_SIZE;
@@ -18,7 +20,7 @@ pub struct FileContext {
 impl FileContext {
     #[cfg(test)]
     /// Create a new file context for testing.
-    pub async fn for_test(encryption: bool) -> Self {
+    pub async fn for_test(encryption: bool) -> Arc<Self> {
         use chacha20poly1305::aead::Key;
         use chacha20poly1305::{KeyInit, XChaCha20Poly1305};
 
@@ -36,12 +38,12 @@ impl FileContext {
             .await
             .expect("open system directory");
 
-        Self {
+        Arc::new(Self {
             cipher,
             arena_allocator: ArenaAllocator::new(100),
             directory,
             tmp_dir,
-        }
+        })
     }
 
     #[inline]
@@ -60,6 +62,7 @@ impl FileContext {
         }
     }
 
+    #[track_caller]
     /// Allocates a new DMA buffer of a given size ([N]) in bytes.
     ///
     /// This will attempt to use an arena allocator first and then fallback
@@ -99,6 +102,12 @@ impl FileContext {
         } else {
             buffer::DmaBuffer::alloc_sys(num_pages)
         }
+    }
+
+    #[inline]
+    /// Returns a reference to the [SystemDirectory].
+    pub fn directory(&self) -> &SystemDirectory {
+        &self.directory
     }
 
     #[cfg(test)]

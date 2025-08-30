@@ -339,7 +339,7 @@ impl VirtualMemoryBlock {
         // revert the eviction and say the page is already allocated.
         if flags.is_allocated() && flags.is_marked_for_eviction() {
             state.mark_allocated(&page_lock_guard, ticket_id);
-            return Err(PrepareWriteError::AlreadyAllocated);
+            return Err(PrepareWriteError::EvictionReverted);
         }
 
         Ok(PageWritePermit {

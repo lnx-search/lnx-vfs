@@ -130,6 +130,12 @@ impl SystemDirectoryInner {
         Ok(FileId(file_id))
     }
 
+    /// Resolve the file path of a target file.
+    pub async fn resolve_file_path(&self, group: FileGroup, file_id: FileId) -> PathBuf {
+        let directory = self.groups[group.idx()].write().await;
+        directory.file_path(file_id.0)
+    }
+
     /// Remove an existing file in the target group.
     ///
     /// The file must not currently be in use by any other systems otherwise this call

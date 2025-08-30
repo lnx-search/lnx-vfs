@@ -165,7 +165,7 @@ fn test_write_page_revert_eviction_marker() {
         .expect_err("write should revert eviction marker");
     assert_eq!(
         err.to_string(),
-        PrepareWriteError::AlreadyAllocated.to_string()
+        PrepareWriteError::EvictionReverted.to_string()
     );
 
     let state = block.get_page_flags(0);

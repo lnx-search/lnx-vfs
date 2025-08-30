@@ -7,19 +7,9 @@ mod reader;
 mod tests;
 mod writer;
 
-use std::collections::VecDeque;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::{io, mem};
-
-use parking_lot::Mutex;
-
-pub use self::reader::{LogDecodeError, LogFileReader};
+use crate::directory::FileId;
 use crate::layout::PageId;
-use crate::layout::file_metadata::{self, Encryption};
-use crate::layout::log::LogEntry;
-use crate::layout::page_metadata::PageMetadata;
-use crate::{buffer, ctx, file, utils};
+use crate::layout::file_metadata::Encryption;
 // TODO: Move writer bit into the writer file, probably cleaner
 
 #[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
@@ -189,12 +179,12 @@ pub struct MetadataHeader {
 /// and a bad actor gaining information about the system by taking and swapping
 /// around data in the files.
 pub fn op_log_associated_data(
-    file_id: u32,
+    file_id: FileId,
     last_page_id: PageId,
     start_pos: u64,
 ) -> [u8; 16] {
     let mut buffer = [0; 16];
-    buffer[0..4].copy_from_slice(&file_id.to_le_bytes());
+    buffer[0..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
     buffer[4..8].copy_from_slice(&last_page_id.0.to_be_bytes());
     buffer[8..16].copy_from_slice(&start_pos.to_le_bytes());
     buffer

@@ -1,8 +1,7 @@
-use std::io::ErrorKind;
-use std::sync::Arc;
+use std::io::{ErrorKind, Seek, SeekFrom, Write};
 
 use crate::ctx;
-use crate::directory::FileGroup;
+use crate::directory::{FileGroup, FileId};
 use crate::stream_reader::StreamReaderBuilder;
 
 #[rstest::rstest]
@@ -19,7 +18,6 @@ async fn test_stream_reader_builder_construction(
     #[case] offset: u64,
 ) {
     let ctx = ctx::FileContext::for_test(false).await;
-    let ctx = Arc::new(ctx);
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let _reader = StreamReaderBuilder::new(ctx.clone(), file)
@@ -39,12 +37,9 @@ async fn test_reader_single_read(
         .collect::<Vec<u8>>();
 
     let ctx = ctx::FileContext::for_test(false).await;
-    let ctx = Arc::new(ctx);
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    file.write_buffer(sample_buffer.clone(), offset)
-        .await
-        .expect("write to file");
+    write_all_at(&ctx, file.id(), &sample_buffer, 0).await;
 
     let mut reader = StreamReaderBuilder::new(ctx.clone(), file)
         .with_offset(offset)
@@ -61,12 +56,9 @@ async fn test_reader_single_read(
 #[tokio::test]
 async fn test_reader_short_read_error() {
     let ctx = ctx::FileContext::for_test(false).await;
-    let ctx = Arc::new(ctx);
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    file.write_buffer(vec![1; 4 << 10], 0)
-        .await
-        .expect("write to file");
+    write_all_at(&ctx, file.id(), &vec![1; 4 << 10], 0).await;
 
     let mut reader = StreamReaderBuilder::new(ctx.clone(), file).build();
 
@@ -91,12 +83,9 @@ async fn test_reader_short_read_error() {
 #[tokio::test]
 async fn test_reader_unexpected_eof() {
     let ctx = ctx::FileContext::for_test(false).await;
-    let ctx = Arc::new(ctx);
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    file.write_buffer(vec![1; 4 << 10], 0)
-        .await
-        .expect("write to file");
+    write_all_at(&ctx, file.id(), &vec![1; 4 << 10], 0).await;
 
     let mut reader = StreamReaderBuilder::new(ctx.clone(), file).build();
 
@@ -107,4 +96,25 @@ async fn test_reader_unexpected_eof() {
         .expect_err("read exact should return error due to unexpected EOF");
     assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
     assert_eq!(err.to_string(), "could not fill buffer completely");
+}
+
+async fn write_all_at(
+    ctx: &ctx::FileContext,
+    file_id: FileId,
+    data: &[u8],
+    offset: u64,
+) {
+    let path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Wal, file_id)
+        .await;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open(path)
+        .unwrap();
+    file.set_len(offset).unwrap();
+    file.seek(SeekFrom::Start(offset)).unwrap();
+    file.write_all(data).unwrap();
 }

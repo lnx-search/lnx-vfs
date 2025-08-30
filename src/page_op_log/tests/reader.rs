@@ -1,14 +1,11 @@
 use std::io;
-use std::io::{Seek, Write};
-use std::sync::Arc;
 
+use crate::directory::FileGroup;
 use crate::layout::log::{LogEntry, LogOp};
 use crate::layout::{PageFileId, PageId, log};
 use crate::page_op_log::op_log_associated_data;
 use crate::page_op_log::reader::LogFileReader;
-use crate::{ctx, scheduler};
-
-const FILE_ID: u32 = 1;
+use crate::{ctx, file};
 
 #[rstest::rstest]
 #[trace]
@@ -18,18 +15,12 @@ async fn test_log_reader(
     #[values(0, 4096)] offset: u64,
     #[values(0, 5, 18)] num_blocks: usize,
 ) {
-    let ctx = Arc::new(ctx::FileContext::for_test(encryption));
-    let scheduler = scheduler::IoScheduler::for_test();
-    let mut tmp_file = tempfile::tempfile().unwrap();
+    let ctx = ctx::FileContext::for_test(encryption).await;
+    let mut file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    make_sample_file(&ctx, &mut tmp_file, num_blocks, offset).unwrap();
+    make_sample_file(&ctx, &mut file, num_blocks, offset).await;
 
-    let file = scheduler
-        .make_ring_file(FILE_ID, tmp_file)
-        .await
-        .expect("Failed to make ring file");
-
-    let mut reader = LogFileReader::new(ctx, file, offset);
+    let mut reader = LogFileReader::new(ctx, file.into(), offset);
 
     let mut blocks = Vec::new();
     while let Some(block) = reader.next_block().await.expect("Failed to read block") {
@@ -46,14 +37,25 @@ async fn test_log_reader(
     }
 }
 
-fn make_sample_file(
+async fn make_sample_file(
     ctx: &ctx::FileContext,
-    file: &mut std::fs::File,
+    file: &mut file::RWFile,
     num_blocks: usize,
     offset: u64,
-) -> io::Result<()> {
-    file.set_len(offset)?;
-    file.seek(io::SeekFrom::Start(offset))?;
+) {
+    use std::io::{Seek, Write};
+
+    let path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Wal, file.id())
+        .await;
+    let mut raw_file = std::fs::OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open(path)
+        .unwrap();
+    raw_file.set_len(offset).unwrap();
+    raw_file.seek(io::SeekFrom::Start(offset)).unwrap();
 
     let mut last_page_id = PageId(0);
     let mut seq_id = 0;
@@ -77,7 +79,7 @@ fn make_sample_file(
         log::encode_log_block(
             ctx.cipher(),
             &op_log_associated_data(
-                FILE_ID,
+                file.id(),
                 last_page_id,
                 offset + (block_id * log::LOG_BLOCK_SIZE) as u64,
             ),
@@ -88,9 +90,7 @@ fn make_sample_file(
 
         last_page_id = block.last_page_id().unwrap();
 
-        file.write_all(&buffer)?;
-        file.sync_all()?;
+        raw_file.write_all(&buffer).unwrap();
+        raw_file.sync_all().unwrap();
     }
-
-    Ok(())
 }

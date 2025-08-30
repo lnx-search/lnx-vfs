@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::io;
-use std::io::ErrorKind;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 
