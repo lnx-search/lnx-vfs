@@ -6,8 +6,11 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::directory::RingFile;
+use super::directory::{FileId, RingFile};
 use crate::buffer::DmaBuffer;
+
+/// The alignment disk read and write lengths must be.
+pub const DISK_ALIGN: usize = 4096;
 
 pub type DynamicGuard = Arc<dyn Any + Send + Sync>;
 /// A read only file.
@@ -59,7 +62,7 @@ impl<M> Clone for File<M> {
 
 impl<M> std::fmt::Debug for File<M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "File(mode={}, id={})", type_name::<M>(), self.id())
+        write!(f, "File(mode={}, id={:?})", type_name::<M>(), self.id())
     }
 }
 
@@ -78,7 +81,7 @@ impl<M> File<M> {
     }
 
     /// Returns the unique ID of the file.
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> FileId {
         self.file_ref.id()
     }
 }
@@ -127,10 +130,23 @@ impl<M: FileMode> File<M> {
         assert!(len < buffer.len());
 
         #[cfg(test)]
-        fail::fail_point!("file:ro::read_buffer", crate::utils::parse_io_error_return);
+        fail::fail_point!("file::ro::read_buffer", crate::utils::parse_io_error_return);
 
         let reply = self.submit_read(buffer, len, offset).await?;
         wait_for_reply(reply).await
+    }
+
+    /// Returns the true length of the file.
+    pub async fn get_len(&self) -> io::Result<u64> {
+        #[cfg(test)]
+        fail::fail_point!("file::ro::get_len", crate::utils::parse_io_error_return);
+
+        let file = self.file_ref.clone();
+        let metadata =
+            tokio::task::spawn_blocking(move || file.as_std_file().metadata())
+                .await
+                .expect("spawn worker thread")?;
+        Ok(metadata.len())
     }
 }
 
@@ -257,6 +273,17 @@ impl File<Dir> {
 
         wait_for_reply(reply).await?;
         Ok(())
+    }
+}
+
+impl From<RWFile> for ROFile {
+    fn from(file: RWFile) -> Self {
+        Self {
+            file_ref: file.file_ref,
+            handle: file.handle,
+            write_lockout: file.write_lockout,
+            _mode: PhantomData,
+        }
     }
 }
 

@@ -66,13 +66,13 @@ async fn test_create_new_file_group_behaviour(
         .get_ro_file(group, file_id)
         .await
         .expect("file should exist and be available");
-    assert_eq!(file.id(), 1000);
+    assert_eq!(file.id().as_u32(), 1000);
 
     let file = directory
         .get_rw_file(group, file_id)
         .await
         .expect("file should exist and be available");
-    assert_eq!(file.id(), 1000);
+    assert_eq!(file.id().as_u32(), 1000);
 
     let path = tempdir.path().join(group.folder_name());
 

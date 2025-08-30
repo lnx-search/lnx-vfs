@@ -2,9 +2,12 @@ mod arena;
 mod buffer;
 mod cache;
 mod core;
+mod ctx;
 mod directory;
 mod file;
 mod layout;
+mod page_op_log;
+mod stream_reader;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
 mod transaction;

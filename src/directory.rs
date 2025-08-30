@@ -402,14 +402,20 @@ pub struct RingFile {
 impl RingFile {
     #[inline]
     /// The unique ID assigned to the file.
-    pub fn id(&self) -> u32 {
-        self.id
+    pub fn id(&self) -> FileId {
+        FileId(self.id)
     }
 
     #[inline]
     /// Returns the ID assigned to the file by the ring.
     pub fn ring_id(&self) -> u32 {
         self.ring_id
+    }
+
+    #[inline]
+    /// Return the inner reference to the file.
+    pub fn as_std_file(&self) -> &std::fs::File {
+        &self.inner
     }
 
     #[inline]

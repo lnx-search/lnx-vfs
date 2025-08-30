@@ -18,8 +18,8 @@ pub const PAGE_BLOCK_SIZE: usize = 4096;
 pub struct PageMetadata {
     /// The block this page contains data for.
     pub(crate) group: PageGroupId,
-    /// Currently unused.
-    pub(crate) reserved: u32,
+    /// Used to determine if a page is newer than another when assigned the same group ID.
+    pub(crate) revision: u32,
     /// The [PageId] of  next that is part of the group.
     pub(crate) next_page_id: PageId,
     /// The ID of the page.
@@ -42,7 +42,7 @@ impl PageMetadata {
         Self {
             id: PageId::TERMINATOR,
             group: PageGroupId(u64::MAX),
-            reserved: 0,
+            revision: 0,
             next_page_id: PageId::TERMINATOR,
             data_len: 0,
             context: [0; 40],

@@ -40,7 +40,7 @@ memmap2 = { git = "https://github.com/lnx-search/memmap2-rs.git", rev = "b4e936e
 rstest = "0.26"
 tracing-subscriber = "0.3"
 tempfile = "3"
-divan = "0.1"
+ulid = "1"
 
 fail = { version = "0.5", features = ["failpoints"] }
 i2o2 = { version = "0.4", features = ["fail"] }
