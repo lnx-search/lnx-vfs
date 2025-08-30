@@ -11,8 +11,8 @@ use parking_lot::Mutex;
 
 use self::evictions::PendingEvictions;
 use self::mem_block::VirtualMemoryBlock;
-pub use self::mem_block::{PageIndex, PageSize};
-pub use self::page_file::CacheLayer;
+pub use self::mem_block::{PageIndex, PageSize, PageWritePermit, PreparedRead};
+pub use self::page_file::{CacheLayer, ReadRef};
 
 /// A unique identifier for a cache layer.
 pub type LayerId = u32;

@@ -12,6 +12,11 @@ mod utils;
 
 use std::ops::Range;
 
+#[cfg(feature = "bench-internal")]
+pub mod bench {
+    pub use crate::cache::*;
+}
+
 pub use self::core::FileSystemCore;
 pub use self::transaction::FileSystemTransaction;
 
