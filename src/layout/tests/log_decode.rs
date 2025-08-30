@@ -53,10 +53,6 @@ fn test_log_decoding(#[case] entry: LogBlock, #[case] encrypt_enable: bool) {
         .expect("log entry should be encoded successfully");
 
     let entry = decode_log_block(cipher.as_ref(), b"", &mut buffer)
-        .map_err(|e| {
-            eprintln!("{e}");
-            e
-        })
         .expect("entry should be decoded successfully");
     assert_eq!(entry.num_entries(), 1);
 }

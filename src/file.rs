@@ -99,7 +99,7 @@ impl<M: FileMode> File<M> {
         len: usize,
         offset: u64,
     ) -> io::Result<i2o2::ReplyReceiver> {
-        assert!(len < buffer.len());
+        assert!(len <= buffer.len());
 
         #[cfg(test)]
         fail::fail_point!("file::ro::submit_read", crate::utils::parse_io_error_return);
@@ -127,7 +127,7 @@ impl<M: FileMode> File<M> {
         len: usize,
         offset: u64,
     ) -> io::Result<usize> {
-        assert!(len < buffer.len());
+        assert!(len <= buffer.len());
 
         #[cfg(test)]
         fail::fail_point!("file::ro::read_buffer", crate::utils::parse_io_error_return);
@@ -192,7 +192,7 @@ impl File<RW> {
         len: usize,
         offset: u64,
     ) -> io::Result<i2o2::ReplyReceiver> {
-        assert!(len < buffer.len());
+        assert!(len <= buffer.len());
 
         #[cfg(test)]
         fail::fail_point!(
@@ -294,9 +294,14 @@ impl From<RWFile> for ROFile {
 
 /// Wait for the IOP to complete and convert the result into a [io::Result].
 pub async fn wait_for_reply(reply: i2o2::ReplyReceiver) -> io::Result<usize> {
-    let result = reply
-        .await
-        .map_err(|e| io::Error::new(ErrorKind::Interrupted, e))?;
+    let result = if let Ok(result) = reply.try_get_result() {
+        result
+    } else {
+        reply
+            .await
+            .map_err(|e| io::Error::new(ErrorKind::BrokenPipe, e))?
+    };
+
     if result < 0 {
         Err(io::Error::from_raw_os_error(-result))
     } else {

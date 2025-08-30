@@ -133,7 +133,7 @@ async fn test_no_close_on_write_error_but_lockout() {
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let scenario = fail::FailScenario::setup();
-    fail::cfg("ringfile::submit_write", "return").unwrap();
+    fail::cfg("file::rw::submit_write", "return").unwrap();
 
     let mut writer = LogFileWriter::new(ctx, file, 0);
     let error = writer.sync().await.expect_err("write should error");
@@ -163,7 +163,7 @@ async fn test_propagate_lockout_error() {
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let scenario = fail::FailScenario::setup();
-    fail::cfg("ringfile::fdatasync", "return").unwrap();
+    fail::cfg("file::rw::fdatasync", "return").unwrap();
 
     let mut writer = LogFileWriter::new(ctx, file, 0);
     let error = writer.sync().await.expect_err("sync should error");
@@ -288,6 +288,7 @@ async fn test_readable_results_fuzz(
 
     let block_buffer =
         &mut buffer[expected_block_position as usize..][..log::LOG_BLOCK_SIZE];
+
     let block = log::decode_log_block(
         ctx.cipher(),
         &op_log_associated_data(

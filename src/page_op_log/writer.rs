@@ -1,6 +1,6 @@
-use std::io;
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::{io, mem};
 
 use crate::buffer::DmaBuffer;
 use crate::file::DISK_ALIGN;
@@ -91,7 +91,7 @@ impl LogFileWriter {
     #[inline]
     /// Returns whether the file is locked out due to a prior error.
     pub fn is_locked_out(&self) -> bool {
-        self.file.is_writeable() || self.locked_out
+        !self.file.is_writeable() || self.locked_out
     }
 
     #[inline]
@@ -218,12 +218,12 @@ impl LogFileWriter {
         let delta_len = self.block_offset - self.block_buffer_write_pos;
         let aligned_len = align_up(delta_len, DISK_ALIGN);
         let buffer = &self.block_buffer[self.block_buffer_write_pos..][..aligned_len];
-        let expected_write_size = buffer.len();
+        let write_len = buffer.len();
         let write_offset = self.log_offset + self.current_pos;
 
         tracing::debug!(
             offset = write_offset,
-            len = expected_write_size,
+            len = write_len,
             "flushing memory buffer to disk"
         );
 
@@ -236,18 +236,20 @@ impl LogFileWriter {
         // we only advance the cursor by aligned steps.
         self.current_pos += align_down(delta_len, DISK_ALIGN) as u64;
 
-        if self.block_offset >= self.block_buffer.len() {
-            self.rest_block_buffer_cursors();
-        }
-
-        let reply = self
-            .file
-            .submit_write(&mut self.block_buffer, expected_write_size, write_offset)
-            .await?;
+        let reply = if self.block_offset >= self.block_buffer.len() {
+            let mut buffer = self.take_memory_buffer();
+            self.file
+                .submit_write(&mut buffer, write_len, write_offset)
+                .await?
+        } else {
+            self.file
+                .submit_write(&mut self.block_buffer, write_len, write_offset)
+                .await?
+        };
 
         let iop = InflightIop {
             reply,
-            expected_write_size,
+            expected_write_size: write_len,
         };
 
         // We don't immediately wait for the reply as we don't actually care if it completes
@@ -266,7 +268,7 @@ impl LogFileWriter {
     }
 
     fn ensure_file_writeable(&mut self) -> io::Result<()> {
-        if self.locked_out || !self.file.is_writeable() {
+        if self.is_locked_out() {
             Err(io::Error::new(
                 ErrorKind::ReadOnlyFilesystem,
                 "writer is locked due to prior error",
@@ -276,9 +278,12 @@ impl LogFileWriter {
         }
     }
 
-    fn rest_block_buffer_cursors(&mut self) {
+    fn take_memory_buffer(&mut self) -> DmaBuffer {
+        let new_buffer = self.ctx.alloc::<BUFFER_SIZE>();
+        let block_buffer = mem::replace(&mut self.block_buffer, new_buffer);
         self.block_buffer_write_pos = 0;
         self.block_offset = log::LOG_BLOCK_SIZE;
+        block_buffer
     }
 }
 
@@ -289,7 +294,6 @@ async fn complete_iop(iop: InflightIop) -> io::Result<()> {
     } = iop;
 
     let result = file::wait_for_reply(reply).await?;
-    dbg!(&result, expected_write_size);
     if result != expected_write_size {
         Err(io::Error::new(
             ErrorKind::StorageFull,
