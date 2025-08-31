@@ -43,7 +43,8 @@ pub fn decode_log_block(
         encrypt::decrypt_in_place(cipher, associated_data, blk, context)
             .map_err(|_| DecodeLogBlockError::DecryptionFail)?;
     } else {
-        let verified = integrity::verify(Encryption::Disabled, None, blk, context);
+        let verified =
+            integrity::verify(Encryption::Disabled, None, associated_data, blk, context);
         if !verified {
             return Err(DecodeLogBlockError::VerificationFail);
         }
@@ -108,7 +109,7 @@ pub fn encode_log_block(
         encrypt::encrypt_in_place(cipher, associated_data, blk, context)
             .map_err(EncodeLogBlockError::EncryptionFail)?;
     } else {
-        integrity::write_check_bytes(None, blk, context);
+        integrity::write_check_bytes(None, associated_data, blk, context);
     }
 
     Ok(())

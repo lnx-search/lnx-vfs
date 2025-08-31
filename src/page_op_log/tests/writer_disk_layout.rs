@@ -3,16 +3,18 @@ use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
 use crate::layout::log::{LogEntry, LogOp};
 use crate::layout::{PageFileId, PageId, log};
+use crate::page_op_log::op_log_associated_data;
 use crate::page_op_log::writer::LogFileWriter;
 
+#[rstest::rstest]
 #[tokio::test]
-async fn test_single_entry_write_layout() {
+async fn test_single_entry_write_layout(#[values(0, 4096)] log_offset: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), log_offset as u64);
 
     let entry = LogEntry {
         sequence_id: 1,
@@ -30,47 +32,15 @@ async fn test_single_entry_write_layout() {
         .resolve_file_path(FileGroup::Wal, file.id())
         .await;
     let mut content = std::fs::read(&path).expect("read log file");
-    assert_eq!(content.len(), DISK_ALIGN);
+    assert_eq!(content.len(), DISK_ALIGN + log_offset);
 
-    let expected_buffer = &mut content[..log::LOG_BLOCK_SIZE];
-    let block = log::decode_log_block(None, b"", expected_buffer)
-        .expect("block should be decodable");
-    assert_eq!(block.num_entries(), 1);
-
-    let entries = block.entries();
-    assert_eq!(entries[0].log, entry);
-}
-
-#[tokio::test]
-async fn test_non_zero_log_offset() {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    let ctx = ctx::FileContext::for_test(false).await;
-    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
-
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 4096);
-
-    let entry = LogEntry {
-        sequence_id: 1,
-        transaction_id: 6,
-        transaction_n_entries: 7,
-        page_id: PageId(1),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
-    writer.write_log(entry, None).await.unwrap();
-    writer.sync().await.unwrap();
-
-    let path = ctx
-        .directory()
-        .resolve_file_path(FileGroup::Wal, file.id())
-        .await;
-    let mut content = std::fs::read(&path).expect("read log file");
-    assert_eq!(content.len(), DISK_ALIGN * 2);
-
-    let expected_buffer = &mut content[4096..4096 + log::LOG_BLOCK_SIZE];
-    let block = log::decode_log_block(None, b"", expected_buffer)
-        .expect("block should be decodable");
+    let expected_buffer = &mut content[log_offset..log_offset + log::LOG_BLOCK_SIZE];
+    let block = log::decode_log_block(
+        None,
+        &op_log_associated_data(file.id(), PageId(0), log_offset as u64),
+        expected_buffer,
+    )
+    .expect("block should be decodable");
     assert_eq!(block.num_entries(), 1);
 
     let entries = block.entries();
@@ -112,10 +82,18 @@ async fn test_multiple_block_write_layout() {
     ];
     let [buffer1, buffer2] = content.get_disjoint_mut(indices).unwrap();
 
-    let block1 =
-        log::decode_log_block(None, b"", buffer1).expect("block should be decodable");
-    let block2 =
-        log::decode_log_block(None, b"", buffer2).expect("block should be decodable");
+    let block1 = log::decode_log_block(
+        None,
+        &op_log_associated_data(file.id(), PageId(0), 0),
+        buffer1,
+    )
+    .expect("block should be decodable");
+    let block2 = log::decode_log_block(
+        None,
+        &op_log_associated_data(file.id(), PageId(10), log::LOG_BLOCK_SIZE as u64),
+        buffer2,
+    )
+    .expect("block should be decodable");
     assert_eq!(block1.num_entries(), 11);
     assert_eq!(block2.num_entries(), 4);
 
@@ -157,12 +135,12 @@ async fn test_multiple_pages_write_layout() {
 
     let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
 
-    for _ in 0..NUM_BLOCKS * 11 {
+    for page_id in 0..NUM_BLOCKS * 11 {
         let entry = LogEntry {
             sequence_id: 1,
             transaction_id: 6,
             transaction_n_entries: 7,
-            page_id: PageId(11),
+            page_id: PageId(page_id as u32),
             page_file_id: PageFileId(1),
             op: LogOp::Free,
         };
@@ -181,8 +159,16 @@ async fn test_multiple_pages_write_layout() {
         let buffer_start = block_id * log::LOG_BLOCK_SIZE;
         let buffer = &mut content[buffer_start..][..log::LOG_BLOCK_SIZE];
 
-        let block =
-            log::decode_log_block(None, b"", buffer).expect("block should be decodable");
+        let block = log::decode_log_block(
+            None,
+            &op_log_associated_data(
+                file.id(),
+                PageId((block_id * 11).saturating_sub(1) as u32),
+                buffer_start as u64,
+            ),
+            buffer,
+        )
+        .expect("block should be decodable");
         assert_eq!(block.num_entries(), 11);
 
         let entries = block.entries();
@@ -192,7 +178,7 @@ async fn test_multiple_pages_write_layout() {
                 sequence_id: ((block_id * 11) + 1) as u32,
                 transaction_id: 6,
                 transaction_n_entries: 7,
-                page_id: PageId(11),
+                page_id: PageId((block_id * 11) as u32),
                 page_file_id: PageFileId(1),
                 op: LogOp::Free,
             }
