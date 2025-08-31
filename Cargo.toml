@@ -39,6 +39,7 @@ rstest = "0.26"
 tracing-subscriber = "0.3"
 tempfile = "3"
 ulid = "1"
+anyhow = "1"
 
 fail = { version = "0.5", features = ["failpoints"] }
 i2o2 = { version = "0.4", features = ["fail"] }

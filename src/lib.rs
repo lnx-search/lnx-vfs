@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "bench-lib-unstable", feature(test))]
+
 mod arena;
 mod buffer;
 mod cache;
