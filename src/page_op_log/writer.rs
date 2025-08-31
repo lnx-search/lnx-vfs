@@ -5,13 +5,12 @@ use std::{io, mem};
 use crate::buffer::DmaBuffer;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
-use crate::layout::file_metadata::Encryption;
 use crate::layout::log::LogEntry;
 use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageId, file_metadata, log};
+use crate::layout::{file_metadata, log};
 use crate::page_op_log::MetadataHeader;
 use crate::utils::{align_down, align_up};
-use crate::{buffer, ctx, file};
+use crate::{ctx, file};
 
 const BUFFER_SIZE: usize = 128 << 10;
 const SEQUENCE_ID_START: u32 = 1;
@@ -78,7 +77,7 @@ impl LogFileWriter {
     ) -> Result<Self, LogOpenWriteError> {
         let header = MetadataHeader {
             log_file_id: super::generate_random_log_id(),
-            encryption: Encryption::Disabled,
+            encryption: ctx.get_encryption_status(),
         };
 
         let associated_data =
@@ -376,8 +375,8 @@ struct InflightIop {
 mod tests {
     use super::*;
     use crate::directory::FileGroup;
-    use crate::layout::PageFileId;
     use crate::layout::log::LogOp;
+    use crate::layout::{PageFileId, PageId};
 
     #[tokio::test]
     async fn test_writer_sequence_id() {

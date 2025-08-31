@@ -2,9 +2,9 @@ use crate::ctx;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
 use crate::layout::log::{LogEntry, LogOp};
-use crate::layout::{PageFileId, PageId, log};
-use crate::page_op_log::op_log_associated_data;
+use crate::layout::{PageFileId, PageId, file_metadata, log};
 use crate::page_op_log::writer::LogFileWriter;
+use crate::page_op_log::{MetadataHeader, op_log_associated_data};
 
 #[rstest::rstest]
 #[tokio::test]
@@ -177,4 +177,31 @@ async fn test_multiple_pages_write_layout() {
             }
         );
     }
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_header_writing(#[values(false, true)] encryption: bool) {
+    let ctx = ctx::FileContext::for_test(encryption).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
+
+    let writer = LogFileWriter::create(ctx.clone(), file.clone())
+        .await
+        .expect("write log file with new header");
+    drop(writer);
+
+    let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
+    file.read_buffer(&mut header_buffer, 0).await.unwrap();
+
+    let associated_data =
+        file_metadata::header_associated_data(file.id(), FileGroup::Wal);
+
+    let header: MetadataHeader = file_metadata::decode_metadata(
+        ctx.cipher(),
+        &associated_data,
+        &mut header_buffer[..file_metadata::HEADER_SIZE],
+    )
+    .expect("writer should write valid header");
+    assert_eq!(header.encryption, ctx.get_encryption_status());
+    assert_ne!(header.log_file_id, 0);
 }

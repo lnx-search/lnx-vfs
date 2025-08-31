@@ -1,3 +1,4 @@
+mod e2e;
 mod reader;
 mod writer_associated_data;
 mod writer_disk_layout;

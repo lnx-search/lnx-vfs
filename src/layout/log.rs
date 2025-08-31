@@ -12,7 +12,7 @@ use rkyv::ser::Positional;
 
 use super::file_metadata::Encryption;
 use super::{encrypt, integrity};
-use crate::layout::encrypt::EncryptError;
+use crate::layout::encrypt::{DecryptError, EncryptError};
 use crate::layout::page_metadata::{ArchivedPageMetadata, PageMetadata};
 use crate::layout::{PageFileId, PageId};
 
