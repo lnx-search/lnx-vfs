@@ -103,6 +103,8 @@ mod tests {
         assert_eq!(align_down(1, 4), 0);
         assert_eq!(align_down(4, 4), 4);
         assert_eq!(align_down(5, 4), 4);
+        assert_eq!(align_down(4096, 4096), 4096);
+        assert_eq!(align_down(20480, 4096), 20480);
     }
 
     #[test]

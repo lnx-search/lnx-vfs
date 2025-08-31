@@ -185,14 +185,9 @@ impl StreamReader {
     }
 
     async fn try_fill_read_buffer(&mut self) -> io::Result<usize> {
-        let read_n = self.read_buffer.len();
-        let reply = self
-            .file
-            .submit_read(&mut self.read_buffer, read_n, self.file_cursor)
-            .await?;
-
-        let result = file::wait_for_reply(reply).await?;
-        Ok(result)
+        self.file
+            .read_buffer(&mut self.read_buffer, self.file_cursor)
+            .await
     }
 
     fn remaining_buffer(&self) -> &[u8] {

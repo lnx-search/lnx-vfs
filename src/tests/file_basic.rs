@@ -20,9 +20,8 @@ async fn test_file_read(tempdir: tempfile::TempDir) {
         .expect("get ro file");
 
     let mut buffer = DmaBuffer::alloc_sys(1);
-    let len = buffer.len();
     let n = ro_file
-        .read_buffer(&mut buffer, len, 0)
+        .read_buffer(&mut buffer, 0)
         .await
         .expect("read buffer");
     assert_eq!(n, 13);

@@ -209,6 +209,8 @@ impl LogFileWriter {
         )
         .map_err(io::Error::other)?;
 
+        eprintln!("block is encoded at: {}", buffer_start);
+
         Ok(())
     }
 
@@ -218,12 +220,14 @@ impl LogFileWriter {
         let delta_len = self.block_offset - self.block_buffer_write_pos;
         let aligned_len = align_up(delta_len, DISK_ALIGN);
         let buffer = &self.block_buffer[self.block_buffer_write_pos..][..aligned_len];
-        let write_len = buffer.len();
         let write_offset = self.log_offset + self.current_pos;
+
+        let buffer_ptr = buffer.as_ptr();
+        let buffer_len = buffer.len();
 
         tracing::debug!(
             offset = write_offset,
-            len = write_len,
+            len = buffer_len,
             "flushing memory buffer to disk"
         );
 
@@ -236,20 +240,31 @@ impl LogFileWriter {
         // we only advance the cursor by aligned steps.
         self.current_pos += align_down(delta_len, DISK_ALIGN) as u64;
 
-        let reply = if self.block_offset >= self.block_buffer.len() {
-            let mut buffer = self.take_memory_buffer();
-            self.file
-                .submit_write(&mut buffer, write_len, write_offset)
-                .await?
+        // Note on write safety with these shared buffers.
+        // Technically, the buffer could be modified while the request is still in flight,
+        // however, this does not happen in practice as the only time we modify the buffer
+        // just after calling this method is when the buffer is full, in which case we create
+        // a new buffer from the arena anyway. When dealing with a partial buffer it is
+        // during a fsync which will immediately wait for the IOP to complete.
+        let guard = if self.block_offset >= self.block_buffer.len() {
+            let buffer = self.take_memory_buffer();
+            Arc::new(buffer) as file::DynamicGuard
         } else {
+            self.block_buffer.share_guard() as file::DynamicGuard
+        };
+
+        // SAFETY: our op is safe to send across the thread boundaries and the buffer
+        //         is guaranteed to live at least as long as the ring requires as it
+        //         is passed to our ring guard.
+        let reply = unsafe {
             self.file
-                .submit_write(&mut self.block_buffer, write_len, write_offset)
+                .submit_write(buffer_ptr, buffer_len, write_offset, Some(guard))
                 .await?
         };
 
         let iop = InflightIop {
             reply,
-            expected_write_size: write_len,
+            expected_write_size: buffer_len,
         };
 
         // We don't immediately wait for the reply as we don't actually care if it completes

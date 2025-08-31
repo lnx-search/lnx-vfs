@@ -93,28 +93,26 @@ impl<M: FileMode> File<M> {
     ///
     /// You must ensure the pointers remain valid for as long as the scheduler
     /// requires, this means the pointer must be valid until the `guard` (if passed)
-    pub async fn submit_read(
+    pub async unsafe fn submit_read(
         &self,
-        buffer: &mut DmaBuffer,
+        buffer_ptr: *mut u8,
         len: usize,
         offset: u64,
+        guard: Option<DynamicGuard>,
     ) -> io::Result<i2o2::ReplyReceiver> {
-        assert!(len <= buffer.len());
-
         #[cfg(test)]
         fail::fail_point!("file::ro::submit_read", crate::utils::parse_io_error_return);
 
-        let guard = buffer.share_guard();
         let op = i2o2::opcode::Read::new(
             i2o2::types::Fixed(self.file_ref.ring_id()),
-            buffer.as_mut_ptr(),
+            buffer_ptr,
             len,
             offset,
         );
 
         unsafe {
             self.handle
-                .submit_async(op, Some(guard))
+                .submit_async(op, guard)
                 .await
                 .map_err(io::Error::other)
         }
@@ -124,15 +122,21 @@ impl<M: FileMode> File<M> {
     pub async fn read_buffer(
         &self,
         buffer: &mut DmaBuffer,
-        len: usize,
         offset: u64,
     ) -> io::Result<usize> {
-        assert!(len <= buffer.len());
+        debug_assert_eq!(buffer.len() % DISK_ALIGN, 0);
 
         #[cfg(test)]
         fail::fail_point!("file::ro::read_buffer", crate::utils::parse_io_error_return);
 
-        let reply = self.submit_read(buffer, len, offset).await?;
+        let buffer_guard = buffer.share_guard();
+        let buffer_ptr = buffer.as_mut_ptr();
+        let buffer_len = buffer.len();
+
+        let reply = unsafe {
+            self.submit_read(buffer_ptr, buffer_len, offset, Some(buffer_guard))
+                .await?
+        };
         wait_for_reply(reply).await
     }
 
@@ -186,14 +190,13 @@ impl File<RW> {
     /// You must ensure the pointers remain valid for as long as the scheduler
     /// requires, this means the pointer must be valid until the `guard` (if passed)
     /// is dropped by the scheduler.
-    pub async fn submit_write(
+    pub async unsafe fn submit_write(
         &self,
-        buffer: &mut DmaBuffer,
+        buffer_ptr: *const u8,
         len: usize,
         offset: u64,
+        guard: Option<DynamicGuard>,
     ) -> io::Result<i2o2::ReplyReceiver> {
-        assert!(len <= buffer.len());
-
         #[cfg(test)]
         fail::fail_point!(
             "file::rw::submit_write",
@@ -202,35 +205,43 @@ impl File<RW> {
 
         self.ensure_writeable()?;
 
-        let guard = buffer.share_guard();
         let op = i2o2::opcode::Write::new(
             i2o2::types::Fixed(self.file_ref.ring_id()),
-            buffer.as_mut_ptr(),
+            buffer_ptr,
             len,
             offset,
         );
 
         unsafe {
             self.handle
-                .submit_async(op, Some(guard))
+                .submit_async(op, guard)
                 .await
                 .map_err(io::Error::other)
         }
     }
 
-    /// Write the given buffer to the file at the target offset.
+    /// Write N bytes of a given buffer to the file at the target offset.
     pub async fn write_buffer(
         &self,
         buffer: &mut DmaBuffer,
         offset: u64,
     ) -> io::Result<usize> {
+        debug_assert_eq!(buffer.len() % DISK_ALIGN, 0);
+
         #[cfg(test)]
         fail::fail_point!(
             "file::rw::write_buffer",
             crate::utils::parse_io_error_return
         );
 
-        let reply = self.submit_write(buffer, buffer.len(), offset).await?;
+        let buffer_guard = buffer.share_guard();
+        let buffer_ptr = buffer.as_ptr();
+        let buffer_len = buffer.len();
+
+        let reply = unsafe {
+            self.submit_write(buffer_ptr, buffer_len, offset, Some(buffer_guard))
+                .await?
+        };
         wait_for_reply(reply).await
     }
 

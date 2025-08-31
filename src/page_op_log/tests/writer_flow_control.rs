@@ -9,6 +9,7 @@ use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageId, log};
 use crate::page_op_log::op_log_associated_data;
 use crate::page_op_log::writer::LogFileWriter;
+use crate::utils::align_up;
 
 #[tokio::test]
 async fn test_auto_flush() {
@@ -244,7 +245,7 @@ async fn test_storage_full() {
 async fn test_readable_results_fuzz(
     #[values(false, true)] encryption: bool,
     #[values(352352352, 934572, 1526491)] rng_seed: u64,
-    #[values(1, 4, 16, 423)] num_blocks: u32,
+    #[values(1, 4, 16, 423)] num_entries: u32,
 ) {
     fastrand::seed(rng_seed);
 
@@ -254,7 +255,7 @@ async fn test_readable_results_fuzz(
     let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
 
     // Write initial pages that should go through as normal.
-    for page_id in 0..num_blocks {
+    for page_id in 0..num_entries {
         let entry = LogEntry {
             sequence_id: 0,
             transaction_id: 0,
@@ -271,7 +272,7 @@ async fn test_readable_results_fuzz(
         sequence_id: 0,
         transaction_id: 0,
         transaction_n_entries: 0,
-        page_id: PageId(num_blocks),
+        page_id: PageId(num_entries),
         page_file_id: PageFileId(1),
         op: LogOp::Free,
     };
@@ -279,12 +280,23 @@ async fn test_readable_results_fuzz(
     writer.sync().await.unwrap();
 
     let expected_block_position = writer.position() - log::LOG_BLOCK_SIZE as u64;
+    eprintln!("will read block at: {expected_block_position}");
 
     let path = ctx
         .directory()
         .resolve_file_path(FileGroup::Wal, file.id())
         .await;
     let mut buffer = std::fs::read(path).unwrap();
+    assert_eq!(
+        buffer.len(),
+        align_up(writer.position() as usize, DISK_ALIGN)
+    );
+
+    eprintln!(
+        "read checksum is: {}, len:{}",
+        crc32fast::hash(&buffer),
+        buffer.len()
+    );
 
     let block_buffer =
         &mut buffer[expected_block_position as usize..][..log::LOG_BLOCK_SIZE];
@@ -295,7 +307,7 @@ async fn test_readable_results_fuzz(
             file.id(),
             PageId(
                 (log::MAX_BLOCK_NO_METADATA_ENTRIES as u32
-                    * (num_blocks / log::MAX_BLOCK_NO_METADATA_ENTRIES as u32))
+                    * (num_entries / log::MAX_BLOCK_NO_METADATA_ENTRIES as u32))
                     .saturating_sub(1),
             ),
             expected_block_position,
@@ -303,7 +315,7 @@ async fn test_readable_results_fuzz(
         block_buffer,
     )
     .expect("block should be decodable from expected byte position");
-    assert_eq!(block.last_page_id(), Some(PageId(num_blocks)));
+    assert_eq!(block.last_page_id(), Some(PageId(num_entries)));
 }
 
 #[rstest::rstest]
