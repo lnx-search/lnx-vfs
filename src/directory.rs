@@ -30,6 +30,8 @@ impl FileId {
 const DEFAULT_FILE_REF_COUNT: usize = 2;
 const MAX_REGISTERED_FILES: u32 = 32_000;
 
+const FILE_FLAGS: libc::c_int = libc::O_DIRECT | libc::O_CLOEXEC;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 /// The [FileGroup] determines where a file is stored
 /// and what validations are applied.
@@ -431,8 +433,6 @@ impl RingFile {
     }
 }
 
-const FILE_FLAGS: libc::c_int = libc::O_DIRECT | libc::O_CLOEXEC;
-
 async fn create_file(path: &Path) -> io::Result<std::fs::File> {
     #[cfg(test)]
     fail::fail_point!("directory::create_file", |_| Err(io::Error::other(
@@ -490,7 +490,7 @@ fn open_file(path: &Path) -> io::Result<std::fs::File> {
         .write(true)
         .read(true)
         .custom_flags(FILE_FLAGS)
-        .open(&path)?;
+        .open(path)?;
 
     // On open, we always issue a full fsync to ensure we don't have random
     // fragments sitting around from a process crash.
@@ -505,7 +505,7 @@ fn open_ring_directory(
 ) -> io::Result<file::DirFile> {
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .open(&path)
+        .open(path)
         .map(Arc::new)?;
 
     let fd = file.as_raw_fd();
