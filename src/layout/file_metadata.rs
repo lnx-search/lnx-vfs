@@ -1,4 +1,5 @@
-use super::encrypt;
+use super::{encrypt, integrity};
+use crate::directory::{FileGroup, FileId};
 
 /// The magic bytes prefix of page files.
 static MAGIC_BYTES: &[u8] = b"__LNX_DATAFILE__";
@@ -65,6 +66,11 @@ pub enum DecodeError {
     #[error("buffer missing context bytes")]
     /// The buffer is missing required context bytes.
     MissingContextBytes,
+    #[error("integrity check fail")]
+    /// The header was unable to be verified and validated as correct.
+    ///
+    /// This only occurs when encryption is disabled.
+    IntegrityCheckFailed,
     #[error("decrypt metadata fail")]
     /// The buffer was unable to be decrypted.
     DecryptionFailed,
@@ -102,6 +108,17 @@ pub fn decode_metadata<T: serde::de::DeserializeOwned>(
         let cipher = cipher.ok_or(DecodeError::MissingDecryptionCipher)?;
         encrypt::decrypt_in_place(cipher, associated_data, buffer, context)
             .map_err(|_| DecodeError::DecryptionFailed)?;
+    } else {
+        let is_valid = integrity::verify(
+            Encryption::Disabled,
+            None,
+            associated_data,
+            buffer,
+            context,
+        );
+        if !is_valid {
+            return Err(DecodeError::IntegrityCheckFailed);
+        }
     }
 
     let buffer_len = u32::from_le_bytes(buffer[..size_of::<u32>()].try_into().unwrap());
@@ -160,7 +177,18 @@ pub fn encode_metadata<T: serde::Serialize>(
     if let Some(cipher) = cipher {
         encrypt::encrypt_in_place(cipher, associated_data, buffer, context)
             .map_err(EncodeError::EncryptionFailed)?;
+    } else {
+        integrity::write_check_bytes(None, associated_data, buffer, context);
     }
 
     Ok(())
+}
+
+/// The associated data required for the file headers.
+pub fn header_associated_data(file_id: FileId, file_group: FileGroup) -> [u8; 8] {
+    let id = file_group.idx() as u32;
+    let mut bytes: [u8; 8] = [0; 8];
+    bytes[..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
+    bytes[4..].copy_from_slice(&id.to_le_bytes());
+    bytes
 }

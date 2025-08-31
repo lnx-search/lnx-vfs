@@ -180,12 +180,14 @@ pub struct MetadataHeader {
 /// around data in the files.
 pub fn op_log_associated_data(
     file_id: FileId,
+    log_file_id: u32,
     last_page_id: PageId,
     start_pos: u64,
-) -> [u8; 16] {
-    let mut buffer = [0; 16];
+) -> [u8; 20] {
+    let mut buffer = [0; 20];
     buffer[0..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
     buffer[4..8].copy_from_slice(&last_page_id.0.to_be_bytes());
     buffer[8..16].copy_from_slice(&start_pos.to_le_bytes());
+    buffer[16..20].copy_from_slice(&log_file_id.to_le_bytes());
     buffer
 }

@@ -14,7 +14,7 @@ async fn test_single_entry_write_layout(#[values(0, 4096)] log_offset: usize) {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), log_offset as u64);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset as u64);
 
     let entry = LogEntry {
         sequence_id: 1,
@@ -37,7 +37,7 @@ async fn test_single_entry_write_layout(#[values(0, 4096)] log_offset: usize) {
     let expected_buffer = &mut content[log_offset..log_offset + log::LOG_BLOCK_SIZE];
     let block = log::decode_log_block(
         None,
-        &op_log_associated_data(file.id(), PageId(0), log_offset as u64),
+        &op_log_associated_data(file.id(), 1, PageId(0), log_offset as u64),
         expected_buffer,
     )
     .expect("block should be decodable");
@@ -54,7 +54,7 @@ async fn test_multiple_block_write_layout() {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, 0);
 
     for page_id in 0..15 {
         let entry = LogEntry {
@@ -84,13 +84,13 @@ async fn test_multiple_block_write_layout() {
 
     let block1 = log::decode_log_block(
         None,
-        &op_log_associated_data(file.id(), PageId(0), 0),
+        &op_log_associated_data(file.id(), 1, PageId(0), 0),
         buffer1,
     )
     .expect("block should be decodable");
     let block2 = log::decode_log_block(
         None,
-        &op_log_associated_data(file.id(), PageId(10), log::LOG_BLOCK_SIZE as u64),
+        &op_log_associated_data(file.id(), 1, PageId(10), log::LOG_BLOCK_SIZE as u64),
         buffer2,
     )
     .expect("block should be decodable");
@@ -133,7 +133,7 @@ async fn test_multiple_pages_write_layout() {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, 0);
 
     for page_id in 0..NUM_BLOCKS * 11 {
         let entry = LogEntry {
@@ -163,6 +163,7 @@ async fn test_multiple_pages_write_layout() {
             None,
             &op_log_associated_data(
                 file.id(),
+                1,
                 PageId((block_id * 11).saturating_sub(1) as u32),
                 buffer_start as u64,
             ),

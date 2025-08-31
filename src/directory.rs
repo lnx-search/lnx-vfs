@@ -61,7 +61,7 @@ impl FileGroup {
         }
     }
 
-    fn idx(&self) -> usize {
+    pub fn idx(&self) -> usize {
         match self {
             FileGroup::Pages => 0,
             FileGroup::Metadata => 1,

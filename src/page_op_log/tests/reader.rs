@@ -20,7 +20,7 @@ async fn test_log_reader(
 
     make_sample_file(&ctx, &mut file, num_blocks, offset).await;
 
-    let mut reader = LogFileReader::new(ctx, file.into(), offset);
+    let mut reader = LogFileReader::new(ctx, file.into(), 1, offset);
 
     let mut blocks = Vec::new();
     while let Some(block) = reader.next_block().await.expect("Failed to read block") {
@@ -80,6 +80,7 @@ async fn make_sample_file(
             ctx.cipher(),
             &op_log_associated_data(
                 file.id(),
+                1,
                 last_page_id,
                 offset + (block_id * log::LOG_BLOCK_SIZE) as u64,
             ),

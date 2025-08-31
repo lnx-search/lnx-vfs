@@ -6,11 +6,11 @@ extern crate test;
 
 use std::sync::Arc;
 
+use crate::ctx;
 use crate::directory::FileGroup;
 use crate::layout::log::{LogEntry, LogOp};
-use crate::page_op_log::writer::LogFileWriter;
 use crate::layout::{PageFileId, PageId};
-use crate::ctx;
+use crate::page_op_log::writer::LogFileWriter;
 
 const NUM_ITER: usize = 100;
 

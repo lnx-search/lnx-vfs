@@ -18,7 +18,7 @@ async fn test_single_block_correct_associated_data_tagging(
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), log_offset);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset);
 
     let entry = LogEntry {
         sequence_id: 1,
@@ -43,7 +43,7 @@ async fn test_single_block_correct_associated_data_tagging(
 
     let buffer = &mut content[log_offset as usize..][..log::LOG_BLOCK_SIZE];
     let expected_associated_data =
-        op_log_associated_data(file.id(), PageId(0), log_offset);
+        op_log_associated_data(file.id(), 1, PageId(0), log_offset);
     log::decode_log_block(ctx.cipher(), &expected_associated_data, buffer)
         .expect("block should be decodable");
 }
@@ -58,7 +58,7 @@ async fn test_multi_block_correct_associated_data_tagging(
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), log_offset);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset);
 
     for page_id in 0..15 {
         let entry = LogEntry {
@@ -82,7 +82,7 @@ async fn test_multi_block_correct_associated_data_tagging(
 
     let buffer = &mut content[log_offset as usize..][..log::LOG_BLOCK_SIZE];
     let expected_associated_data =
-        op_log_associated_data(file.id(), PageId(0), log_offset);
+        op_log_associated_data(file.id(), 1, PageId(0), log_offset);
     log::decode_log_block(ctx.cipher(), &expected_associated_data, buffer)
         .expect("block should be decodable");
 
@@ -90,6 +90,7 @@ async fn test_multi_block_correct_associated_data_tagging(
         &mut content[log_offset as usize + log::LOG_BLOCK_SIZE..][..log::LOG_BLOCK_SIZE];
     let expected_associated_data = op_log_associated_data(
         file.id(),
+        1,
         PageId(10),
         log_offset + log::LOG_BLOCK_SIZE as u64,
     );

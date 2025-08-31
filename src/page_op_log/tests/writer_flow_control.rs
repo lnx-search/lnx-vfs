@@ -19,7 +19,7 @@ async fn test_auto_flush() {
     let initial_len = file.get_len().await.unwrap();
     assert_eq!(initial_len, 0);
 
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     let entry = LogEntry {
         sequence_id: 0,
@@ -52,7 +52,7 @@ async fn test_all_entries_flush(
     let initial_len = file.get_len().await.unwrap();
     assert_eq!(initial_len, 0);
 
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     for id in 0..number_of_entries {
         let entry = LogEntry {
@@ -92,7 +92,7 @@ async fn test_entries_and_metadata(
     let initial_len = file.get_len().await.unwrap();
     assert_eq!(initial_len, 0);
 
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     for id in 0..number_of_entries {
         let entry = LogEntry {
@@ -136,7 +136,7 @@ async fn test_no_close_on_write_error_but_lockout() {
     let scenario = fail::FailScenario::setup();
     fail::cfg("file::rw::submit_write", "return").unwrap();
 
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
     let error = writer.sync().await.expect_err("write should error");
     assert_eq!(error.kind(), ErrorKind::Other);
 
@@ -166,7 +166,7 @@ async fn test_propagate_lockout_error() {
     let scenario = fail::FailScenario::setup();
     fail::cfg("file::rw::fdatasync", "return").unwrap();
 
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
     let error = writer.sync().await.expect_err("sync should error");
     assert_eq!(error.kind(), ErrorKind::Other);
 
@@ -197,7 +197,7 @@ async fn test_flush_mem_buffer_i2o2_error() {
     let scenario = fail::FailScenario::setup();
     fail::cfg("i2o2::fail::try_get_result", "return(-12)").unwrap();
 
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     let error = fill_buffer(&mut writer)
         .await
@@ -217,7 +217,7 @@ async fn test_storage_full() {
     let scenario = fail::FailScenario::setup();
     fail::cfg("i2o2::fail::try_get_result", "return(20)").unwrap();
 
-    let mut writer = LogFileWriter::new(ctx, file, 0);
+    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     let entry = LogEntry {
         sequence_id: 0,
@@ -252,7 +252,7 @@ async fn test_readable_results_fuzz(
     let ctx = ctx::FileContext::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 0);
+    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, 0);
 
     // Write initial pages that should go through as normal.
     for page_id in 0..num_entries {
@@ -305,6 +305,7 @@ async fn test_readable_results_fuzz(
         ctx.cipher(),
         &op_log_associated_data(
             file.id(),
+            1,
             PageId(
                 (log::MAX_BLOCK_NO_METADATA_ENTRIES as u32
                     * (num_entries / log::MAX_BLOCK_NO_METADATA_ENTRIES as u32))
@@ -330,7 +331,7 @@ async fn test_readable_results_fuzz(
 async fn test_log_offset(#[case] log_offset: u64) {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
-    let _writer = LogFileWriter::new(ctx, file, log_offset);
+    let _writer = LogFileWriter::new(ctx, file, 1, log_offset);
 }
 
 async fn fill_buffer(writer: &mut LogFileWriter) -> io::Result<()> {

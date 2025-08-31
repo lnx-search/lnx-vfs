@@ -27,6 +27,7 @@ const SEQUENCE_ID_START: u32 = 1;
 pub struct LogFileWriter {
     ctx: Arc<ctx::FileContext>,
     file: file::RWFile,
+    log_file_id: u32,
     locked_out: bool,
 
     log_offset: u64,
@@ -57,7 +58,12 @@ pub struct LogFileWriter {
 
 impl LogFileWriter {
     /// Create a new [LogFileWriter] using the provided file context, file and offset.
-    pub fn new(ctx: Arc<ctx::FileContext>, file: file::RWFile, log_offset: u64) -> Self {
+    pub fn new(
+        ctx: Arc<ctx::FileContext>,
+        file: file::RWFile,
+        log_file_id: u32,
+        log_offset: u64,
+    ) -> Self {
         assert_eq!(
             log_offset as usize % DISK_ALIGN,
             0,
@@ -69,6 +75,7 @@ impl LogFileWriter {
         Self {
             ctx,
             file,
+            log_file_id,
             locked_out: false,
 
             log_offset,
@@ -197,13 +204,15 @@ impl LogFileWriter {
         let start_position = self.position() - log::LOG_BLOCK_SIZE as u64;
         let buffer_start = self.block_offset - log::LOG_BLOCK_SIZE;
         let buffer = &mut self.block_buffer[buffer_start..][..log::LOG_BLOCK_SIZE];
+        let associated_data = super::op_log_associated_data(
+            self.file.id(),
+            self.log_file_id,
+            self.last_written_page_id,
+            start_position,
+        );
         log::encode_log_block(
             self.ctx.cipher(),
-            &super::op_log_associated_data(
-                self.file.id(),
-                self.last_written_page_id,
-                start_position,
-            ),
+            &associated_data,
             &self.wip_block,
             buffer,
         )
@@ -336,7 +345,7 @@ mod tests {
         let ctx = ctx::FileContext::for_test(false).await;
         let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
-        let mut writer = LogFileWriter::new(ctx, file, 0);
+        let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
         let entry = LogEntry {
             sequence_id: 0,

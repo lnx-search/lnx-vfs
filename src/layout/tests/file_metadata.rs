@@ -162,7 +162,7 @@ fn test_decode_err_malformed_json() {
     buffer[60..].fill(0);
 
     let err = decode_metadata::<SampleMetadata>(None, b"", &mut buffer).unwrap_err();
-    assert!(matches!(err, DecodeError::Deserialize(_)));
+    assert!(matches!(err, DecodeError::IntegrityCheckFailed));
 }
 
 fn create_sample_buffer(encryption: Encryption) -> (Vec<u8>, Option<encrypt::Cipher>) {
