@@ -37,7 +37,7 @@ async fn test_single_entry_write_layout(#[values(0, 4096)] log_offset: usize) {
     let expected_buffer = &mut content[log_offset..log_offset + log::LOG_BLOCK_SIZE];
     let block = log::decode_log_block(
         None,
-        &op_log_associated_data(file.id(), 1, PageId(0), log_offset as u64),
+        &op_log_associated_data(file.id(), 1, log_offset as u64),
         expected_buffer,
     )
     .expect("block should be decodable");
@@ -82,15 +82,12 @@ async fn test_multiple_block_write_layout() {
     ];
     let [buffer1, buffer2] = content.get_disjoint_mut(indices).unwrap();
 
-    let block1 = log::decode_log_block(
-        None,
-        &op_log_associated_data(file.id(), 1, PageId(0), 0),
-        buffer1,
-    )
-    .expect("block should be decodable");
+    let block1 =
+        log::decode_log_block(None, &op_log_associated_data(file.id(), 1, 0), buffer1)
+            .expect("block should be decodable");
     let block2 = log::decode_log_block(
         None,
-        &op_log_associated_data(file.id(), 1, PageId(10), log::LOG_BLOCK_SIZE as u64),
+        &op_log_associated_data(file.id(), 1, log::LOG_BLOCK_SIZE as u64),
         buffer2,
     )
     .expect("block should be decodable");
@@ -161,12 +158,7 @@ async fn test_multiple_pages_write_layout() {
 
         let block = log::decode_log_block(
             None,
-            &op_log_associated_data(
-                file.id(),
-                1,
-                PageId((block_id * 11).saturating_sub(1) as u32),
-                buffer_start as u64,
-            ),
+            &op_log_associated_data(file.id(), 1, buffer_start as u64),
             buffer,
         )
         .expect("block should be decodable");

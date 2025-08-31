@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::arena::ArenaAllocator;
 use crate::buffer;
 use crate::buffer::ALLOC_PAGE_SIZE;
@@ -14,13 +12,23 @@ pub struct FileContext {
     arena_allocator: ArenaAllocator,
     directory: SystemDirectory,
     #[cfg(test)]
-    tmp_dir: tempfile::TempDir,
+    tmp_dir: std::sync::Arc<tempfile::TempDir>,
 }
 
 impl FileContext {
     #[cfg(test)]
     /// Create a new file context for testing.
-    pub async fn for_test(encryption: bool) -> Arc<Self> {
+    pub async fn for_test(encryption: bool) -> std::sync::Arc<Self> {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        Self::for_test_in_dir(encryption, std::sync::Arc::new(tmp_dir)).await
+    }
+
+    #[cfg(test)]
+    /// Create a new file context for testing.
+    pub async fn for_test_in_dir(
+        encryption: bool,
+        tmp_dir: std::sync::Arc<tempfile::TempDir>,
+    ) -> std::sync::Arc<Self> {
         use chacha20poly1305::aead::Key;
         use chacha20poly1305::{KeyInit, XChaCha20Poly1305};
 
@@ -33,17 +41,22 @@ impl FileContext {
             None
         };
 
-        let tmp_dir = tempfile::tempdir().unwrap();
         let directory = SystemDirectory::open(tmp_dir.path())
             .await
             .expect("open system directory");
 
-        Arc::new(Self {
+        std::sync::Arc::new(Self {
             cipher,
             arena_allocator: ArenaAllocator::new(100),
             directory,
             tmp_dir,
         })
+    }
+
+    #[cfg(test)]
+    /// Consumes the temporary directory the context is linked to.
+    pub fn tmp_dir(&self) -> std::sync::Arc<tempfile::TempDir> {
+        self.tmp_dir.clone()
     }
 
     #[inline]

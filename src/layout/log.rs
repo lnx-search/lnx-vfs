@@ -191,11 +191,6 @@ impl LogBlock {
     }
 
     #[inline]
-    pub(crate) fn last_page_id(&self) -> Option<PageId> {
-        self.entries().last().map(|pair| pair.log.page_id)
-    }
-
-    #[inline]
     pub(crate) fn num_entries(&self) -> usize {
         self.pairs.len()
     }

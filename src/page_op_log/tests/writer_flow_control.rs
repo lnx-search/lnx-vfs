@@ -34,6 +34,9 @@ async fn test_auto_flush() {
         writer.write_log(entry, None).await.expect("write entry");
     }
 
+    // Inflight IOP might take a little bit.
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
     let file = writer.into_file();
     let post_write_len = file.get_len().await.unwrap();
     assert_eq!(post_write_len, 128 << 10); // Flush single mem buffer.
@@ -280,7 +283,6 @@ async fn test_readable_results_fuzz(
     writer.sync().await.unwrap();
 
     let expected_block_position = writer.position() - log::LOG_BLOCK_SIZE as u64;
-    eprintln!("will read block at: {expected_block_position}");
 
     let path = ctx
         .directory()
@@ -292,31 +294,19 @@ async fn test_readable_results_fuzz(
         align_up(writer.position() as usize, DISK_ALIGN)
     );
 
-    eprintln!(
-        "read checksum is: {}, len:{}",
-        crc32fast::hash(&buffer),
-        buffer.len()
-    );
-
     let block_buffer =
         &mut buffer[expected_block_position as usize..][..log::LOG_BLOCK_SIZE];
 
     let block = log::decode_log_block(
         ctx.cipher(),
-        &op_log_associated_data(
-            file.id(),
-            1,
-            PageId(
-                (log::MAX_BLOCK_NO_METADATA_ENTRIES as u32
-                    * (num_entries / log::MAX_BLOCK_NO_METADATA_ENTRIES as u32))
-                    .saturating_sub(1),
-            ),
-            expected_block_position,
-        ),
+        &op_log_associated_data(file.id(), 1, expected_block_position),
         block_buffer,
     )
     .expect("block should be decodable from expected byte position");
-    assert_eq!(block.last_page_id(), Some(PageId(num_entries)));
+    assert_eq!(
+        block.entries().last().map(|pair| pair.log.page_id),
+        Some(PageId(num_entries))
+    );
 }
 
 #[rstest::rstest]

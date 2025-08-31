@@ -10,7 +10,6 @@ mod writer;
 use rand::RngCore;
 
 use crate::directory::FileId;
-use crate::layout::PageId;
 use crate::layout::file_metadata::Encryption;
 
 #[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
@@ -33,14 +32,12 @@ pub struct MetadataHeader {
 pub(super) fn op_log_associated_data(
     file_id: FileId,
     log_file_id: u64,
-    last_page_id: PageId,
     start_pos: u64,
-) -> [u8; 24] {
-    let mut buffer = [0; 24];
+) -> [u8; 20] {
+    let mut buffer = [0; 20];
     buffer[0..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
-    buffer[4..8].copy_from_slice(&last_page_id.0.to_be_bytes());
-    buffer[8..16].copy_from_slice(&start_pos.to_le_bytes());
-    buffer[16..24].copy_from_slice(&log_file_id.to_le_bytes());
+    buffer[4..12].copy_from_slice(&start_pos.to_le_bytes());
+    buffer[12..20].copy_from_slice(&log_file_id.to_le_bytes());
     buffer
 }
 

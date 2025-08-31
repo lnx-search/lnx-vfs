@@ -64,9 +64,6 @@ pub struct LogFileWriter {
     /// The unique monotonic ID assigned to each log entry.
     next_sequence_id: u32,
 
-    /// The [PageId] that was last modified.
-    last_written_page_id: PageId,
-
     inflight_iop: Option<InflightIop>,
 }
 
@@ -79,26 +76,22 @@ impl LogFileWriter {
         ctx: Arc<ctx::FileContext>,
         file: file::RWFile,
     ) -> Result<Self, LogOpenWriteError> {
-        const NUM_PAGES_FOR_HEADER: usize =
-            file_metadata::HEADER_SIZE.div_ceil(buffer::ALLOC_PAGE_SIZE);
-
         let header = MetadataHeader {
             log_file_id: super::generate_random_log_id(),
             encryption: Encryption::Disabled,
         };
 
-        let mut header_buffer = ctx.alloc::<NUM_PAGES_FOR_HEADER>();
-        file.read_buffer(&mut header_buffer, 0).await?;
-
         let associated_data =
             file_metadata::header_associated_data(file.id(), FileGroup::Wal);
 
+        let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
         file_metadata::encode_metadata(
             ctx.cipher(),
             &associated_data,
             &header,
             &mut header_buffer[..file_metadata::HEADER_SIZE],
         )?;
+        file.write_buffer(&mut header_buffer, 0).await?;
 
         Ok(Self::new(
             ctx,
@@ -140,8 +133,6 @@ impl LogFileWriter {
 
             next_sequence_id: SEQUENCE_ID_START,
 
-            last_written_page_id: PageId(0),
-
             inflight_iop: None,
         }
     }
@@ -172,6 +163,7 @@ impl LogFileWriter {
         self.file
     }
 
+    #[tracing::instrument("wal::write_entry", skip_all)]
     /// Write a set of blocks to the log file at the current position.
     ///
     /// The `sequence_id` and `last_flush_sequence_id` fields will be overwritten.
@@ -186,11 +178,13 @@ impl LogFileWriter {
         self.ensure_file_writeable()?;
         let result = self.write_log_inner(entry, metadata).await;
         if result.is_err() {
+            tracing::error!(result = ?result, "write call failed, locking out log writer");
             self.locked_out = true;
         }
         result
     }
 
+    #[tracing::instrument("wal::sync", skip_all)]
     /// Flush the buffered log data to disk and ensure it is safely persisted.
     ///
     /// Returns the position the file is flushed up to.
@@ -198,6 +192,7 @@ impl LogFileWriter {
         self.ensure_file_writeable()?;
         let result = self.sync_inner().await;
         if result.is_err() {
+            tracing::error!(result = ?result, "sync call failed, locking out log writer");
             self.locked_out = true;
         }
         result
@@ -217,10 +212,6 @@ impl LogFileWriter {
 
         self.flush_log_block_to_mem()?;
 
-        if let Some(page_id) = self.wip_block.last_page_id() {
-            self.last_written_page_id = page_id;
-        }
-
         // When the block is full, we can reset it as the alignment will be maintained.
         self.wip_block.reset();
         self.block_offset += log::LOG_BLOCK_SIZE;
@@ -230,7 +221,7 @@ impl LogFileWriter {
         assert!(result.is_ok(), "block should never be full after reset");
 
         if self.block_offset >= self.block_buffer.len() {
-            tracing::trace!("memory buffer capacity reached, flushing...");
+            tracing::debug!("memory buffer capacity reached, flushing...");
             self.write_buffer().await?;
         }
 
@@ -258,7 +249,6 @@ impl LogFileWriter {
         let associated_data = super::op_log_associated_data(
             self.file.id(),
             self.log_file_id,
-            self.last_written_page_id,
             start_position,
         );
         log::encode_log_block(
@@ -268,8 +258,6 @@ impl LogFileWriter {
             buffer,
         )
         .map_err(io::Error::other)?;
-
-        eprintln!("block is encoded at: {}", buffer_start);
 
         Ok(())
     }

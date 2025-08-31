@@ -33,9 +33,6 @@ we define the current associated data for each file type here:
 
 - `file_id` - The unique file identifier.
 - `log_file_id` - A random 64-bit ID regenerated on every log rotation.
-- `last_serialized_page_id` - The last page ID in the previously serialized and flushed block, this means
-  you can only access the current block in the log if you know the previous block. For our application this
-  works fine as we sequentially read the log rather than randomly lookup entries.
 - `position_in_file` - The absolute start position of the block in the file.
 
 ### Page Table Checkpoint

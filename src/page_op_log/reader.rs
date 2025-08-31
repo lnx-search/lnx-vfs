@@ -24,6 +24,9 @@ pub enum LogDecodeError {
 #[derive(Debug, thiserror::Error)]
 /// An error that prevent the reader from opening the log.
 pub enum LogOpenReadError {
+    #[error("missing metadata header")]
+    /// The file is missing the required metadata header.
+    MissingHeader,
     #[error(transparent)]
     /// An IO error occurred.
     IO(#[from] io::Error),
@@ -44,7 +47,17 @@ pub struct LogFileReader {
     log_file_id: u64,
     reader: StreamReader,
     scratch_space: Box<[u8; log::LOG_BLOCK_SIZE]>,
-    next_page_id_to_decrypt: PageId,
+}
+
+impl std::fmt::Debug for LogFileReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "LogFileReader(file_id={:?}, log_file_id={})",
+            self.reader.file_id(),
+            self.log_file_id,
+        )
+    }
 }
 
 impl LogFileReader {
@@ -56,11 +69,11 @@ impl LogFileReader {
         ctx: Arc<ctx::FileContext>,
         file: file::ROFile,
     ) -> Result<Self, LogOpenReadError> {
-        const NUM_PAGES_FOR_HEADER: usize =
-            file_metadata::HEADER_SIZE.div_ceil(buffer::ALLOC_PAGE_SIZE);
-
-        let mut header_buffer = ctx.alloc::<NUM_PAGES_FOR_HEADER>();
-        file.read_buffer(&mut header_buffer, 0).await?;
+        let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
+        let n = file.read_buffer(&mut header_buffer, 0).await?;
+        if n == 0 {
+            return Err(LogOpenReadError::MissingHeader);
+        }
 
         let associated_data =
             file_metadata::header_associated_data(file.id(), FileGroup::Wal);
@@ -104,10 +117,10 @@ impl LogFileReader {
             log_file_id,
             reader,
             scratch_space: Box::new([0; log::LOG_BLOCK_SIZE]),
-            next_page_id_to_decrypt: PageId(0),
         }
     }
 
+    #[tracing::instrument("wal::read_block", skip(self))]
     /// Retrieve the next log block in the file.
     ///
     /// Returns `Ok(None)` once at EOF.
@@ -118,6 +131,7 @@ impl LogFileReader {
         match result {
             Ok(()) => {},
             Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                tracing::debug!("wal log reader has reached eof");
                 return Ok(None);
             },
             Err(err) => return Err(err.into()),
@@ -126,7 +140,6 @@ impl LogFileReader {
         let associated_data = super::op_log_associated_data(
             self.reader.file_id(),
             self.log_file_id,
-            self.next_page_id_to_decrypt,
             position,
         );
 
@@ -137,9 +150,7 @@ impl LogFileReader {
         )
         .map_err(LogDecodeError::Decode)?;
 
-        if let Some(page_id) = block.last_page_id() {
-            self.next_page_id_to_decrypt = page_id;
-        }
+        tracing::trace!(num_entries = block.num_entries(), "wal log recovered block");
 
         Ok(Some(block))
     }
