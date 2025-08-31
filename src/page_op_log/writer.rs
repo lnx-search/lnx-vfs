@@ -3,15 +3,29 @@ use std::sync::Arc;
 use std::{io, mem};
 
 use crate::buffer::DmaBuffer;
+use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
+use crate::layout::file_metadata::Encryption;
 use crate::layout::log::LogEntry;
 use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageId, log};
+use crate::layout::{PageId, file_metadata, log};
+use crate::page_op_log::MetadataHeader;
 use crate::utils::{align_down, align_up};
-use crate::{ctx, file};
+use crate::{buffer, ctx, file};
 
 const BUFFER_SIZE: usize = 128 << 10;
 const SEQUENCE_ID_START: u32 = 1;
+
+#[derive(Debug, thiserror::Error)]
+/// An error that prevent the reader from opening the log.
+pub enum LogOpenWriteError {
+    #[error(transparent)]
+    /// An IO error occurred.
+    IO(#[from] io::Error),
+    #[error(transparent)]
+    /// The file metadata encoder could not encode and write the header to the buffer.
+    HeaderEncode(#[from] file_metadata::EncodeError),
+}
 
 /// The [LogFileWriter] acts like a WAL for operations occurring on the page store,
 /// it only logs the metadata operations however, so any data writes should be safely
@@ -27,7 +41,7 @@ const SEQUENCE_ID_START: u32 = 1;
 pub struct LogFileWriter {
     ctx: Arc<ctx::FileContext>,
     file: file::RWFile,
-    log_file_id: u32,
+    log_file_id: u64,
     locked_out: bool,
 
     log_offset: u64,
@@ -57,11 +71,48 @@ pub struct LogFileWriter {
 }
 
 impl LogFileWriter {
-    /// Create a new [LogFileWriter] using the provided file context, file and offset.
-    pub fn new(
+    /// Open an existing log file.
+    ///
+    /// This will read and validate the header of the file and perform all the
+    /// necessary integrity checks.
+    pub async fn create(
         ctx: Arc<ctx::FileContext>,
         file: file::RWFile,
-        log_file_id: u32,
+    ) -> Result<Self, LogOpenWriteError> {
+        const NUM_PAGES_FOR_HEADER: usize =
+            file_metadata::HEADER_SIZE.div_ceil(buffer::ALLOC_PAGE_SIZE);
+
+        let header = MetadataHeader {
+            log_file_id: super::generate_random_log_id(),
+            encryption: Encryption::Disabled,
+        };
+
+        let mut header_buffer = ctx.alloc::<NUM_PAGES_FOR_HEADER>();
+        file.read_buffer(&mut header_buffer, 0).await?;
+
+        let associated_data =
+            file_metadata::header_associated_data(file.id(), FileGroup::Wal);
+
+        file_metadata::encode_metadata(
+            ctx.cipher(),
+            &associated_data,
+            &header,
+            &mut header_buffer[..file_metadata::HEADER_SIZE],
+        )?;
+
+        Ok(Self::new(
+            ctx,
+            file,
+            header.log_file_id,
+            file_metadata::HEADER_SIZE as u64,
+        ))
+    }
+
+    /// Create a new [LogFileWriter] using the provided file context, file and offset.
+    pub(super) fn new(
+        ctx: Arc<ctx::FileContext>,
+        file: file::RWFile,
+        log_file_id: u64,
         log_offset: u64,
     ) -> Self {
         assert_eq!(

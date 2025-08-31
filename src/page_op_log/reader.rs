@@ -23,7 +23,7 @@ pub enum LogDecodeError {
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevent the reader from opening the log.
-pub enum LogOpenError {
+pub enum LogOpenReadError {
     #[error(transparent)]
     /// An IO error occurred.
     IO(#[from] io::Error),
@@ -41,7 +41,7 @@ pub enum LogOpenError {
 /// The [LogFileReader] decodes
 pub struct LogFileReader {
     ctx: Arc<ctx::FileContext>,
-    log_file_id: u32,
+    log_file_id: u64,
     reader: StreamReader,
     scratch_space: Box<[u8; log::LOG_BLOCK_SIZE]>,
     next_page_id_to_decrypt: PageId,
@@ -55,7 +55,7 @@ impl LogFileReader {
     pub async fn open(
         ctx: Arc<ctx::FileContext>,
         file: file::ROFile,
-    ) -> Result<Self, LogOpenError> {
+    ) -> Result<Self, LogOpenReadError> {
         const NUM_PAGES_FOR_HEADER: usize =
             file_metadata::HEADER_SIZE.div_ceil(buffer::ALLOC_PAGE_SIZE);
 
@@ -65,7 +65,7 @@ impl LogFileReader {
         let associated_data =
             file_metadata::header_associated_data(file.id(), FileGroup::Wal);
 
-        let metadata: MetadataHeader = file_metadata::decode_metadata(
+        let header: MetadataHeader = file_metadata::decode_metadata(
             ctx.cipher(),
             &associated_data,
             &mut header_buffer[..file_metadata::HEADER_SIZE],
@@ -73,14 +73,14 @@ impl LogFileReader {
 
         // The system will not even open if encryption is enabled and the system
         // is not setup for encryption.
-        if metadata.encryption == Encryption::Disabled && ctx.cipher().is_some() {
-            return Err(LogOpenError::EncryptionStatusMismatch);
+        if header.encryption == Encryption::Disabled && ctx.cipher().is_some() {
+            return Err(LogOpenReadError::EncryptionStatusMismatch);
         }
 
         Ok(Self::new(
             ctx,
             file,
-            metadata.log_file_id,
+            header.log_file_id,
             file_metadata::HEADER_SIZE as u64,
         ))
     }
@@ -92,7 +92,7 @@ impl LogFileReader {
     pub(super) fn new(
         ctx: Arc<ctx::FileContext>,
         file: file::ROFile,
-        log_file_id: u32,
+        log_file_id: u64,
         log_offset: u64,
     ) -> Self {
         let reader = StreamReaderBuilder::new(ctx.clone(), file)
