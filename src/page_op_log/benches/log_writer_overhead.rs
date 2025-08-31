@@ -6,10 +6,10 @@ extern crate test;
 
 use std::sync::Arc;
 
+use crate::directory::FileGroup;
 use crate::layout::log::{LogEntry, LogOp};
 use crate::page_op_log::writer::LogFileWriter;
 use crate::{PageFileId, PageId, ctx, scheduler};
-use crate::directory::FileGroup;
 
 const NUM_ITER: usize = 100;
 

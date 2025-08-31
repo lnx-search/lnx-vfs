@@ -4,27 +4,25 @@
 //! This system provides both HMAC & CRC32 integrity checks for encryption at REST being
 //! enabled/disabled respectively.
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-
 use crate::layout::file_metadata::Encryption;
 
-type HmacSha256 = Hmac<Sha256>;
-const INTEGRITY_PREFIX_SIZE: usize = 32;
+const INTEGRITY_HASH_SIZE: usize = 32;
+const KEY_SIZE: usize = 32;
 
 /// Verify the integrity of the buffer.
 pub fn verify(
     mode: Encryption,
-    hmac_key: Option<&[u8]>,
+    authentication_key: Option<&[u8; KEY_SIZE]>,
     associated_data: &[u8],
     buffer: &[u8],
     context: &[u8],
 ) -> bool {
     match mode {
         Encryption::Disabled => verify_crc32_buffer(associated_data, buffer, context),
-        Encryption::Enabled => verify_hmac_buffer(
-            hmac_key
-                .expect("HMAC key should be provided when HMAC verification is enabled"),
+        Encryption::Enabled => verify_blake3_buffer(
+            authentication_key.expect(
+                "blake3 key should be provided when blake3 verification is enabled",
+            ),
             associated_data,
             buffer,
             context,
@@ -33,41 +31,44 @@ pub fn verify(
 }
 
 /// Prefix the given output buffer with a set of check bytes
-/// containing either a HMAC or CRC32 digest depending on
-/// if a HMAC key is provided or not.
+/// containing either a blake3 keyed hash or CRC32 digest depending on
+/// if a key is provided or not.
 pub fn write_check_bytes(
-    hmac_key: Option<&[u8]>,
+    authentication_key: Option<&[u8; KEY_SIZE]>,
     associated_data: &[u8],
     input_buffer: &[u8],
     context: &mut [u8],
 ) {
-    if let Some(hmac_key) = hmac_key {
-        let mac = hmac_hash_components(hmac_key, associated_data, input_buffer);
-        let result = mac.finalize().into_bytes();
-        context[..32].copy_from_slice(result.as_slice());
+    if let Some(key) = authentication_key {
+        let computed_hash = blake3_hash_components(key, associated_data, input_buffer);
+        context[..INTEGRITY_HASH_SIZE].copy_from_slice(computed_hash.as_bytes());
     } else {
         let result = crc32_hash_components(associated_data, input_buffer);
         context[..4].copy_from_slice(&result.to_le_bytes());
     }
 }
 
-/// Check the HMAC at the start of the buffer aligns with the calculated HMAC
+/// Check the blake3 keyed hash at the start of the buffer aligns with the calculated keyed hash.
 /// with the provided key.
 ///
 /// Returns `false` if the HMAC could not be verified.
-fn verify_hmac_buffer(
-    hmac_key: &[u8],
+fn verify_blake3_buffer(
+    hmac_key: &[u8; KEY_SIZE],
     associated_data: &[u8],
     buffer: &[u8],
     context: &[u8],
 ) -> bool {
-    if context.len() < INTEGRITY_PREFIX_SIZE {
+    if context.len() < INTEGRITY_HASH_SIZE {
         return false;
     }
 
-    let provided_hmac = &context[..INTEGRITY_PREFIX_SIZE];
-    let mac = hmac_hash_components(hmac_key, associated_data, buffer);
-    mac.verify_slice(provided_hmac).is_ok()
+    let provided_hash = match context[..INTEGRITY_HASH_SIZE].try_into() {
+        Ok(bytes) => blake3::Hash::from_bytes(bytes),
+        Err(_) => return false,
+    };
+
+    let calculated_hash = blake3_hash_components(hmac_key, associated_data, buffer);
+    provided_hash == calculated_hash
 }
 
 /// Check the CRC32 checksum encoded in `context` with the provided `buffer` and
@@ -75,7 +76,7 @@ fn verify_hmac_buffer(
 ///
 /// Returns `false` if the checksums did not match
 fn verify_crc32_buffer(associated_data: &[u8], buffer: &[u8], context: &[u8]) -> bool {
-    if context.len() < INTEGRITY_PREFIX_SIZE {
+    if context.len() < INTEGRITY_HASH_SIZE {
         return false;
     }
 
@@ -84,16 +85,15 @@ fn verify_crc32_buffer(associated_data: &[u8], buffer: &[u8], context: &[u8]) ->
     actual_checksum == expected_checksum
 }
 
-fn hmac_hash_components(
-    hmac_key: &[u8],
+fn blake3_hash_components(
+    hmac_key: &[u8; KEY_SIZE],
     associated_data: &[u8],
     buffer: &[u8],
-) -> HmacSha256 {
-    let mut mac =
-        HmacSha256::new_from_slice(hmac_key).expect("HMAC can take key of any size");
+) -> blake3::Hash {
+    let mut mac = blake3::Hasher::new_keyed(hmac_key);
     mac.update(associated_data);
     mac.update(buffer);
-    mac
+    mac.finalize()
 }
 
 fn crc32_hash_components(associated_data: &[u8], buffer: &[u8]) -> u32 {
@@ -120,43 +120,52 @@ mod tests {
     )]
     #[case::hmac(
         b"hello, world!".as_ref(),
-        Some(b"test".as_ref()),
+        Some(key1()),
         &[
-            16, 104, 181, 61, 182, 2, 187, 163, 56, 84, 65,
-            49, 243, 82, 216, 201, 1, 241, 168, 210, 233, 120,
-            115, 132, 23, 211, 2, 112, 135, 87, 134, 90,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            30, 55, 29, 223, 75, 225, 205, 232, 133, 29, 235, 172,
+            17, 41, 186, 12, 159, 17, 136, 69, 183, 59, 235, 133, 95,
+            77, 184, 206, 187, 164, 123, 78, 0, 0, 0, 0, 0, 0, 0, 0
         ],
         b"",
     )]
     fn test_write_check_bytes(
         #[case] input_buffer: &[u8],
-        #[case] hmac_key: Option<&[u8]>,
+        #[case] hmac_key: Option<[u8; KEY_SIZE]>,
         #[case] expected_ctx: &[u8],
         #[case] associated_data: &[u8],
     ) {
         let mut context = [0; 40];
-        write_check_bytes(hmac_key, associated_data, input_buffer, &mut context);
+        write_check_bytes(
+            hmac_key.as_ref(),
+            associated_data,
+            input_buffer,
+            &mut context,
+        );
         assert_eq!(context, expected_ctx);
     }
 
     #[rstest::rstest]
-    #[case::simple_matching_hmac(b"hello, world!", b"test", b"test", true)]
-    #[case::simple_different_hmac(b"hello, world!", b"test", b"other", false)]
-    #[case::empty_payload_matching_hmac(b"", b"test", b"test", true)]
-    #[case::empty_payload_different_hmac(b"", b"test", b"other", false)]
+    #[case::simple_matching_hmac(b"hello, world!", key1(), key1(), true)]
+    #[case::simple_different_hmac(b"hello, world!", key1(), key2(), false)]
+    #[case::empty_payload_matching_hmac(b"", key1(), key1(), true)]
+    #[case::empty_payload_different_hmac(b"", key2(), key1(), false)]
     fn test_verify_hmac_buffer(
         #[case] input_buffer: &[u8],
-        #[case] sign_hmac: &[u8],
-        #[case] verify_hmac: &[u8],
+        #[case] sign_hmac: [u8; KEY_SIZE],
+        #[case] verify_hmac: [u8; KEY_SIZE],
         #[case] should_be_valid: bool,
         #[values(b"", b"sample-associated-data")] associated_data: &[u8],
     ) {
         let mut context = [0; 40];
-        write_check_bytes(Some(sign_hmac), associated_data, input_buffer, &mut context);
+        write_check_bytes(
+            Some(&sign_hmac),
+            associated_data,
+            input_buffer,
+            &mut context,
+        );
 
         let verified =
-            verify_hmac_buffer(verify_hmac, associated_data, input_buffer, &context);
+            verify_blake3_buffer(&verify_hmac, associated_data, input_buffer, &context);
         assert_eq!(verified, should_be_valid);
     }
 
@@ -189,11 +198,11 @@ mod tests {
         #[case] encode_assoc_data: &[u8],
         #[case] decode_assoc_data: &[u8],
         #[case] expected_is_valid: bool,
-        #[values(None, Some(b"examplekey".as_ref()))] key: Option<&[u8]>,
+        #[values(None, Some(key1()))] key: Option<[u8; KEY_SIZE]>,
     ) {
         let input_payload = b"example payload";
         let mut context = [0; 40];
-        write_check_bytes(key, encode_assoc_data, input_payload, &mut context);
+        write_check_bytes(key.as_ref(), encode_assoc_data, input_payload, &mut context);
 
         let mode = if key.is_some() {
             Encryption::Enabled
@@ -201,7 +210,21 @@ mod tests {
             Encryption::Disabled
         };
 
-        let is_valid = verify(mode, key, decode_assoc_data, input_payload, &context);
+        let is_valid = verify(
+            mode,
+            key.as_ref(),
+            decode_assoc_data,
+            input_payload,
+            &context,
+        );
         assert_eq!(is_valid, expected_is_valid);
+    }
+
+    fn key1() -> [u8; KEY_SIZE] {
+        blake3::derive_key("test1", &[1; 32])
+    }
+
+    fn key2() -> [u8; KEY_SIZE] {
+        blake3::derive_key("test2", &[1; 32])
     }
 }
