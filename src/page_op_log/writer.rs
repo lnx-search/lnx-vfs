@@ -345,6 +345,12 @@ impl LogFileWriter {
         let block_buffer = mem::replace(&mut self.block_buffer, new_buffer);
         self.block_buffer_write_pos = 0;
         self.block_offset = log::LOG_BLOCK_SIZE;
+
+        // An absolute hack that we should destroy. This "fixes" the fact that the buffer
+        // leaves a 512B empty tail... Which should really be fixed on the buffer side
+        // but writing the memory correctly and then doing all the writing is... painful.
+        self.block_absolute_pos += log::LOG_BLOCK_SIZE as u64;
+
         block_buffer
     }
 }

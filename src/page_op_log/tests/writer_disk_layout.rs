@@ -2,7 +2,14 @@ use crate::ctx;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
 use crate::layout::log::{LogEntry, LogOp};
-use crate::layout::{PageFileId, PageId, file_metadata, log};
+use crate::layout::{
+    PageFileId,
+    PageGroupId,
+    PageId,
+    file_metadata,
+    log,
+    page_metadata,
+};
 use crate::page_op_log::writer::LogFileWriter;
 use crate::page_op_log::{MetadataHeader, op_log_associated_data};
 
@@ -190,8 +197,8 @@ async fn test_header_writing(#[values(false, true)] encryption: bool) {
         .expect("write log file with new header");
     drop(writer);
 
-    let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
-    file.read_buffer(&mut header_buffer, 0).await.unwrap();
+    let mut header_bytes = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
+    file.read_buffer(&mut header_bytes, 0).await.unwrap();
 
     let associated_data =
         file_metadata::header_associated_data(file.id(), FileGroup::Wal);
@@ -199,9 +206,68 @@ async fn test_header_writing(#[values(false, true)] encryption: bool) {
     let header: MetadataHeader = file_metadata::decode_metadata(
         ctx.cipher(),
         &associated_data,
-        &mut header_buffer[..file_metadata::HEADER_SIZE],
+        &mut header_bytes[..file_metadata::HEADER_SIZE],
     )
     .expect("writer should write valid header");
     assert_eq!(header.encryption, ctx.get_encryption_status());
     assert_ne!(header.log_file_id, 0);
+}
+
+// TODO: Writer fails to correctly fill the buffer then flush it...
+//       we write out 3 buffers of 128KB, but the system does not correctly update
+//       the associated data?
+//  - There are two things wrong here
+//  1) The writer is skipping the last 512 bytes of the memory buffer.
+//  2) when buffers are rotated, the page position looses its mind.
+#[rstest::rstest]
+#[trace]
+#[tokio::test]
+async fn test_large_sets_of_entries_decodable(
+    #[values(0.0, 0.2, 0.8, 1.0)] metadata_ratio: f32,
+    #[values(64, 100, 300, 5233)] num_entries: usize,
+) {
+    fastrand::seed(73256235235);
+
+    let ctx = ctx::FileContext::for_test(false).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
+
+    super::write_log_entries(ctx.clone(), file.clone(), num_entries, metadata_ratio)
+        .await;
+
+    let path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Wal, file.id())
+        .await;
+
+    let mut content = std::fs::read(&path).expect("read log file");
+
+    let header_bytes = &mut content[..file_metadata::HEADER_SIZE];
+    let associated_data =
+        file_metadata::header_associated_data(file.id(), FileGroup::Wal);
+
+    let header: MetadataHeader =
+        file_metadata::decode_metadata(ctx.cipher(), &associated_data, header_bytes)
+            .expect("writer should write valid header");
+
+    let mut num_entries_read = 0;
+    let mut offset = file_metadata::HEADER_SIZE;
+    while num_entries_read < num_entries && offset < content.len() {
+        let block_data = &mut content[offset..][..log::LOG_BLOCK_SIZE];
+
+        let result = log::decode_log_block(
+            None,
+            &op_log_associated_data(file.id(), header.log_file_id, offset as u64),
+            block_data,
+        );
+
+        if result.is_err() {
+            dbg!(offset, content.len(), header.log_file_id, num_entries_read);
+        } else {
+            let block = result.unwrap();
+            num_entries_read += block.num_entries();
+        }
+
+        offset += log::LOG_BLOCK_SIZE;
+    }
+    assert_eq!(num_entries_read, num_entries);
 }
