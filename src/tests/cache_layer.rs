@@ -228,6 +228,12 @@ fn test_dirty_pages_page_locked() {
 
     // Read view should still be valid.
     assert!(read_view.iter().all(|v| *v == 4));
+    drop(format!("{read_view:?}"));
+
+    // Check clone behaviour
+    let read_view_clone = read_view.clone();
+    assert!(read_view_clone.iter().all(|v| *v == 4));
+
     // The backlog will remain because of the generation cleanup system.
     assert_eq!(layer.backlog_size(), 10);
 }

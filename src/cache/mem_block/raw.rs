@@ -198,7 +198,7 @@ impl Debug for RawPagePtr {
         write!(
             f,
             "RawPagePtr(addr={:?}, len={}, page_size={})",
-            self.span.ptr, self.span.len, self.span.page_size as usize,
+            self.span.ptr, self.span.len, self.span.page_size,
         )
     }
 }
@@ -369,6 +369,34 @@ fn try_open_std(num_pages: usize, page_size: PageSize) -> io::Result<memmap2::Mm
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case(PageSize::Std8KB, "8KB")]
+    #[case(PageSize::Std32KB, "32KB")]
+    #[case(PageSize::Std64KB, "64KB")]
+    #[case(PageSize::Std128KB, "128KB")]
+    #[case(PageSize::Huge2MB, "2MB")]
+    fn test_page_size_display_and_debug(
+        #[case] page_size: PageSize,
+        #[case] expected: &str,
+    ) {
+        let displayed = format!("{page_size}");
+        let debug = format!("{page_size:?}");
+        assert_eq!(displayed, expected);
+        assert_eq!(debug, expected);
+    }
+
+    #[test]
+    fn test_spanning_ptr_debug() {
+        let ptr = RawPagePtr {
+            span: SpanningPagePtr {
+                page_size: PageSize::Std8KB,
+                ptr: std::ptr::null_mut(),
+                len: 0,
+            }
+        };
+        assert_eq!(format!("{ptr:?}"), "RawPagePtr(addr=0x0, len=0, page_size=8KB)");
+    }
 
     #[rstest::rstest]
     #[case::zero_pages(0)]
