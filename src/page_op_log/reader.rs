@@ -4,9 +4,9 @@ use std::sync::Arc;
 use super::MetadataHeader;
 use crate::directory::FileGroup;
 use crate::layout::file_metadata::Encryption;
-use crate::layout::{PageId, file_metadata, log};
+use crate::layout::{file_metadata, log};
 use crate::stream_reader::{StreamReader, StreamReaderBuilder};
-use crate::{buffer, ctx, file};
+use crate::{ctx, file};
 
 const BUFFER_SIZE: usize = 128 << 10;
 
