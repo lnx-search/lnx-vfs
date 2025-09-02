@@ -1,8 +1,6 @@
 use std::collections::BTreeSet;
 use std::io;
 
-use libc::read;
-
 use crate::buffer::DmaBuffer;
 use crate::directory::FileGroup;
 use crate::layout::log::{LogEntry, LogOp};

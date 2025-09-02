@@ -11,6 +11,8 @@ use rand::RngCore;
 
 use crate::directory::FileId;
 use crate::layout::file_metadata::Encryption;
+pub use self::writer::{LogFileWriter, LogOpenWriteError};
+pub use self::reader::{LogFileReader, LogDecodeError, LogOpenReadError};
 
 #[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
 /// The file metadata header used to identify the file and the type.
@@ -19,9 +21,9 @@ pub struct MetadataHeader {
     ///
     /// NOTE: This ID changes every time the WAL is flushed, although the disk
     /// allocation stays the same, the file itself is seen as 'new'.
-    pub log_file_id: u64,
+    pub(super) log_file_id: u64,
     /// Signals if the data in the log is encrypted or not.
-    pub encryption: Encryption,
+    pub(super) encryption: Encryption,
 }
 
 /// Computes the associated data to tag file data with.

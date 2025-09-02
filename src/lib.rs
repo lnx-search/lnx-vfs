@@ -14,6 +14,7 @@ mod stream_reader;
 mod tests;
 mod transaction;
 mod utils;
+mod checkpoint;
 
 use std::ops::Range;
 

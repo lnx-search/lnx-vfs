@@ -11,7 +11,18 @@ use std::sync::Arc;
 use crate::file;
 use crate::file::DynamicGuard;
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(
+    Debug,
+    Copy, 
+    Clone, 
+    Ord, 
+    PartialOrd,
+    Eq, 
+    PartialEq,
+    Hash,
+    serde_derive::Serialize,
+    serde_derive::Deserialize,
+)]
 /// A unique identifier for a file.
 pub struct FileId(u32);
 

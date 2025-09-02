@@ -31,7 +31,7 @@ pub enum LogOpenReadError {
     /// An IO error occurred.
     IO(#[from] io::Error),
     #[error(transparent)]
-    /// The decoder could not process the buffer.
+    /// The decoder could not process the buffer and decode the header.
     InvalidHeader(#[from] file_metadata::DecodeError),
     #[error("file is not encrypted but system has encryption enabled")]
     /// The encryption of the file does not align with the current context.
