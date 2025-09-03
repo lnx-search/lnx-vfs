@@ -1,0 +1,67 @@
+use crate::checkpoint::{MetadataHeader, ckpt_associated_data};
+use crate::ctx;
+use crate::directory::FileGroup;
+use crate::layout::page_metadata::{PageChangeCheckpoint, PageMetadata};
+use crate::layout::{PageFileId, PageGroupId, PageId, file_metadata, page_metadata};
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_checkpoint_writer(
+    #[values(false, true)] encryption: bool,
+    #[values(0, 1, 10, 400, 7423)] num_updates: usize,
+) {
+    let ctx = ctx::FileContext::for_test(encryption).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Metadata).await;
+
+    let mut updates = PageChangeCheckpoint::default();
+    for update_id in 0..num_updates {
+        let metadata = PageMetadata {
+            group: PageGroupId(999),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(update_id as u32),
+            data_len: 0,
+            context: [0; 40],
+        };
+        updates.push(metadata);
+    }
+
+    crate::checkpoint::write_checkpoint(&ctx, &file, PageFileId(1), updates)
+        .await
+        .expect("could not write checkpoint");
+
+    let file_path = ctx
+        .directory()
+        .resolve_file_path(FileGroup::Metadata, file.id())
+        .await;
+
+    let mut written_data = std::fs::read(file_path).expect("could not read checkpoint");
+
+    let header_associated_data =
+        file_metadata::header_associated_data(file.id(), FileGroup::Metadata);
+    let header: MetadataHeader = file_metadata::decode_metadata(
+        ctx.cipher(),
+        &header_associated_data,
+        &mut written_data[..file_metadata::HEADER_SIZE],
+    )
+    .expect("valid header should be written");
+
+    assert_eq!(header.file_id, file.id());
+    assert_eq!(header.parent_page_file_id, PageFileId(1));
+    assert_eq!(header.encryption, ctx.get_encryption_status());
+
+    let ckpt_associated_data = ckpt_associated_data(
+        file.id(),
+        header.parent_page_file_id,
+        header.checkpoint_num_changes,
+        file_metadata::HEADER_SIZE as u64,
+    );
+
+    let checkpoint = page_metadata::decode_page_metadata_changes(
+        ctx.cipher(),
+        &ckpt_associated_data,
+        &mut written_data[file_metadata::HEADER_SIZE..][..header.checkpoint_buffer_size],
+    )
+    .expect("checkpoint should be able to be decoded");
+    assert_eq!(checkpoint.len() as u32, header.checkpoint_num_changes);
+}

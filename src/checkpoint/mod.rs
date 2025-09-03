@@ -1,4 +1,5 @@
 mod reader;
+#[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
 mod writer;
 
@@ -22,6 +23,8 @@ pub(super) struct MetadataHeader {
     pub(super) encryption: Encryption,
     /// The size of the checkpoint buffer.
     pub(super) checkpoint_buffer_size: usize,
+    /// The number of entries in the checkpoint.
+    pub(super) checkpoint_num_changes: u32,
 }
 
 /// Computes the associated data to tag checkpoint file data with.
@@ -32,11 +35,13 @@ pub(super) struct MetadataHeader {
 pub(super) fn ckpt_associated_data(
     file_id: FileId,
     target_page_file_id: PageFileId,
+    num_changes: u32,
     start_pos: u64,
-) -> [u8; 16] {
-    let mut buffer = [0; 16];
+) -> [u8; 20] {
+    let mut buffer = [0; 20];
     buffer[0..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
     buffer[4..12].copy_from_slice(&start_pos.to_le_bytes());
     buffer[12..16].copy_from_slice(&target_page_file_id.0.to_le_bytes());
+    buffer[16..20].copy_from_slice(&num_changes.to_le_bytes());
     buffer
 }

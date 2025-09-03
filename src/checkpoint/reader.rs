@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 
 use crate::buffer::ALLOC_PAGE_SIZE;
 use crate::directory::FileGroup;
@@ -31,7 +32,7 @@ pub enum ReadCheckpointError {
 
 /// Read a persisted metadata checkpoint.
 pub async fn read_checkpoint(
-    ctx: &ctx::FileContext,
+    ctx: &Arc<ctx::FileContext>,
     file: &file::ROFile,
 ) -> Result<page_metadata::PageChangeCheckpoint, ReadCheckpointError> {
     let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
@@ -59,16 +60,27 @@ pub async fn read_checkpoint(
     let ckpt_associated_data = super::ckpt_associated_data(
         file.id(),
         header.parent_page_file_id,
+        header.checkpoint_num_changes,
         file_metadata::HEADER_SIZE as u64,
     );
 
     let num_pages = header.checkpoint_buffer_size.div_ceil(ALLOC_PAGE_SIZE);
     let mut checkpoint_buffer = ctx.alloc_pages(num_pages);
-    let checkpoint = page_metadata::decode_page_metadata_changes(
-        ctx.cipher(),
-        &ckpt_associated_data,
-        &mut checkpoint_buffer,
-    )?;
+    file.read_buffer(&mut checkpoint_buffer, file_metadata::HEADER_SIZE as u64)
+        .await?;
+
+    let checkpoint = tokio::task::spawn_blocking({
+        let ctx = ctx.clone();
+        move || {
+            page_metadata::decode_page_metadata_changes(
+                ctx.cipher(),
+                &ckpt_associated_data,
+                &mut checkpoint_buffer,
+            )
+        }
+    })
+    .await
+    .expect("spawn worker thread")?;
 
     Ok(checkpoint)
 }

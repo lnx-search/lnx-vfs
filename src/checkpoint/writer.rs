@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 
 use crate::buffer::ALLOC_PAGE_SIZE;
 use crate::directory::FileGroup;
@@ -23,22 +24,32 @@ pub enum WriteCheckpointError {
 ///
 /// The file will automatically be synced to ensure data is persisted.
 pub async fn write_checkpoint(
-    ctx: &ctx::FileContext,
+    ctx: &Arc<ctx::FileContext>,
     file: &file::RWFile,
     page_file_id: PageFileId,
-    changes: &page_metadata::PageChangeCheckpoint,
+    changes: page_metadata::PageChangeCheckpoint,
 ) -> Result<(), WriteCheckpointError> {
+    let num_changes = changes.len() as u32;
+
     let ckpt_associated_data = super::ckpt_associated_data(
         file.id(),
         page_file_id,
+        num_changes,
         file_metadata::HEADER_SIZE as u64,
     );
 
-    let changes_buffer = page_metadata::encode_page_metadata_changes(
-        ctx.cipher(),
-        &ckpt_associated_data,
-        changes,
-    )?;
+    let changes_buffer = tokio::task::spawn_blocking({
+        let ctx = ctx.clone();
+        move || {
+            page_metadata::encode_page_metadata_changes(
+                ctx.cipher(),
+                &ckpt_associated_data,
+                &changes,
+            )
+        }
+    })
+    .await
+    .expect("spawn worker thread")?;
 
     let num_pages =
         (file_metadata::HEADER_SIZE + changes_buffer.len()).div_ceil(ALLOC_PAGE_SIZE);
@@ -54,6 +65,7 @@ pub async fn write_checkpoint(
         parent_page_file_id: page_file_id,
         encryption: ctx.get_encryption_status(),
         checkpoint_buffer_size: changes_buffer.len(),
+        checkpoint_num_changes: num_changes,
     };
     file_metadata::encode_metadata(
         ctx.cipher(),
