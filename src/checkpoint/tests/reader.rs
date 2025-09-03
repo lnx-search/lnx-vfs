@@ -1,8 +1,9 @@
 use std::io::Write;
 
 use crate::checkpoint::tests::fill_updates;
-use crate::checkpoint::{MetadataHeader, ckpt_associated_data};
+use crate::checkpoint::{MetadataHeader, ReadCheckpointError, ckpt_associated_data};
 use crate::directory::FileGroup;
+use crate::layout::page_metadata::PageChangeCheckpoint;
 use crate::layout::{PageFileId, file_metadata, page_metadata};
 use crate::{ctx, file};
 
@@ -66,4 +67,72 @@ async fn test_checkpoint_reader(
         .await
         .expect("could not write checkpoint");
     assert_eq!(checkpoint.len(), num_updates);
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_header_encryption_missmatch() {
+    let encoding_ctx = ctx::FileContext::for_test(false).await;
+    let file = encoding_ctx.make_tmp_rw_file(FileGroup::Metadata).await;
+
+    let associated_data = ckpt_associated_data(
+        file.id(),
+        PageFileId(1),
+        0,
+        file_metadata::HEADER_SIZE as u64,
+    );
+    let ckpt_buffer = page_metadata::encode_page_metadata_changes(
+        encoding_ctx.cipher(),
+        &associated_data,
+        &PageChangeCheckpoint::default(),
+    )
+    .unwrap();
+
+    let header_associated_data =
+        file_metadata::header_associated_data(file.id(), FileGroup::Metadata);
+    let header = MetadataHeader {
+        file_id: file.id(),
+        parent_page_file_id: PageFileId(1),
+        encryption: encoding_ctx.get_encryption_status(),
+        checkpoint_buffer_size: ckpt_buffer.len(),
+        checkpoint_num_changes: 0,
+    };
+
+    let mut header_buffer = vec![0; file_metadata::HEADER_SIZE];
+    file_metadata::encode_metadata(
+        encoding_ctx.cipher(),
+        &header_associated_data,
+        &header,
+        &mut header_buffer[..],
+    )
+    .unwrap();
+
+    let file_path = encoding_ctx
+        .directory()
+        .resolve_file_path(FileGroup::Metadata, file.id())
+        .await;
+
+    let mut raw_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&file_path)
+        .unwrap();
+    raw_file.write_all(&header_buffer).unwrap();
+    raw_file.write_all(&ckpt_buffer).unwrap();
+    raw_file.sync_all().unwrap();
+
+    let tmp_dir = encoding_ctx.tmp_dir();
+    let decoding_ctx = ctx::FileContext::for_test_in_dir(true, tmp_dir).await;
+    let file_ids = decoding_ctx.directory().list_dir(FileGroup::Metadata).await;
+
+    let file = decoding_ctx
+        .directory()
+        .get_ro_file(FileGroup::Metadata, file_ids[0])
+        .await
+        .unwrap();
+
+    let err = crate::checkpoint::read_checkpoint(&decoding_ctx, &file)
+        .await
+        .expect_err("reader should fail");
+    assert!(matches!(err, ReadCheckpointError::EncryptionStatusMismatch));
 }
