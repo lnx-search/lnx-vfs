@@ -9,10 +9,10 @@ mod writer;
 
 use rand::RngCore;
 
+pub use self::reader::{LogDecodeError, LogFileReader, LogOpenReadError};
+pub use self::writer::{LogFileWriter, LogOpenWriteError};
 use crate::directory::FileId;
 use crate::layout::file_metadata::Encryption;
-pub use self::writer::{LogFileWriter, LogOpenWriteError};
-pub use self::reader::{LogFileReader, LogDecodeError, LogOpenReadError};
 
 #[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
 /// The file metadata header used to identify the file and the type.

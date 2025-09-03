@@ -3,6 +3,7 @@
 mod arena;
 mod buffer;
 mod cache;
+mod checkpoint;
 mod core;
 mod ctx;
 mod directory;
@@ -14,7 +15,6 @@ mod stream_reader;
 mod tests;
 mod transaction;
 mod utils;
-mod checkpoint;
 
 use std::ops::Range;
 

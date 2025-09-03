@@ -16,7 +16,7 @@ const BUFFER_SIZE: usize = 128 << 10;
 const SEQUENCE_ID_START: u32 = 1;
 
 #[derive(Debug, thiserror::Error)]
-/// An error that prevent the reader from opening the log.
+/// An error that prevent the writer from opening the log.
 pub enum LogOpenWriteError {
     #[error(transparent)]
     /// An IO error occurred.

@@ -393,9 +393,12 @@ mod tests {
                 page_size: PageSize::Std8KB,
                 ptr: std::ptr::null_mut(),
                 len: 0,
-            }
+            },
         };
-        assert_eq!(format!("{ptr:?}"), "RawPagePtr(addr=0x0, len=0, page_size=8KB)");
+        assert_eq!(
+            format!("{ptr:?}"),
+            "RawPagePtr(addr=0x0, len=0, page_size=8KB)"
+        );
     }
 
     #[rstest::rstest]

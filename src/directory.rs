@@ -13,11 +13,11 @@ use crate::file::DynamicGuard;
 
 #[derive(
     Debug,
-    Copy, 
-    Clone, 
-    Ord, 
+    Copy,
+    Clone,
+    Ord,
     PartialOrd,
-    Eq, 
+    Eq,
     PartialEq,
     Hash,
     serde_derive::Serialize,

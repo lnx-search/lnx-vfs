@@ -55,9 +55,9 @@ impl PageMetadata {
 #[rkyv(derive(Debug))]
 /// The page metadata updates, this may be partial or a complete
 /// rewrite of the table state.
-pub struct PageMetadataUpdates(#[rkyv(with = rkyv::with::AsBox)] Vec<PageMetadata>);
+pub struct PageChangeCheckpoint(#[rkyv(with = rkyv::with::AsBox)] Vec<PageMetadata>);
 
-impl Deref for PageMetadataUpdates {
+impl Deref for PageChangeCheckpoint {
     type Target = Vec<PageMetadata>;
 
     fn deref(&self) -> &Self::Target {
@@ -65,7 +65,7 @@ impl Deref for PageMetadataUpdates {
     }
 }
 
-impl DerefMut for PageMetadataUpdates {
+impl DerefMut for PageChangeCheckpoint {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -85,10 +85,10 @@ pub enum EncodeError {
 /// Encode a set of page metadata updates.
 ///
 /// Metadata is automatically compressed with LZ4 compression.
-pub fn encode_page_metadata_updates(
+pub fn encode_page_metadata_changes(
     cipher: Option<&encrypt::Cipher>,
     associated_data: &[u8],
-    entries: &PageMetadataUpdates,
+    entries: &PageChangeCheckpoint,
 ) -> Result<Vec<u8>, EncodeError> {
     const HEADER_SIZE: usize = 44;
 
@@ -142,11 +142,11 @@ pub enum DecodeError {
 /// The update data should be located at the start of the buffer.
 ///
 /// The provided buffer should be 4KB in size.
-pub fn decode_page_metadata_updates(
+pub fn decode_page_metadata_changes(
     cipher: Option<&encrypt::Cipher>,
     associated_data: &[u8],
     buffer: &mut [u8],
-) -> Result<PageMetadataUpdates, DecodeError> {
+) -> Result<PageChangeCheckpoint, DecodeError> {
     const HEADER_SIZE: usize = 48;
 
     if buffer.len() < HEADER_SIZE {
@@ -170,13 +170,13 @@ pub fn decode_page_metadata_updates(
 
     let size_hint = data.len();
     let mut decoder = lz4_flex::frame::FrameDecoder::new(Cursor::new(data));
-    let mut buffer: AlignedVec<{ align_of::<PageMetadataUpdates>() }> =
+    let mut buffer: AlignedVec<{ align_of::<PageChangeCheckpoint>() }> =
         AlignedVec::with_capacity(size_hint);
     buffer
         .extend_from_reader(&mut decoder)
         .map_err(|e| DecodeError::DecompressionFailed(e.to_string()))?;
 
-    let view: &rkyv::Archived<PageMetadataUpdates> =
+    let view: &rkyv::Archived<PageChangeCheckpoint> =
         rkyv::access(&buffer).map_err(DecodeError::Deserialize)?;
 
     rkyv::deserialize(view).map_err(DecodeError::Deserialize)

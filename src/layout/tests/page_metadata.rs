@@ -2,10 +2,10 @@ use chacha20poly1305::{Key, KeyInit, XChaCha20Poly1305};
 
 use crate::layout::page_metadata::{
     DecodeError,
+    PageChangeCheckpoint,
     PageMetadata,
-    PageMetadataUpdates,
-    decode_page_metadata_updates,
-    encode_page_metadata_updates,
+    decode_page_metadata_changes,
+    encode_page_metadata_changes,
 };
 use crate::layout::{PageGroupId, PageId, encrypt};
 
@@ -28,12 +28,12 @@ const SAMPLE_PAGE_METADATA: PageMetadata = PageMetadata {
 fn test_encode_pages_metadata(#[case] encrypt: bool, #[case] pages: &[PageMetadata]) {
     let cipher = if encrypt { Some(cipher_1()) } else { None };
 
-    let mut updates = PageMetadataUpdates::default();
+    let mut updates = PageChangeCheckpoint::default();
     for page in pages {
         updates.push(*page);
     }
 
-    encode_page_metadata_updates(cipher.as_ref(), b"", &updates)
+    encode_page_metadata_changes(cipher.as_ref(), b"", &updates)
         .expect("page metadata encoding failed");
 }
 
@@ -50,15 +50,15 @@ fn test_encode_decode_pages_metadata(
 ) {
     let cipher = if encrypt { Some(cipher_1()) } else { None };
 
-    let mut updates = PageMetadataUpdates::default();
+    let mut updates = PageChangeCheckpoint::default();
     for page in pages {
         updates.push(*page);
     }
 
-    let mut buffer = encode_page_metadata_updates(cipher.as_ref(), b"", &updates)
+    let mut buffer = encode_page_metadata_changes(cipher.as_ref(), b"", &updates)
         .expect("page metadata encoding failed");
 
-    let decoded_block = decode_page_metadata_updates(cipher.as_ref(), b"", &mut buffer)
+    let decoded_block = decode_page_metadata_changes(cipher.as_ref(), b"", &mut buffer)
         .expect("page metadata decode");
     assert_eq!(decoded_block, updates);
 }
@@ -66,12 +66,12 @@ fn test_encode_decode_pages_metadata(
 #[rstest::rstest]
 fn test_decode_err_incorrect_buffer_size(#[values(true, false)] encrypt: bool) {
     let cipher = if encrypt { Some(cipher_1()) } else { None };
-    let updates = PageMetadataUpdates::default();
+    let updates = PageChangeCheckpoint::default();
 
     let mut buffer =
-        encode_page_metadata_updates(cipher.as_ref(), b"", &updates).unwrap();
+        encode_page_metadata_changes(cipher.as_ref(), b"", &updates).unwrap();
 
-    let err = decode_page_metadata_updates(cipher.as_ref(), b"", &mut buffer[..20])
+    let err = decode_page_metadata_changes(cipher.as_ref(), b"", &mut buffer[..20])
         .expect_err("page metadata decode should fail");
     assert_eq!(err.to_string(), "provided buffer length is incorrect");
 }
@@ -93,11 +93,11 @@ fn test_decode_err_most_errors(
     #[case] decode_cipher: Option<encrypt::Cipher>,
     #[case] expected_error: DecodeError,
 ) {
-    let updates = PageMetadataUpdates::default();
+    let updates = PageChangeCheckpoint::default();
     let mut buffer =
-        encode_page_metadata_updates(encode_cipher.as_ref(), b"", &updates).unwrap();
+        encode_page_metadata_changes(encode_cipher.as_ref(), b"", &updates).unwrap();
 
-    let err = decode_page_metadata_updates(decode_cipher.as_ref(), b"", &mut buffer)
+    let err = decode_page_metadata_changes(decode_cipher.as_ref(), b"", &mut buffer)
         .expect_err("page metadata decode should fail");
     assert_eq!(err.to_string(), expected_error.to_string());
 }
