@@ -1,17 +1,11 @@
-use std::io::{Cursor, Write};
 use std::ops::{Deref, DerefMut};
 
 use rkyv::rancor;
-use rkyv::ser::writer::IoWriter;
 use rkyv::util::AlignedVec;
 
 use crate::layout::file_metadata::Encryption;
-use crate::layout::log::DecodeLogBlockError;
 use crate::layout::{PageGroupId, PageId, encrypt, integrity};
 
-const ENTRIES_PER_BLOCK: usize = 63;
-const EXPECTED_BUFFER_SIZE: usize = 4 << 10;
-pub const PAGE_BLOCK_SIZE: usize = 4096;
 const HEADER_SIZE: usize = 44;
 type AlignedBuffer = AlignedVec<{ align_of::<PageChangeCheckpoint>() }>;
 
