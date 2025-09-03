@@ -75,7 +75,7 @@ pub async fn read_checkpoint(
             page_metadata::decode_page_metadata_changes(
                 ctx.cipher(),
                 &ckpt_associated_data,
-                &mut checkpoint_buffer,
+                &mut checkpoint_buffer[..header.checkpoint_buffer_size],
             )
         }
     })

@@ -1,8 +1,8 @@
+use crate::checkpoint::tests::fill_updates;
 use crate::checkpoint::{MetadataHeader, ckpt_associated_data};
 use crate::ctx;
 use crate::directory::FileGroup;
-use crate::layout::page_metadata::{PageChangeCheckpoint, PageMetadata};
-use crate::layout::{PageFileId, PageGroupId, PageId, file_metadata, page_metadata};
+use crate::layout::{PageFileId, file_metadata, page_metadata};
 
 #[rstest::rstest]
 #[tokio::test]
@@ -13,19 +13,7 @@ async fn test_checkpoint_writer(
     let ctx = ctx::FileContext::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Metadata).await;
 
-    let mut updates = PageChangeCheckpoint::default();
-    for update_id in 0..num_updates {
-        let metadata = PageMetadata {
-            group: PageGroupId(999),
-            revision: 0,
-            next_page_id: PageId::TERMINATOR,
-            id: PageId(update_id as u32),
-            data_len: 0,
-            context: [0; 40],
-        };
-        updates.push(metadata);
-    }
-
+    let updates = fill_updates(num_updates);
     crate::checkpoint::write_checkpoint(&ctx, &file, PageFileId(1), updates)
         .await
         .expect("could not write checkpoint");

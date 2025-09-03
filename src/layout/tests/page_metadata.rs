@@ -77,17 +77,13 @@ fn test_decode_err_incorrect_buffer_size(#[values(true, false)] encrypt: bool) {
 }
 
 #[rstest::rstest]
-#[case::decrypt_non_encrypted_data(
-    None,
-    Some(cipher_1()),
-    DecodeError::DecryptionFailed
-)]
+#[case::decrypt_non_encrypted_data(None, Some(cipher_1()), DecodeError::DecryptionFail)]
 #[case::dencrypt_missmatch_keys(
     Some(cipher_1()),
     Some(cipher_2()),
-    DecodeError::DecryptionFailed
+    DecodeError::DecryptionFail
 )]
-#[case::checksum_missmatch(Some(cipher_1()), None, DecodeError::Corrupted)]
+#[case::checksum_missmatch(Some(cipher_1()), None, DecodeError::VerificationFail)]
 fn test_decode_err_most_errors(
     #[case] encode_cipher: Option<encrypt::Cipher>,
     #[case] decode_cipher: Option<encrypt::Cipher>,
