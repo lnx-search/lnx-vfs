@@ -14,10 +14,7 @@ use crate::layout::file_metadata::Encryption;
 pub(super) struct MetadataHeader {
     /// The unique ID of the file itself (as matches the file name.)
     pub(super) file_id: FileId,
-    /// The unique ID of the log file.
-    ///
-    /// NOTE: This ID changes every time the WAL is flushed, although the disk
-    /// allocation stays the same, the file itself is seen as 'new'.
+    /// The unique ID of the page file this checkpoint is attached to.
     pub(super) parent_page_file_id: PageFileId,
     /// Signals if the data in the log is encrypted or not.
     pub(super) encryption: Encryption,

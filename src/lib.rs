@@ -9,6 +9,7 @@ mod ctx;
 mod directory;
 mod file;
 mod layout;
+mod page_data;
 mod page_op_log;
 mod stream_reader;
 #[cfg(all(test, not(feature = "test-miri")))]
