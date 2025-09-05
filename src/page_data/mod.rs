@@ -7,7 +7,7 @@ mod allocator;
 mod tests;
 
 /// The default size of individual pages of data.
-pub const DEFAULT_PAGE_SIZE: usize = 8 << 10;
+pub const DEFAULT_PAGE_SIZE: usize = 32 << 10;
 /// The number of page "blocks" that make up a page file.
 pub const NUM_BLOCKS_PER_FILE: usize = 30;
 /// The number of 32KB pages that make up a block.

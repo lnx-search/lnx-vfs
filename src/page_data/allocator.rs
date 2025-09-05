@@ -93,7 +93,7 @@ impl PageAllocator {
         }
 
         let mut allocated_pages = SmallVec::new();
-        if num_pages <= 16 {
+        if num_pages <= 8 {
             self.small_alloc_best_fit(num_pages as u16, &mut allocated_pages);
         } else {
             self.large_alloc_best_fit(num_pages, &mut allocated_pages);
@@ -108,12 +108,14 @@ impl PageAllocator {
     /// or equal to a 128KB chunk.
     fn small_alloc_best_fit(
         &mut self,
-        num_pages: u16,
+        mut num_pages: u16,
         allocated_pages: &mut SmallVec<[AllocSpan; 8]>,
     ) {
+        debug_assert!(num_pages <= 8);
+
         match num_pages {
-            // if 128KB, 96KB, 64KB, 32KB or 8KB, fit in one.
-            16 | 12 | 8 | 4 | 1 => {
+            // if 256KB, 128KB, 64KB or 32KB, fit in one.
+            8 | 6 | 4 | 2 | 1 => {
                 let mut blocks = self.free_blocks.find_page_spans(num_pages);
                 if let Some(block) = blocks.next() {
                     allocated_pages.push(block.alloc(num_pages));
@@ -121,43 +123,27 @@ impl PageAllocator {
                 }
             },
             // if the allocation size can be split into one of the aligned sizes and then some
-            // remaining 8KB pages, we should do that, unless we can fit the whole allocation
-            // in a single block.
-            13..16 | 9..12 | 5..8 => {
-                let num_aligned_pages = (num_pages / 4) * 4;
-
-                let mut blocks = self.free_blocks.find_page_spans(num_aligned_pages);
-                if let Some(block) = blocks.next() {
-                    if block.spare_capacity() >= num_pages {
-                        allocated_pages.push(block.alloc(num_pages));
-                        return;
-                    } else {
-                        allocated_pages.push(block.alloc(num_aligned_pages));
-                    }
-                    drop(blocks);
-                    self.small_alloc_best_fit(
-                        num_pages - num_aligned_pages,
-                        allocated_pages,
-                    );
-                    return;
-                }
+            // remaining pages, we should do that.
+            7 | 5 | 3 => {
+                let num_aligned_pages = (num_pages / 2) * 2;
+                self.small_alloc_best_fit(num_aligned_pages, allocated_pages);
+                num_pages -= num_aligned_pages;
             },
             _ => {},
         }
 
         // everything else, use as filler.
-        let mut pages_remaining = num_pages;
         let mut blocks = self.free_blocks.find_page_spans(1);
-        while pages_remaining > 0 {
+        while num_pages > 0 {
             let Some(block) = blocks.next() else { break };
-            let (span, n_left) = block.alloc_upto(pages_remaining);
-            pages_remaining = n_left;
+            let (span, n_left) = block.alloc_upto(num_pages);
+            num_pages = n_left;
             allocated_pages.push(span);
         }
 
         // If this happens, it means we thought we had more spare capacity than we did.
         assert_eq!(
-            pages_remaining, 0,
+            num_pages, 0,
             "BUG: ran out of blocks despite remaining pages"
         );
     }
@@ -188,20 +174,20 @@ impl PageAllocator {
 
         // For allocations where they are both large, and we cannot consume any more whole blocks,
         // we chunk into smaller sets of allocations.
-        for block in self.free_blocks.find_page_spans(16) {
+        for block in self.free_blocks.find_page_spans(8) {
             let num_pages_to_alloc =
                 cmp::min(num_pages, NUM_PAGES_PER_BLOCK as u32) as u16;
-            let (span, n_left) = block.alloc_multiple_of(num_pages_to_alloc, 16);
+            let (span, n_left) = block.alloc_multiple_of(num_pages_to_alloc, 8);
             num_pages -= (num_pages_to_alloc - n_left) as u32;
             allocated_pages.push(span);
 
-            if num_pages < 16 {
+            if num_pages < 8 {
                 break;
             }
         }
 
-        while num_pages >= 16 {
-            let page_chunk_size = (num_pages / 8) * 8;
+        while num_pages >= 8 {
+            let page_chunk_size = cmp::min((num_pages / 2) * 2, 8);
             self.small_alloc_best_fit(page_chunk_size as u16, allocated_pages);
             num_pages -= page_chunk_size;
         }

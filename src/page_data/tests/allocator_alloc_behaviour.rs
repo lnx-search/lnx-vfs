@@ -53,27 +53,41 @@ fn test_alloc_out_of_capacity(#[case] num_pages: u32) {
 }
 
 #[rstest::rstest]
-#[case::single_page(1, smallvec![AllocSpan { start_page: 0, span_len: 1 }])]
-#[case::span_128kb(16, smallvec![AllocSpan { start_page: 0, span_len: 16 }])]
-#[case::span_96kb(12, smallvec![AllocSpan { start_page: 0, span_len: 12 }])]
-#[case::span_64kb(8, smallvec![AllocSpan { start_page: 0, span_len: 8 }])]
-#[case::span_32kb(4, smallvec![AllocSpan { start_page: 0, span_len: 4 }])]
-#[case::span_unaligned_13(13, smallvec![AllocSpan { start_page: 0, span_len: 13 }])]
-#[case::span_unaligned_14(14, smallvec![AllocSpan { start_page: 0, span_len: 14 }])]
-#[case::span_unaligned_15(15, smallvec![AllocSpan { start_page: 0, span_len: 15 }])]
-#[case::span_unaligned_9(9, smallvec![AllocSpan { start_page: 0, span_len: 9 }])]
-#[case::span_unaligned_10(10, smallvec![AllocSpan { start_page: 0, span_len: 10 }])]
-#[case::span_unaligned_11(11, smallvec![AllocSpan { start_page: 0, span_len: 11 }])]
-#[case::span_unaligned_5(5, smallvec![AllocSpan { start_page: 0, span_len: 5 }])]
-#[case::span_unaligned_6(6, smallvec![AllocSpan { start_page: 0, span_len: 6 }])]
-#[case::span_unaligned_7(7, smallvec![AllocSpan { start_page: 0, span_len: 7 }])]
-#[case::span_unaligned_2(2, smallvec![AllocSpan { start_page: 0, span_len: 2 }])]
-#[case::span_unaligned_3(3, smallvec![AllocSpan { start_page: 0, span_len: 3 }])]
+#[case::span_128kb(4, smallvec![AllocSpan { start_page: 0, span_len: 4 }])]
+#[case::span_64kb(2, smallvec![AllocSpan { start_page: 0, span_len: 2 }])]
+#[case::span_32kb(1, smallvec![AllocSpan { start_page: 0, span_len: 1 }])]
+#[case::span_unaligned_96kb(
+    3,
+    smallvec![
+        AllocSpan { start_page: 0, span_len: 2 },
+        AllocSpan { start_page: 2, span_len: 1 },
+    ],
+)]
+#[case::span_unaligned_7(
+    7,
+    smallvec![
+        AllocSpan { start_page: 0, span_len: 6 },
+        AllocSpan { start_page: 6, span_len: 1 },
+    ],
+)]
+#[case::span_unaligned_5(
+    5,
+    smallvec![
+        AllocSpan { start_page: 0, span_len: 4 },
+        AllocSpan { start_page: 4, span_len: 1 },
+    ],
+)]
+#[case::span_unaligned_3(
+    3,
+    smallvec![
+        AllocSpan { start_page: 0, span_len: 2 },
+        AllocSpan { start_page: 2, span_len: 1 },
+    ],
+)]
 #[case::large_alloc_single_block(
     1000,
     smallvec![
-        AllocSpan { start_page: 0, span_len: 992 },
-        AllocSpan { start_page: 992, span_len: 8 },
+        AllocSpan { start_page: 0, span_len: 1000 },
     ]
 )]
 #[case::large_alloc_multi_block(
@@ -103,27 +117,41 @@ fn test_page_single_alloc(
 }
 
 #[rstest::rstest]
-#[case::single_page(1, smallvec![AllocSpan { start_page: 150_000, span_len: 1 }])]
-#[case::span_128kb(16, smallvec![AllocSpan { start_page: 150_000, span_len: 16 }])]
-#[case::span_96kb(12, smallvec![AllocSpan { start_page: 150_000, span_len: 12 }])]
-#[case::span_64kb(8, smallvec![AllocSpan { start_page: 150_000, span_len: 8 }])]
-#[case::span_32kb(4, smallvec![AllocSpan { start_page: 150_000, span_len: 4 }])]
-#[case::span_unaligned_13(13, smallvec![AllocSpan { start_page: 150_000, span_len: 13 }])]
-#[case::span_unaligned_14(14, smallvec![AllocSpan { start_page: 150_000, span_len: 14 }])]
-#[case::span_unaligned_15(15, smallvec![AllocSpan { start_page: 150_000, span_len: 15 }])]
-#[case::span_unaligned_9(9, smallvec![AllocSpan { start_page: 150_000, span_len: 9 }])]
-#[case::span_unaligned_10(10, smallvec![AllocSpan { start_page: 150_000, span_len: 10 }])]
-#[case::span_unaligned_11(11, smallvec![AllocSpan { start_page: 150_000, span_len: 11 }])]
-#[case::span_unaligned_5(5, smallvec![AllocSpan { start_page: 150_000, span_len: 5 }])]
-#[case::span_unaligned_6(6, smallvec![AllocSpan { start_page: 150_000, span_len: 6 }])]
-#[case::span_unaligned_7(7, smallvec![AllocSpan { start_page: 150_000, span_len: 7 }])]
-#[case::span_unaligned_2(2, smallvec![AllocSpan { start_page: 150_000, span_len: 2 }])]
-#[case::span_unaligned_3(3, smallvec![AllocSpan { start_page: 150_000, span_len: 3 }])]
+#[case::span_128kb(4, smallvec![AllocSpan { start_page: 150_000, span_len: 4 }])]
+#[case::span_64kb(2, smallvec![AllocSpan { start_page: 150_000, span_len: 2 }])]
+#[case::span_32kb(1, smallvec![AllocSpan { start_page: 150_000, span_len: 1 }])]
+#[case::span_unaligned_96kb(
+    3,
+    smallvec![
+        AllocSpan { start_page: 150_000, span_len: 2 },
+        AllocSpan { start_page: 150_002, span_len: 1 },
+    ],
+)]
+#[case::span_unaligned_7_pages(
+    7,
+    smallvec![
+        AllocSpan { start_page: 150_000, span_len: 6 },
+        AllocSpan { start_page: 150_006, span_len: 1 },
+    ],
+)]
+#[case::span_unaligned_5_pages(
+    5,
+    smallvec![
+        AllocSpan { start_page: 150_000, span_len: 4 },
+        AllocSpan { start_page: 150_004, span_len: 1 },
+    ],
+)]
+#[case::span_unaligned_3_pages(
+    3,
+    smallvec![
+        AllocSpan { start_page: 150_000, span_len: 2 },
+        AllocSpan { start_page: 150_002, span_len: 1 },
+    ],
+)]
 #[case::large_alloc_single_block(
     1000,
     smallvec![
-        AllocSpan { start_page: 150_000, span_len: 992 },
-        AllocSpan { start_page: 150_992, span_len: 8 },
+        AllocSpan { start_page: 150_000, span_len: 1000 },
     ]
 )]
 #[case::large_alloc_multi_block(
@@ -287,7 +315,12 @@ fn test_infilling_aligned_pages_from_unaligned_page_requests() {
         Some(smallvec![
             AllocSpan {
                 start_page: 491_508,
-                span_len: 12
+                span_len: 8
+            },
+            // Notice we have 3 spans here, but two are contigous.
+            AllocSpan {
+                start_page: 491_516,
+                span_len: 4
             },
             AllocSpan {
                 start_page: 475_135,
