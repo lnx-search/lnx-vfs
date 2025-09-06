@@ -21,7 +21,7 @@ fn test_free_adds_capacity_on_allocated_init_space() {
     // Only updated when block is fully free.
     assert_eq!(capacity.spare_capacity(), 0);
 
-    capacity.free(5, (NUM_PAGES_PER_BLOCK - 5) as u32);
+    capacity.free(5, (NUM_PAGES_PER_BLOCK - 5) as u16);
     assert_eq!(capacity.spare_capacity(), NUM_PAGES_PER_BLOCK as u32);
 
     capacity.free(NUM_PAGES_PER_BLOCK as u32, 6);

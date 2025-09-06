@@ -59,20 +59,25 @@ impl PageAllocator {
     }
 
     /// Free pages starting at `page_start` and continuing on for `len` pages.
-    pub(super) fn free(&mut self, page_start: u32, len: u32) {
-        let page_end = page_start + len;
+    ///
+    /// The page ranges must lay within the bounds of an allocation block.
+    pub(super) fn free(&mut self, page_start: u32, len: u16) {
+        let block_idx = page_start as usize / NUM_PAGES_PER_BLOCK;
+        let page_end_block =
+            (page_start + len as u32 - 1) as usize / NUM_PAGES_PER_BLOCK;
 
-        for page_id in page_start..page_end {
-            let block_idx = page_id as usize / NUM_PAGES_PER_BLOCK;
+        assert_eq!(
+            block_idx, page_end_block,
+            "BUG: page range provided must stay within a single allocation block",
+        );
 
-            self.block_allocations[block_idx] -= 1;
-            if self.block_allocations[block_idx] == 0 {
-                let block = DiskBlock {
-                    page_offset: (block_idx * NUM_PAGES_PER_BLOCK) as u32,
-                    block_offset: 0,
-                };
-                self.free_blocks.push(block);
-            }
+        self.block_allocations[block_idx] -= len;
+        if self.block_allocations[block_idx] == 0 {
+            let block = DiskBlock {
+                page_offset: (block_idx * NUM_PAGES_PER_BLOCK) as u32,
+                block_offset: 0,
+            };
+            self.free_blocks.push(block);
         }
     }
 
@@ -101,6 +106,13 @@ impl PageAllocator {
 
         self.free_blocks.dec_free_pages(num_pages);
         self.free_blocks.prune();
+
+        // Update total pages used per block.
+        for span in allocated_pages.iter() {
+            let block_idx = span.start_page as usize / NUM_PAGES_PER_BLOCK;
+            self.block_allocations[block_idx] += span.span_len;
+        }
+
         Some(allocated_pages)
     }
 
@@ -226,7 +238,7 @@ impl FreeBlockList {
     /// Push a new [DiskBlock] onto the stack.
     fn push(&mut self, block: DiskBlock) {
         assert!(
-            self.len < NUM_BLOCKS_PER_FILE,
+            self.len <= NUM_BLOCKS_PER_FILE,
             "BUG: len has somehow become greater than number of blocks in file",
         );
 
