@@ -3,6 +3,7 @@ use crate::layout::PageFileId;
 use crate::layout::file_metadata::Encryption;
 
 mod allocator;
+mod page_file;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
 mod write_controller;
