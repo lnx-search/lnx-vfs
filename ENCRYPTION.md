@@ -1,8 +1,5 @@
 # Encryption Notes
 
-We use `XChaCha20Poly1305` as our core algorithm, for some things that are not required to be encrypted, we instead
-authenticate with a Blake3 keyed hash signature.
-
 We use `XChaCha20Poly1305`, `Blake3` and `Argon2ID` as our core algorithm and have the following responsibilities:
 
 - `XChaCha20Poly1305` - Used for symmetric encryption of data.
@@ -46,5 +43,5 @@ we define the current associated data for each file type here:
 - `position_in_file` - The position of the data.
 
 * NOTE: The data in the page data file can only be decrypted with the information from the page table, an attacker
-  cannot copy another block of data, although this is a kind of given I imagine? 
+  cannot copy another block of data.
 
