@@ -5,6 +5,7 @@ use crate::layout::file_metadata::Encryption;
 mod allocator;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
+mod write_controller;
 
 /// The default size of individual pages of data.
 pub const DEFAULT_PAGE_SIZE: usize = 32 << 10;
