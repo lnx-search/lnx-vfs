@@ -1,7 +1,7 @@
+use crate::disk_allocator::{AllocSpan, InitState, PageAllocator};
 use crate::layout::PageFileId;
 use crate::page_data::NUM_PAGES_PER_BLOCK;
-use crate::page_data::allocator::{AllocSpan, InitState, PageAllocator};
-use crate::page_data::write_controller::WriteController;
+use crate::write_controller::WriteController;
 
 #[test]
 fn test_empty_write_controller() {
@@ -42,7 +42,6 @@ fn test_page_alloc_commited() {
     );
     tx.commit();
     drop(tx);
-    eprintln!("oofies?");
 
     // The allocation cursors should not be reset due to the block internally
     // within the allocator being re-marked as free.

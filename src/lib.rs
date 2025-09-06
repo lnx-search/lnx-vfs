@@ -7,6 +7,7 @@ mod checkpoint;
 mod core;
 mod ctx;
 mod directory;
+mod disk_allocator;
 mod file;
 mod layout;
 mod page_data;
@@ -16,6 +17,7 @@ mod stream_reader;
 mod tests;
 mod transaction;
 mod utils;
+mod write_controller;
 
 use std::ops::Range;
 

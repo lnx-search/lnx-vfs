@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::directory::FileGroup;
 use crate::layout::{PageFileId, PageId, file_metadata};
-use crate::page_data::page_file::PageFileInner;
+use crate::page_data::page_file::PageFile;
 use crate::page_data::{MAX_NUM_PAGES, MetadataHeader};
 use crate::{ctx, file};
 
@@ -15,7 +15,7 @@ async fn test_create_page_file(#[values(false, true)] encryption: bool) {
     let ctx = ctx::FileContext::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
 
-    let page_file = PageFileInner::create(ctx.clone(), file.clone(), PageFileId(1))
+    let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
         .expect("page file should be created");
     drop(page_file);
@@ -80,7 +80,7 @@ async fn test_open_existing_page_file(#[values(false, true)] encryption: bool) {
     raw_file.write_all(&header_buffer).unwrap();
     raw_file.sync_all().unwrap();
 
-    let page_file = PageFileInner::open(ctx.clone(), file.clone())
+    let page_file = PageFile::open(ctx.clone(), file.clone())
         .await
         .expect("page file should be opened");
     assert_eq!(page_file.id(), PageFileId(1));
@@ -90,7 +90,7 @@ async fn test_open_existing_page_file(#[values(false, true)] encryption: bool) {
 async fn test_page_file_read_at() {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
-    let page_file = PageFileInner::create(ctx.clone(), file.clone(), PageFileId(1))
+    let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
         .unwrap();
 
@@ -125,7 +125,7 @@ async fn test_page_file_read_at() {
 async fn test_page_file_write_out_of_bounds_panics() {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
-    let page_file = PageFileInner::create(ctx.clone(), file.clone(), PageFileId(1))
+    let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
         .unwrap();
 
@@ -139,7 +139,7 @@ async fn test_page_file_write_out_of_bounds_panics() {
 async fn test_page_file_write_and_sync_start() {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
-    let page_file = PageFileInner::create(ctx.clone(), file.clone(), PageFileId(1))
+    let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
         .unwrap();
 
@@ -175,7 +175,7 @@ async fn test_page_file_write_and_sync_start() {
 async fn test_page_file_sync_coalesce() {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
-    let page_file = PageFileInner::create(ctx.clone(), file.clone(), PageFileId(1))
+    let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
         .unwrap();
 

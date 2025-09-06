@@ -1,6 +1,6 @@
 use smallvec::{SmallVec, smallvec};
 
-use crate::page_data::allocator::{AllocSpan, InitState, PageAllocator};
+use crate::disk_allocator::{AllocSpan, InitState, PageAllocator};
 use crate::page_data::{NUM_BLOCKS_PER_FILE, NUM_PAGES_PER_BLOCK};
 
 #[rstest::rstest]

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 
-use super::allocator::{self, AllocSpan};
+use super::disk_allocator::{self, AllocSpan};
 use crate::layout::PageFileId;
 
 #[derive(Default)]
@@ -11,7 +11,7 @@ use crate::layout::PageFileId;
 /// and internally manages the page allocator.
 pub(super) struct WriteController {
     /// The set of page files currently available for writing.
-    page_files: RwLock<BTreeMap<PageFileId, Mutex<allocator::PageAllocator>>>,
+    page_files: RwLock<BTreeMap<PageFileId, Mutex<disk_allocator::PageAllocator>>>,
 }
 
 impl WriteController {
@@ -19,7 +19,7 @@ impl WriteController {
     pub(super) fn insert_page_file(
         &self,
         id: PageFileId,
-        allocator: allocator::PageAllocator,
+        allocator: disk_allocator::PageAllocator,
     ) {
         let mut lock = self.page_files.write();
         if lock.contains_key(&id) {

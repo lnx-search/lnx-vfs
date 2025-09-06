@@ -45,7 +45,7 @@ pub enum CreatePageFileError {
 }
 
 /// The page file contains blocks of data called "pages".
-pub(super) struct PageFileInner {
+pub struct PageFile {
     id: PageFileId,
     ctx: Arc<ctx::FileContext>,
     file: file::RWFile,
@@ -61,13 +61,14 @@ pub(super) struct PageFileInner {
     sync_guard: tokio::sync::Mutex<u64>,
 }
 
-impl PageFileInner {
+impl PageFile {
     /// Returns the ID of the page file.
-    pub(super) fn id(&self) -> PageFileId {
+    pub fn id(&self) -> PageFileId {
         self.id
     }
 
-    pub(super) async fn open(
+    /// Open an existing page file.
+    pub async fn open(
         ctx: Arc<ctx::FileContext>,
         file: file::RWFile,
     ) -> Result<Self, OpenPageFileError> {
@@ -101,7 +102,8 @@ impl PageFileInner {
         ))
     }
 
-    pub(super) async fn create(
+    /// Create a new page file.
+    pub async fn create(
         ctx: Arc<ctx::FileContext>,
         file: file::RWFile,
         id: PageFileId,
@@ -152,7 +154,7 @@ impl PageFileInner {
     /// provided buffer or until EOF, which ever comes first.
     ///
     /// NOTE: This does _NOT_ decrypt the data of the pages if encryption at rest is enabled.
-    pub(super) async fn submit_read_at(
+    pub async fn submit_read_at(
         &self,
         page_id: PageId,
         buffer: &mut DmaBuffer,
@@ -177,7 +179,7 @@ impl PageFileInner {
     /// WARNING: This can overwrite other pages.
     ///
     /// NOTE: This does _NOT_ encrypt the data of the pages if encryption at rest is enabled.
-    pub(super) async fn submit_write_at(
+    pub async fn submit_write_at(
         &self,
         page_id: PageId,
         buffer: &mut DmaBuffer,
@@ -212,7 +214,7 @@ impl PageFileInner {
     }
 
     /// Wait for all changes to be persisted safely on the underlying storage.
-    pub(super) async fn sync(&self) -> io::Result<u64> {
+    pub async fn sync(&self) -> io::Result<u64> {
         // We get increment and get the sync counter, this is the oldest stamp that we will
         // accept for a flush operation.
         //
