@@ -5,8 +5,9 @@ use std::ops::Range;
 pub trait FileSystemCore {
     /// Create a new file writer.
     ///
-    /// This allows for streaming of the data rather than a full in-memory copy.
-    async fn create_writer(&self, file_id: u64);
+    /// This allows for streaming of the data rather than a full in-memory copy,
+    /// however, the full size of the end file must be known.
+    async fn create_writer(&self, file_id: u64, total_size: u64);
 
     /// Create a new file reader.
     ///

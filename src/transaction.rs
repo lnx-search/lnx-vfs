@@ -21,7 +21,7 @@ impl FileSystemTransaction {
 }
 
 impl FileSystemCore for FileSystemTransaction {
-    async fn create_writer(&self, _file_id: u64) {
+    async fn create_writer(&self, _file_id: u64, total_size: u64) {
         todo!()
     }
 

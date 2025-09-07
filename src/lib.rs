@@ -41,7 +41,7 @@ impl VirtualFileSystem {
 }
 
 impl FileSystemCore for VirtualFileSystem {
-    async fn create_writer(&self, _file_id: u64) {
+    async fn create_writer(&self, _file_id: u64, _total_size: u64) {
         todo!()
     }
 
