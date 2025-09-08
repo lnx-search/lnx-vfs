@@ -29,13 +29,11 @@ impl FileContext {
         encryption: bool,
         tmp_dir: std::sync::Arc<tempfile::TempDir>,
     ) -> std::sync::Arc<Self> {
-        use chacha20poly1305::aead::Key;
-        use chacha20poly1305::{KeyInit, XChaCha20Poly1305};
+        use chacha20poly1305::KeyInit;
 
         let cipher = if encryption {
-            let key = Key::<XChaCha20Poly1305>::from_slice(
-                b"F8E4FeD0098cF3Bf7968E1AC7Bbfacee",
-            );
+            let key =
+                encrypt::CipherKey::from_slice(b"F8E4FeD0098cF3Bf7968E1AC7Bbfacee");
             Some(encrypt::Cipher::new(key))
         } else {
             None

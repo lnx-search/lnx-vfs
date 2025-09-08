@@ -79,7 +79,7 @@ pub enum DecodeError {
     MissingDecryptionCipher,
     #[error("deserialize error: {0}")]
     /// The metadata was unable to be deserialized.
-    Deserialize(serde_json::Error),
+    Deserialize(rmp_serde::decode::Error),
 }
 
 /// Decode a metadata entry from the provided buffer.
@@ -123,7 +123,7 @@ pub fn decode_metadata<T: serde::de::DeserializeOwned>(
 
     let buffer_len = u32::from_le_bytes(buffer[..size_of::<u32>()].try_into().unwrap());
     buffer = &mut buffer[size_of::<u32>()..size_of::<u32>() + buffer_len as usize];
-    serde_json::from_slice(buffer).map_err(DecodeError::Deserialize)
+    rmp_serde::from_slice(buffer).map_err(DecodeError::Deserialize)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -138,7 +138,7 @@ pub enum EncodeError {
     EncryptionFailed(encrypt::EncryptError),
     #[error("serialize error: {0}")]
     /// The metadata could not be serialized.
-    Serialized(serde_json::Error),
+    Serialized(rmp_serde::encode::Error),
 }
 
 /// Encode the metadata into the given buffer.
@@ -170,7 +170,7 @@ pub fn encode_metadata<T: serde::Serialize>(
     let indices = [0..encrypt::CONTEXT_LEN, encrypt::CONTEXT_LEN..buffer.len()];
     let [context, buffer] = buffer.get_disjoint_mut(indices).unwrap();
 
-    let data = serde_json::to_vec(metadata).map_err(EncodeError::Serialized)?;
+    let data = rmp_serde::to_vec_named(metadata).map_err(EncodeError::Serialized)?;
     buffer[..size_of::<u32>()].copy_from_slice(&(data.len() as u32).to_le_bytes());
     buffer[size_of::<u32>()..size_of::<u32>() + data.len()].copy_from_slice(&data);
 

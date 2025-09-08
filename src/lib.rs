@@ -8,6 +8,7 @@ mod core;
 mod ctx;
 mod directory;
 mod disk_allocator;
+mod encryption_key;
 mod file;
 mod layout;
 mod page_data;

@@ -4,6 +4,7 @@ use chacha20poly1305::{AeadCore, AeadInPlace, Tag, XChaCha20Poly1305, XNonce};
 /// The length of context data.
 pub const CONTEXT_LEN: usize = 40;
 pub type Cipher = XChaCha20Poly1305;
+pub type CipherKey = chacha20poly1305::aead::Key<XChaCha20Poly1305>;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to decrypt data")]
