@@ -58,6 +58,12 @@ pub struct EncryptionKeys {
     pub authentication_key: [u8; 32],
 }
 
+impl std::fmt::Debug for EncryptionKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EncryptionKeys")
+    }
+}
+
 /// Decode the [EncryptionKeys] from the provided input buffer and password
 /// used for encrypting & wrapping the keys.
 pub fn decode_encryption_keys(
@@ -147,7 +153,7 @@ fn encode_key_data(
 
 fn get_argon2() -> argon2::Argon2<'static> {
     const DEFAULT_MEM_COST: u32 = 65_536;
-    const DEFAULT_TIME_COST: u32 = 5;
+    const DEFAULT_TIME_COST: u32 = if cfg!(test) { 1 } else { 5 };
     const DEFAULT_PARALLELISM: u32 = 4;
 
     let params = argon2::Params::new(

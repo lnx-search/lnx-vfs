@@ -593,7 +593,7 @@ fn list_files(file_group: FileGroup, path: &Path) -> io::Result<Vec<(u32, PathBu
     Ok(file_ids)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "test-miri")))]
 mod inner_tests {
     use super::*;
 
