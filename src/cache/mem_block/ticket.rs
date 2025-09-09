@@ -1,4 +1,4 @@
-use std::mem;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -43,15 +43,14 @@ impl Default for GenerationTicketMachine {
             oldest_alive_ticket: AtomicU64::new(0),
             generation: Mutex::new(GenerationState {
                 next_generation_id: 0,
-                active_generations: std::ptr::null_mut(),
+                active_generations: BTreeSet::new(),
             }),
         });
 
         // This entry is immediately replaced, always.
         let base_entry = GenerationEntry {
-            generation_id: 0,
+            generation_id: u64::MAX,
             shared_state: shared_state.clone(),
-            ptr_chain: Box::into_raw(Box::new(PtrChain::null())),
         };
 
         Self {
@@ -146,7 +145,6 @@ impl SharedState {
         let entry = GenerationEntry {
             generation_id,
             shared_state,
-            ptr_chain: Box::into_raw(Box::new(PtrChain::null())),
         };
 
         lock.push_active_generation(entry)
@@ -155,7 +153,7 @@ impl SharedState {
 
 struct GenerationState {
     next_generation_id: u64,
-    active_generations: *mut GenerationEntry,
+    active_generations: BTreeSet<u64>,
 }
 
 impl GenerationState {
@@ -163,21 +161,8 @@ impl GenerationState {
         &mut self,
         entry: GenerationEntry,
     ) -> Arc<GenerationEntry> {
-        let mut entry = Arc::new(entry);
-
-        let entry_ptr = Arc::get_mut(&mut entry).unwrap();
-
-        // Connect the new head of the list with the old head.
-        if !self.active_generations.is_null() {
-            unsafe {
-                (*entry_ptr.ptr_chain).next = self.active_generations;
-                (*(*self.active_generations).ptr_chain).prev =
-                    entry_ptr as *mut GenerationEntry
-            };
-        }
-
-        self.active_generations = entry_ptr as *mut GenerationEntry;
-
+        let entry = Arc::new(entry);
+        self.active_generations.insert(entry.generation_id);
         entry
     }
 
@@ -188,92 +173,29 @@ impl GenerationState {
     }
 }
 
-unsafe impl Send for GenerationState {}
-unsafe impl Sync for GenerationState {}
-
-/// A doubly-linked list of active generations.
+/// A generation that holds a reference back to its shared state.
+///
+/// When this entry is dropped it will remove itself from the `active_generations`
+/// state.
 struct GenerationEntry {
     generation_id: u64,
     shared_state: Arc<SharedState>,
-    ptr_chain: *mut PtrChain,
 }
-
-unsafe impl Send for GenerationEntry {}
-unsafe impl Sync for GenerationEntry {}
 
 impl Drop for GenerationEntry {
     fn drop(&mut self) {
-        if self.ptr_chain.is_null() {
-            return;
-        }
+        let mut guard = self.shared_state.generation.lock();
+        guard.active_generations.remove(&self.generation_id);
 
-        // We have to acquire the lock guard first in order to
-        // safely mutate the other generation entries.
-        //
-        // Once we have this lock, we can be assured that no other
-        // concurrent accesses are going on, which also ensures that it
-        // is safe to read out `next` and `prev` pointers.
-        let guard = self.shared_state.generation.lock();
-
-        // SAFETY: We hold the generation lock which ensures no other accesses are happening.
-        let maybe_oldest_ticket = unsafe { PtrChain::detach_from_chain(self.ptr_chain) };
-        if let Some(oldest_ticket) = maybe_oldest_ticket {
-            self.shared_state.set_oldest_alive_ticket(oldest_ticket);
-        }
-
-        drop(guard);
-
-        let ptr = mem::replace(&mut self.ptr_chain, std::ptr::null_mut());
-        drop(unsafe { Box::from_raw(ptr) });
-    }
-}
-
-struct PtrChain {
-    next: *mut GenerationEntry,
-    prev: *mut GenerationEntry,
-}
-
-impl PtrChain {
-    fn null() -> Self {
-        Self {
-            next: std::ptr::null_mut(),
-            prev: std::ptr::null_mut(),
-        }
-    }
-
-    /// Detached `this` from the linked list chain.
-    ///
-    /// # Safety
-    /// Care must be taken to ensure no other callers are reading or accessing
-    /// `self` or its siblings.
-    unsafe fn detach_from_chain(this: *mut Self) -> Option<u64> {
-        if this.is_null() {
-            return None;
-        }
-
-        let this = unsafe { &mut *this };
-
-        if !this.next.is_null() {
-            unsafe { (*(*this.next).ptr_chain).prev = this.prev };
-        }
-
-        if !this.prev.is_null() {
-            unsafe { (*(*this.prev).ptr_chain).next = this.next };
-        }
-
-        let mut oldest_ticket = None;
-
-        // If we are the end of the list, then we can safely
-        // work out the oldest alive ticket.
-        if this.next.is_null() && !this.prev.is_null() {
-            let oldest_generation = unsafe { (*this.prev).generation_id };
-            oldest_ticket = Some(oldest_generation * TICKETS_PER_GENERATION);
-        }
-
-        this.next = std::ptr::null_mut();
-        this.prev = std::ptr::null_mut();
-
-        oldest_ticket
+        // The oldest generation ID is at the head of the BTree.
+        let oldest_alive_ticket = guard
+            .active_generations
+            .first()
+            .copied()
+            .map(|oldest_generation| oldest_generation * TICKETS_PER_GENERATION)
+            .unwrap_or(u64::MAX);
+        self.shared_state
+            .set_oldest_alive_ticket(oldest_alive_ticket);
     }
 }
 
@@ -289,7 +211,7 @@ mod tests {
             oldest_alive_ticket: AtomicU64::new(0),
             generation: Mutex::new(GenerationState {
                 next_generation_id: 0,
-                active_generations: std::ptr::null_mut(),
+                active_generations: BTreeSet::new(),
             }),
         });
 
