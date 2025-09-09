@@ -41,7 +41,7 @@ impl FileId {
 const DEFAULT_FILE_REF_COUNT: usize = 2;
 const MAX_REGISTERED_FILES: u32 = 32_000;
 
-const FILE_FLAGS: libc::c_int = libc::O_DIRECT | libc::O_CLOEXEC;
+const FILE_FLAGS: libc::c_int = libc::O_DIRECT | libc::O_DSYNC | libc::O_CLOEXEC;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 /// The [FileGroup] determines where a file is stored

@@ -1,7 +1,5 @@
 use std::io::Write;
 use std::os::unix::fs::FileExt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::directory::FileGroup;
 use crate::layout::{PageFileId, PageId, file_metadata};
@@ -136,7 +134,7 @@ async fn test_page_file_write_out_of_bounds_panics() {
 }
 
 #[tokio::test]
-async fn test_page_file_write_and_sync_start() {
+async fn test_page_file_write() {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
     let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
@@ -155,9 +153,6 @@ async fn test_page_file_write_and_sync_start() {
         .expect("write should complete successfully");
     assert_eq!(n, 32 << 10);
 
-    let op_stamp = page_file.sync().await.expect("sync should complete");
-    assert_eq!(op_stamp, 2);
-
     let file_path = ctx
         .directory()
         .resolve_file_path(FileGroup::Pages, file.id())
@@ -169,44 +164,4 @@ async fn test_page_file_write_and_sync_start() {
             .all(|b| *b == 4),
         "buffer was not written out correctly"
     );
-}
-
-#[tokio::test]
-async fn test_page_file_sync_coalesce() {
-    let ctx = ctx::FileContext::for_test(false).await;
-    let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
-    let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
-        .await
-        .unwrap();
-
-    let mut buffer = ctx.alloc::<{ 32 << 10 }>();
-    buffer.fill(4);
-    let write_len = buffer.len();
-
-    let reply1 = page_file
-        .submit_write_at(PageId(0), &mut buffer, write_len)
-        .await
-        .unwrap();
-    let n = file::wait_for_reply(reply1)
-        .await
-        .expect("write should complete successfully");
-    assert_eq!(n, 32 << 10);
-
-    let reply2 = page_file
-        .submit_write_at(PageId(1), &mut buffer, write_len)
-        .await
-        .unwrap();
-    let n = file::wait_for_reply(reply2)
-        .await
-        .expect("write should complete successfully");
-    assert_eq!(n, 32 << 10);
-
-    let fut1 = page_file.sync();
-    let fut2 = page_file.sync();
-
-    // Only one flush should be performed, hence the counter should only be incremented,
-    // 3 times (1, 2, 3).
-    let (r1, r2) = tokio::join!(fut1, fut2);
-    assert_eq!(r1.unwrap(), 3);
-    assert_eq!(r2.unwrap(), 3);
 }

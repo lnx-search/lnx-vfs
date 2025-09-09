@@ -162,35 +162,6 @@ async fn test_no_close_on_write_error_but_lockout() {
 }
 
 #[tokio::test]
-async fn test_propagate_lockout_error() {
-    let ctx = ctx::FileContext::for_test(false).await;
-    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
-
-    let scenario = fail::FailScenario::setup();
-    fail::cfg("file::rw::fdatasync", "return").unwrap();
-
-    let mut writer = LogFileWriter::new(ctx, file, 1, 0);
-    let error = writer.sync().await.expect_err("sync should error");
-    assert_eq!(error.kind(), ErrorKind::Other);
-
-    let entry = LogEntry {
-        sequence_id: 0,
-        transaction_id: 0,
-        transaction_n_entries: 0,
-        page_id: PageId(1),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
-    let error = writer
-        .write_log(entry, None)
-        .await
-        .expect_err("write should error");
-    assert_eq!(error.kind(), ErrorKind::ReadOnlyFilesystem);
-
-    scenario.teardown();
-}
-
-#[tokio::test]
 async fn test_flush_mem_buffer_i2o2_error() {
     let _ = tracing_subscriber::fmt::try_init();
 

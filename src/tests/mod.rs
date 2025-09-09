@@ -7,7 +7,6 @@ mod dir_basic;
 mod dir_fault_injection;
 mod encryption_key;
 mod file_basic;
-mod file_fault_injection;
 mod stream_reader;
 mod write_controller;
 

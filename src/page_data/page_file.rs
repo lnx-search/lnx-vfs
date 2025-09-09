@@ -50,15 +50,6 @@ pub struct PageFile {
     ctx: Arc<ctx::FileContext>,
     file: file::RWFile,
     data_offset: u64,
-
-    /// A counter that is incremented for every sync operation.
-    ///
-    /// This is used to coalesce syncs of the file.
-    sync_counter: Arc<AtomicU64>,
-    /// A mutex that much be acquired before a sync can take place.
-    ///
-    /// The inner value contains the counter value that has been flushed.
-    sync_guard: tokio::sync::Mutex<u64>,
 }
 
 impl PageFile {
@@ -127,7 +118,6 @@ impl PageFile {
         )?;
 
         file.write_buffer(&mut buffer, 0).await?;
-        file.fdatasync().await?;
 
         Ok(Self::new(ctx, file, id, file_metadata::HEADER_SIZE as u64))
     }
@@ -143,8 +133,6 @@ impl PageFile {
             ctx,
             file,
             data_offset,
-            sync_counter: Arc::new(AtomicU64::new(1)),
-            sync_guard: tokio::sync::Mutex::new(0),
         }
     }
 
@@ -211,29 +199,5 @@ impl PageFile {
     fn resolve_pos(&self, page_id: PageId) -> u64 {
         let relative_position = page_id.0 as u64 * DEFAULT_PAGE_SIZE as u64;
         relative_position + self.data_offset
-    }
-
-    /// Wait for all changes to be persisted safely on the underlying storage.
-    pub async fn sync(&self) -> io::Result<u64> {
-        // We get increment and get the sync counter, this is the oldest stamp that we will
-        // accept for a flush operation.
-        //
-        // This works because our `sync_counter` is incremented just before
-        // we issue the fdatasync request, meaning we can tell if our current
-        // operations were part of the most recent flush or not.
-        let oldest_stamp = self.sync_counter.fetch_add(1, Ordering::Relaxed);
-
-        let mut lock = self.sync_guard.lock().await;
-        if *lock >= oldest_stamp {
-            return Ok(*lock);
-        }
-
-        // We sacrifice some latency in order to improve the overall efficiency of the system.
-        tokio::time::sleep(SYNC_COALESCE_DURATION).await;
-
-        let op_stamp = self.sync_counter.fetch_add(1, Ordering::Relaxed);
-        let result = self.file.fdatasync().await;
-        *lock = op_stamp;
-        result.map(|_| op_stamp)
     }
 }

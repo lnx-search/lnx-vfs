@@ -75,7 +75,6 @@ pub async fn write_checkpoint(
     )?;
 
     file.write_buffer(&mut buffer, 0).await?;
-    file.fdatasync().await?;
 
     Ok(())
 }

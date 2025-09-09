@@ -139,7 +139,7 @@ impl LogFileWriter {
     #[inline]
     /// Returns whether the file is locked out due to a prior error.
     pub fn is_locked_out(&self) -> bool {
-        !self.file.is_writeable() || self.locked_out
+        self.locked_out
     }
 
     #[inline]
@@ -236,7 +236,6 @@ impl LogFileWriter {
             tracing::trace!("waiting for inflight IOP to complete");
             complete_iop(iop).await?;
         }
-        self.file.fdatasync().await?;
 
         Ok(())
     }
