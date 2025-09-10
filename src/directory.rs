@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Formatter;
 use std::io;
 use std::io::ErrorKind;
@@ -139,14 +139,40 @@ impl SystemDirectoryInner {
     /// Create a new file in the target group.
     pub async fn create_new_file(&self, group: FileGroup) -> io::Result<FileId> {
         let mut directory = self.groups[group.idx()].write().await;
-        let file_id = directory.create_new_file().await?;
+        let file_id = directory.create_new_file(false).await?;
         Ok(FileId(file_id))
+    }
+
+    /// Creates a new file in the target group with the additional behaviour
+    /// that it will be automatically removed and not persisted unless
+    /// [Self::persist_atomic_file] is called.
+    ///
+    /// NOTE: This does not prevent the file from being retrieved via the normal
+    /// `get_*` APIs while the file is still being used.
+    pub async fn create_new_atomic_file(&self, group: FileGroup) -> io::Result<FileId> {
+        let mut directory = self.groups[group.idx()].write().await;
+        let file_id = directory.create_new_file(true).await?;
+        Ok(FileId(file_id))
+    }
+
+    /// Persist an atomic file ensuring that it will not be removed by the system automatically
+    /// on recovery.
+    ///
+    /// NOTE: This does _not_ ensure that the data written to the file itself is persisted.
+    pub async fn persist_atomic_file(
+        &self,
+        group: FileGroup,
+        file_id: FileId,
+    ) -> io::Result<()> {
+        let mut directory = self.groups[group.idx()].write().await;
+        directory.persist_atomic_file(file_id.0).await?;
+        Ok(())
     }
 
     /// Resolve the file path of a target file.
     pub async fn resolve_file_path(&self, group: FileGroup, file_id: FileId) -> PathBuf {
         let directory = self.groups[group.idx()].write().await;
-        directory.file_path(file_id.0)
+        directory.file_path(file_id.0, false)
     }
 
     /// Remove an existing file in the target group.
@@ -209,6 +235,7 @@ struct FileGroupDirectory {
     directory_file: file::DirFile,
     base_path: PathBuf,
     files: BTreeMap<u32, RingFile>,
+    atomic_files: BTreeSet<u32>,
 }
 
 impl FileGroupDirectory {
@@ -249,6 +276,7 @@ impl FileGroupDirectory {
             directory_file,
             base_path,
             files: BTreeMap::new(),
+            atomic_files: BTreeSet::new(),
         };
 
         tracing::info!("opening existing files");
@@ -283,19 +311,40 @@ impl FileGroupDirectory {
     }
 
     /// Get the file path of a file with a given ID.
-    fn file_path(&self, file_id: u32) -> PathBuf {
-        let file_name =
+    fn file_path(&self, file_id: u32, atomic: bool) -> PathBuf {
+        let mut file_name =
             format!("{file_id:010}-{file_id}.{}", self.file_group.extension());
+        if atomic {
+            file_name.push_str(".atomic");
+        }
         self.base_path.join(file_name)
     }
 
+    #[tracing::instrument(skip(self), fields(file_group = ?self.file_group))]
     /// Create a new file in the directory.
     ///
     /// A unique ID will be assigned to the file.
-    async fn create_new_file(&mut self) -> io::Result<u32> {
+    ///
+    /// If `atomic` is `true`, the file will be suffixed with `.atomic` and will
+    /// be automatically removed when the system restarts/recovers unless
+    /// `persist_file` is called.
+    async fn create_new_file(&mut self, atomic: bool) -> io::Result<u32> {
         let assigned_id = self.get_next_file_id();
+        let file_path = self.file_path(assigned_id, atomic);
+        self.create_new_file_inner(assigned_id, file_path).await?;
 
-        let file_path = self.file_path(assigned_id);
+        if atomic {
+            self.atomic_files.insert(assigned_id);
+        }
+
+        Ok(assigned_id)
+    }
+
+    pub(self) async fn create_new_file_inner(
+        &mut self,
+        assigned_id: u32,
+        file_path: PathBuf,
+    ) -> io::Result<()> {
         let file = create_file(&file_path).await.map(Arc::new)?;
 
         let fut = async {
@@ -325,9 +374,10 @@ impl FileGroupDirectory {
             "BUG! Inserted file that already existed"
         );
 
-        Ok(assigned_id)
+        Ok(())
     }
 
+    #[tracing::instrument(skip(self), fields(file_group = ?self.file_group))]
     /// Remove an existing file.
     ///
     /// Does nothing if the file does not exist.
@@ -352,10 +402,32 @@ impl FileGroupDirectory {
         // It is at this point we remove the file from the state, as it cannot be
         // properly accessed anymore and not safe to retry.
         self.files.remove(&file_id);
-
-        let file_path = self.file_path(file_id);
+        let is_atomic = self.atomic_files.remove(&file_id);
+        let file_path = self.file_path(file_id, is_atomic);
         remove_file(&file_path).await?;
         self.directory_file.sync().await
+    }
+
+    #[tracing::instrument(skip(self), fields(file_group = ?self.file_group))]
+    /// Persist an atomic file, meaning it will not be removed by the system
+    /// on startup.
+    ///
+    /// If the file is already persisted this synchronizes the directory but
+    /// does not perform a rename.
+    async fn persist_atomic_file(&mut self, file_id: u32) -> io::Result<()> {
+        if !self.atomic_files.contains(&file_id) {
+            self.directory_file.sync().await?;
+            return Ok(());
+        }
+
+        let old_file_path = self.file_path(file_id, true);
+        let new_file_path = self.file_path(file_id, false);
+
+        rename_file(&old_file_path, &new_file_path).await?;
+        self.atomic_files.remove(&file_id);
+        self.directory_file.sync().await?;
+
+        Ok(())
     }
 
     /// Get a read-only file reference with the given ID.
@@ -445,6 +517,11 @@ impl RingFile {
 }
 
 async fn create_file(path: &Path) -> io::Result<std::fs::File> {
+    tracing::info!(
+        path = %path.display(),
+        "creating file",
+    );
+
     #[cfg(test)]
     fail::fail_point!("directory::create_file", |_| Err(io::Error::other(
         "create_file fail point error"
@@ -466,6 +543,11 @@ async fn create_file(path: &Path) -> io::Result<std::fs::File> {
 }
 
 async fn remove_file(path: &Path) -> io::Result<()> {
+    tracing::info!(
+        path = %path.display(),
+        "removing file",
+    );
+
     #[cfg(test)]
     fail::fail_point!("directory::remove_file", |_| Err(io::Error::other(
         "remove_file fail point error"
@@ -477,7 +559,31 @@ async fn remove_file(path: &Path) -> io::Result<()> {
         .expect("spawn worker thread")
 }
 
+async fn rename_file(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    tracing::info!(
+        old_path = %old_path.display(),
+        new_path = %new_path.display(),
+        "renaming file",
+    );
+
+    #[cfg(test)]
+    fail::fail_point!("directory::rename_file", |_| Err(io::Error::other(
+        "rename_file fail point error"
+    )));
+
+    let old_path = old_path.to_path_buf();
+    let new_path = new_path.to_path_buf();
+    tokio::task::spawn_blocking(move || std::fs::rename(old_path, new_path))
+        .await
+        .expect("spawn worker thread")
+}
+
 async fn create_base_dir(path: &Path) -> io::Result<()> {
+    tracing::info!(
+        path = %path.display(),
+        "creating base directory",
+    );
+
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         ensure_is_directory(&path)?;

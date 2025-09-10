@@ -135,3 +135,50 @@ async fn test_create_file_does_not_alter_next_id(tempdir: tempfile::TempDir) {
         .expect("create new file");
     assert_eq!(file_id.as_u32(), 1000);
 }
+
+#[rstest::rstest]
+#[trace]
+#[tokio::test]
+async fn test_atomic_file_not_removed_before_rename_complete(
+    tempdir: tempfile::TempDir,
+) {
+    let directory = SystemDirectory::open(tempdir.path())
+        .await
+        .expect("directory should be created");
+
+    let file_id = directory
+        .create_new_atomic_file(FileGroup::Pages)
+        .await
+        .expect("create new file in group");
+    assert_eq!(file_id.as_u32(), 1000);
+
+    let path = tempdir.path().join(FileGroup::Pages.folder_name());
+    let files = list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.dat.lnx.atomic"]);
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("directory::rename_file", "return").unwrap();
+
+    let err = directory
+        .persist_atomic_file(FileGroup::Pages, file_id)
+        .await
+        .expect_err("persist should fail due to fail point");
+    assert_eq!(err.kind(), ErrorKind::Other);
+
+    // Files should be untouched.
+    let path = tempdir.path().join(FileGroup::Pages.folder_name());
+    let files = list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.dat.lnx.atomic"]);
+
+    scenario.teardown();
+
+    // Persist retry should work.
+    directory
+        .persist_atomic_file(FileGroup::Pages, file_id)
+        .await
+        .expect("atomic file should be persisted");
+
+    let path = tempdir.path().join(FileGroup::Pages.folder_name());
+    let files = list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.dat.lnx"]);
+}

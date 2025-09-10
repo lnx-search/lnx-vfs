@@ -298,3 +298,38 @@ async fn test_file_not_found(tempdir: tempfile::TempDir) {
         .expect_err("file does not exist and should error");
     assert_eq!(error.kind(), ErrorKind::NotFound);
 }
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_atomic_file(tempdir: tempfile::TempDir) {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let directory = SystemDirectory::open(tempdir.path())
+        .await
+        .expect("directory should be created");
+
+    let file_id = directory
+        .create_new_atomic_file(FileGroup::Pages)
+        .await
+        .expect("create new file in group");
+    assert_eq!(file_id.as_u32(), 1000);
+
+    let file = directory
+        .get_ro_file(FileGroup::Pages, file_id)
+        .await
+        .expect("file should exist and be available");
+    assert_eq!(file.id().as_u32(), 1000);
+
+    let path = tempdir.path().join(FileGroup::Pages.folder_name());
+    let files = super::list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.dat.lnx.atomic"]);
+
+    directory
+        .persist_atomic_file(FileGroup::Pages, file_id)
+        .await
+        .expect("atomic file should be persisted");
+
+    let path = tempdir.path().join(FileGroup::Pages.folder_name());
+    let files = super::list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.dat.lnx"]);
+}
