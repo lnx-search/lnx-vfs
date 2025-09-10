@@ -48,7 +48,7 @@ fn run_log_writer_single_entry_flush<const N_ITERS: usize>(
 
     let ctx = rt.block_on(ctx::FileContext::for_test(encryption));
     let file_id = rt.block_on(ctx.make_tmp_rw_file(FileGroup::Wal));
-    let mut writer = LogFileWriter::new(ctx, file_id, 0);
+    let mut writer = LogFileWriter::new(ctx, file_id, 0, 0);
 
     let entry = LogEntry {
         sequence_id: 0,
