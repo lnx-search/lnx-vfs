@@ -68,6 +68,18 @@ fn verify_blake3_buffer(
     };
 
     let calculated_hash = blake3_hash_components(hmac_key, associated_data, buffer);
+
+    #[cfg(debug_assertions)]
+    {
+        if provided_hash != calculated_hash {
+            tracing::warn!(
+                provided_hash = ?provided_hash,
+                calculated_hash = ?calculated_hash,
+                "buffer verification missmatch",
+            );
+        }
+    }
+
     provided_hash == calculated_hash
 }
 
@@ -82,6 +94,18 @@ fn verify_crc32_buffer(associated_data: &[u8], buffer: &[u8], context: &[u8]) ->
 
     let expected_checksum = u32::from_le_bytes(context[..4].try_into().unwrap());
     let actual_checksum = crc32_hash_components(associated_data, buffer);
+
+    #[cfg(debug_assertions)]
+    {
+        if expected_checksum != actual_checksum {
+            tracing::warn!(
+                expected_checksum = ?expected_checksum,
+                actual_checksum = ?actual_checksum,
+                "buffer checksum missmatch",
+            );
+        }
+    }
+
     actual_checksum == expected_checksum
 }
 

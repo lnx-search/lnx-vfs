@@ -123,6 +123,9 @@ impl LogFileReader {
     #[tracing::instrument("wal::read_block", skip(self))]
     /// Retrieve the next log block in the file.
     ///
+    /// It is possible for the reader to return empty [log::LogBlock] due to padding
+    /// of writes near the end of the file.
+    ///
     /// Returns `Ok(None)` once at EOF.
     pub async fn next_block(&mut self) -> Result<Option<log::LogBlock>, LogDecodeError> {
         let position = self.reader.position();
@@ -135,6 +138,12 @@ impl LogFileReader {
                 return Ok(None);
             },
             Err(err) => return Err(err.into()),
+        }
+
+        // TODO: This could be improved and removed if the writer stopped adding zeroed blocks
+        //       to the end of files.
+        if self.scratch_space.iter().take(40).all(|b| *b == 0) {
+            return Ok(Some(log::LogBlock::default()));
         }
 
         let associated_data = super::op_log_associated_data(

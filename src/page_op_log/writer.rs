@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::{io, mem};
 
 use crate::buffer::DmaBuffer;
-use crate::directory::FileGroup;
+use crate::directory::{FileGroup, FileId};
 use crate::file::DISK_ALIGN;
 use crate::layout::log::LogEntry;
 use crate::layout::page_metadata::PageMetadata;
@@ -155,6 +155,11 @@ impl LogFileWriter {
     ///       the absolute position of the next block as if it is about to be written.
     pub fn position(&self) -> u64 {
         self.log_offset + self.block_absolute_pos
+    }
+
+    /// Returns ID of the file being written to by the writer.
+    pub fn file_id(&self) -> FileId {
+        self.file.id()
     }
 
     /// Consume the writer and return the inner ring file.

@@ -191,8 +191,10 @@ async fn test_skip_corrupted_or_previous_blocks(
         match reader.next_block().await {
             Err(LogDecodeError::Decode(_)) => continue,
             Err(other) => panic!("got IO error: {other}"),
-            Ok(Some(_)) => {
-                blocks_recovered += 1;
+            Ok(Some(block)) => {
+                if block.num_entries() > 0 {
+                    blocks_recovered += 1;
+                }
             },
             Ok(None) => break,
         }
