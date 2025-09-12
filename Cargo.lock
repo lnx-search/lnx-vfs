@@ -543,9 +543,9 @@ dependencies = [
 
 [[package]]
 name = "i2o2"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af8f9c6184655765a117e18e3b85daa349d09af39556dc137a7fd24b2b9cea7e"
+checksum = "81e848315889c6c813c5977824a946650871ffee2637f4c0bc18dd706897ae34"
 dependencies = [
  "axboe-liburing",
  "crossbeam-queue",

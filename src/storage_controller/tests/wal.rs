@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::directory::FileGroup;
 use crate::layout::log::{LogEntry, LogOp};
 use crate::layout::{PageFileId, PageId};
@@ -275,13 +277,57 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_write_coalesce_updates() {
+    let _ = tracing_subscriber::fmt::try_init();
+
     let ctx = ctx::FileContext::for_test(false).await;
     let controller = WalController::create(ctx.clone(), WalConfig::default())
         .await
+        .map(Arc::new)
         .expect("Failed to create WalController");
 
-    let scenario = fail::FailScenario::setup();
-    fail::cfg("file::rw::submit_write", "return(-4)").unwrap();
+    let entry = LogEntry {
+        transaction_id: 0,
+        transaction_n_entries: 1,
+        sequence_id: 1,
+        page_file_id: PageFileId(1),
+        page_id: PageId(1),
+        op: LogOp::Write,
+    };
+    let mut entries = Vec::with_capacity(3);
+    for _ in 0..3 {
+        entries.push((entry, None));
+    }
 
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("wal::write_log", "sleep(1)").unwrap();
+    fail::cfg("wal::sync", "sleep(100)").unwrap();
+
+    let task1 = tokio::spawn({
+        let controller = controller.clone();
+        let entries = entries.clone();
+        async move {
+            controller
+                .write_updates(entries)
+                .await
+                .expect("controller should write entries");
+        }
+    });
+
+    let task2 = tokio::spawn({
+        let controller = controller.clone();
+        let entries = entries.clone();
+        async move {
+            controller
+                .write_updates(entries)
+                .await
+                .expect("controller should write entries");
+        }
+    });
+
+    let (_r1, _r2) = tokio::join!(task1, task2);
     scenario.teardown();
+
+    assert_eq!(controller.total_write_operations(), 2);
+    assert_eq!(controller.total_coalesced_write_operations(), 1);
+    assert_eq!(controller.total_coalesced_failures(), 0);
 }

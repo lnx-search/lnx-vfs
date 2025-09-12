@@ -112,6 +112,7 @@ impl WalController {
             let mut enqueued_operations = self.enqueued_operations.lock();
             enqueued_operations.push(updates)
         };
+        tracing::trace!(op_id = op_id, "pushed update to queue");
 
         // Wait for us to either get the writer lock, or for our write to
         // be completed by another task.
@@ -156,9 +157,10 @@ impl WalController {
                 Some(op) => op,
             };
 
-            replies_to_complete.push(op.tx);
             if op.id == op_id {
                 seen_own_op = true;
+            } else {
+                replies_to_complete.push(op.tx);
             }
 
             for (entry, metadata) in op.updates {

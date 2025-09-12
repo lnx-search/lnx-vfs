@@ -160,19 +160,13 @@ impl File<RW> {
     /// You must ensure the pointers remain valid for as long as the scheduler
     /// requires, this means the pointer must be valid until the `guard` (if passed)
     /// is dropped by the scheduler.
-    pub async unsafe fn submit_write(
+    pub unsafe fn submit_write(
         &self,
         buffer_ptr: *const u8,
         len: usize,
         offset: u64,
         guard: Option<DynamicGuard>,
-    ) -> io::Result<i2o2::ReplyReceiver> {
-        #[cfg(test)]
-        fail::fail_point!(
-            "file::rw::submit_write",
-            crate::utils::parse_io_error_return
-        );
-
+    ) -> impl Future<Output = io::Result<i2o2::ReplyReceiver>> + Send + '_ {
         let op = i2o2::opcode::Write::new(
             i2o2::types::Fixed(self.file_ref.ring_id()),
             buffer_ptr,
@@ -180,11 +174,19 @@ impl File<RW> {
             offset,
         );
 
-        unsafe {
-            self.handle
-                .submit_async(op, guard)
-                .await
-                .map_err(io::Error::other)
+        async move {
+            #[cfg(test)]
+            fail::fail_point!(
+                "file::rw::submit_write",
+                crate::utils::parse_io_error_return
+            );
+
+            unsafe {
+                self.handle
+                    .submit_async(op, guard)
+                    .await
+                    .map_err(io::Error::other)
+            }
         }
     }
 
