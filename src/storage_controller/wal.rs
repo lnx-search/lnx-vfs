@@ -1,14 +1,19 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use std::{io, mem};
 
 use parking_lot::Mutex;
+use smallvec::SmallVec;
+use tokio::sync::oneshot;
 
 use crate::directory::FileGroup;
 use crate::layout::log::LogEntry;
 use crate::layout::page_metadata::PageMetadata;
 use crate::{ctx, file, page_op_log};
+
+const SYNC_COALESCE_DURATION: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 /// Configuration options for the WAL controller.
@@ -62,6 +67,9 @@ pub struct WalController {
     /// The current op stamp that is incremented for every update
     /// to the page metadata state.
     op_stamp: AtomicU64,
+    /// Enqueued operations from other tasks that are waiting for the writer
+    /// lock. This allows the system to coalesce writes.
+    enqueued_operations: Mutex<EnqueuedOperations>,
 }
 
 impl WalController {
@@ -81,6 +89,7 @@ impl WalController {
             checkpoint_pending_writers: Mutex::new(VecDeque::new()),
             active_writer: tokio::sync::Mutex::new(writer),
             op_stamp: AtomicU64::new(0),
+            enqueued_operations: Mutex::new(EnqueuedOperations::default()),
         })
     }
 
@@ -89,8 +98,34 @@ impl WalController {
         &self,
         updates: Vec<(LogEntry, Option<PageMetadata>)>,
     ) -> Result<(), WalError> {
-        // TODO: This could be greatly optimised by allowing multiple updates to be coalesced.
-        let mut writer = self.active_writer.lock().await;
+        let (op_id, mut waiter) = {
+            let mut enqueued_operations = self.enqueued_operations.lock();
+            enqueued_operations.push(updates)
+        };
+
+        // Wait for us to either get the writer lock, or for our write to
+        // be completed by another task.
+        let mut writer = tokio::select! {
+            guard = self.active_writer.lock() => guard,
+            result = &mut waiter => {
+                return match result {
+                    Ok(_) => Ok(()),
+                    Err(_) => {
+                        Err(WalError::Io(interrupted_prior_error()))
+                    },
+                }
+            },
+        };
+
+        match waiter.try_recv() {
+            Ok(()) => return Ok(()),
+            Err(oneshot::error::TryRecvError::Closed) => {
+                return Err(WalError::Io(interrupted_prior_error()));
+            },
+            Err(oneshot::error::TryRecvError::Empty) => {},
+        }
+
+        let start = Instant::now();
         if writer.is_locked_out() || writer.position() >= self.config.soft_max_wal_size {
             if writer.is_locked_out() {
                 tracing::warn!(
@@ -110,16 +145,40 @@ impl WalController {
 
         tracing::debug!(
             file_id = ?writer.file_id(),
-            num_updates = updates.len(),
             "writing updates to WAL",
         );
 
-        for (entry, metadata) in updates {
-            self.next_op_stamp();
-            writer.write_log(entry, metadata).await?;
+        let mut seen_own_op = false;
+        let mut replies_to_complete = SmallVec::<[oneshot::Sender<()>; 4]>::new();
+        while start.elapsed() <= SYNC_COALESCE_DURATION || !seen_own_op {
+            let op = match self.pop_next_enqueued_operation() {
+                None => break,
+                Some(op) => op,
+            };
+
+            replies_to_complete.push(op.tx);
+            if op.id == op_id {
+                seen_own_op = true;
+            }
+
+            for (entry, metadata) in op.updates {
+                self.next_op_stamp();
+                writer.write_log(entry, metadata).await?;
+            }
         }
 
         writer.sync().await?;
+
+        for reply in replies_to_complete {
+            let _ = reply.send(());
+        }
+
+        // This should ALWAYS be true as we got the writer lock, checked our own waiter if
+        // something has already been set to account for
+        assert!(
+            seen_own_op,
+            "BUG: WAL exhausted enqueued ops but its own op did not appear"
+        );
 
         Ok(())
     }
@@ -127,6 +186,10 @@ impl WalController {
     #[cfg(test)]
     pub async fn active_writer_id(&self) -> crate::directory::FileId {
         self.active_writer.lock().await.file_id()
+    }
+
+    fn pop_next_enqueued_operation(&self) -> Option<EnqueuedOperation> {
+        self.enqueued_operations.lock().pop()
     }
 
     /// Increment the op stamp counter and return the value.
@@ -247,4 +310,40 @@ struct TaggedWriter {
     /// Once all changes up to this op stamp have been checkpointed,
     /// the writer can go back into circulation.
     op_stamp: u64,
+}
+
+#[derive(Default)]
+struct EnqueuedOperations {
+    id: u64,
+    ops: VecDeque<EnqueuedOperation>,
+}
+
+impl EnqueuedOperations {
+    fn push(
+        &mut self,
+        updates: Vec<(LogEntry, Option<PageMetadata>)>,
+    ) -> (u64, oneshot::Receiver<()>) {
+        let id = self.id;
+        self.id += 1;
+        let (tx, rx) = oneshot::channel();
+        self.ops.push_back(EnqueuedOperation { id, tx, updates });
+        (id, rx)
+    }
+
+    fn pop(&mut self) -> Option<EnqueuedOperation> {
+        self.ops.pop_front()
+    }
+}
+
+struct EnqueuedOperation {
+    id: u64,
+    tx: oneshot::Sender<()>,
+    updates: Vec<(LogEntry, Option<PageMetadata>)>,
+}
+
+fn interrupted_prior_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Interrupted,
+        "WAL write failed due to prior error",
+    )
 }
