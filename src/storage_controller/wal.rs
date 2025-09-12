@@ -70,6 +70,11 @@ pub struct WalController {
     /// Enqueued operations from other tasks that are waiting for the writer
     /// lock. This allows the system to coalesce writes.
     enqueued_operations: Mutex<EnqueuedOperations>,
+
+    // controller metrics - see their getters for docs.
+    total_write_operations: AtomicU64,
+    total_coalesced_write_operations: AtomicU64,
+    total_coalesced_failures: AtomicU64,
 }
 
 impl WalController {
@@ -90,6 +95,9 @@ impl WalController {
             active_writer: tokio::sync::Mutex::new(writer),
             op_stamp: AtomicU64::new(0),
             enqueued_operations: Mutex::new(EnqueuedOperations::default()),
+            total_write_operations: AtomicU64::new(0),
+            total_coalesced_write_operations: AtomicU64::new(0),
+            total_coalesced_failures: AtomicU64::new(0),
         })
     }
 
@@ -98,6 +106,8 @@ impl WalController {
         &self,
         updates: Vec<(LogEntry, Option<PageMetadata>)>,
     ) -> Result<(), WalError> {
+        self.total_write_operations.fetch_add(1, Ordering::Relaxed);
+
         let (op_id, mut waiter) = {
             let mut enqueued_operations = self.enqueued_operations.lock();
             enqueued_operations.push(updates)
@@ -108,9 +118,11 @@ impl WalController {
         let mut writer = tokio::select! {
             guard = self.active_writer.lock() => guard,
             result = &mut waiter => {
+                self.total_coalesced_write_operations.fetch_add(1, Ordering::Relaxed);
                 return match result {
                     Ok(_) => Ok(()),
                     Err(_) => {
+                        self.total_coalesced_failures.fetch_add(1, Ordering::Relaxed);
                         Err(WalError::Io(interrupted_prior_error()))
                     },
                 }
@@ -118,35 +130,23 @@ impl WalController {
         };
 
         match waiter.try_recv() {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                self.total_coalesced_write_operations
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            },
             Err(oneshot::error::TryRecvError::Closed) => {
+                self.total_coalesced_write_operations
+                    .fetch_add(1, Ordering::Relaxed);
+                self.total_coalesced_failures
+                    .fetch_add(1, Ordering::Relaxed);
                 return Err(WalError::Io(interrupted_prior_error()));
             },
             Err(oneshot::error::TryRecvError::Empty) => {},
         }
 
         let start = Instant::now();
-        if writer.is_locked_out() || writer.position() >= self.config.soft_max_wal_size {
-            if writer.is_locked_out() {
-                tracing::warn!(
-                    file_id = ?writer.file_id(),
-                    "writer is locked out due to prior error, rotating WAL file",
-                );
-            } else {
-                tracing::info!(
-                    file_id = ?writer.file_id(),
-                    "max size reached for WAL, rotating WAL file",
-                );
-            }
-            let new_writer = self.rotate_writer().await?;
-            let old_writer = mem::replace(&mut *writer, new_writer);
-            self.add_writer_to_checkpoint_pending(old_writer);
-        };
-
-        tracing::debug!(
-            file_id = ?writer.file_id(),
-            "writing updates to WAL",
-        );
+        self.maybe_rotate_writer(&mut writer).await?;
 
         let mut seen_own_op = false;
         let mut replies_to_complete = SmallVec::<[oneshot::Sender<()>; 4]>::new();
@@ -169,9 +169,15 @@ impl WalController {
 
         writer.sync().await?;
 
+        let num_coalesced_updates = replies_to_complete.len();
         for reply in replies_to_complete {
             let _ = reply.send(());
         }
+        tracing::debug!(
+            file_id = ?writer.file_id(),
+            num_coalesced_updates = num_coalesced_updates,
+            "wrote updates to WAL",
+        );
 
         // This should ALWAYS be true as we got the writer lock, checked our own waiter if
         // something has already been set to account for
@@ -192,21 +198,44 @@ impl WalController {
         self.enqueued_operations.lock().pop()
     }
 
+    #[inline]
     /// Increment the op stamp counter and return the value.
     pub fn next_op_stamp(&self) -> u64 {
         self.op_stamp.fetch_add(1, Ordering::Relaxed)
     }
 
+    #[inline]
     /// Returns the number of writers which are free and ready
     /// to be reused.
     pub fn num_free_writers(&self) -> usize {
         self.free_writers.lock().len()
     }
 
+    #[inline]
     /// Returns the number of writers which are waiting for a checkpoint
     /// operation to complete them.
     pub fn num_checkpoint_pending_writers(&self) -> usize {
         self.checkpoint_pending_writers.lock().len()
+    }
+
+    #[inline]
+    /// The total number of write operations the controller has seen.
+    pub fn total_write_operations(&self) -> u64 {
+        self.total_write_operations.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    /// The total number of write operations that have been coalesced.
+    pub fn total_coalesced_write_operations(&self) -> u64 {
+        self.total_coalesced_write_operations
+            .load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    /// The total number of write operations that have failed because a coalesced call
+    /// failed.
+    pub fn total_coalesced_failures(&self) -> u64 {
+        self.total_coalesced_failures.load(Ordering::Relaxed)
     }
 
     /// Rotate the current writer so it can be checkpointed later.
@@ -229,6 +258,32 @@ impl WalController {
                 tracing::error!(error = %err, "failed to recycle WAL file");
             }
         }
+        Ok(())
+    }
+
+    /// Rotate the currently active writer if it is locked out due to a prior error,
+    /// or the file has grown to the target soft-max file size.
+    async fn maybe_rotate_writer(
+        &self,
+        writer: &mut page_op_log::LogFileWriter,
+    ) -> Result<(), WalError> {
+        if writer.is_locked_out() || writer.position() >= self.config.soft_max_wal_size {
+            if writer.is_locked_out() {
+                tracing::warn!(
+                    file_id = ?writer.file_id(),
+                    "writer is locked out due to prior error, rotating WAL file",
+                );
+            } else {
+                tracing::info!(
+                    file_id = ?writer.file_id(),
+                    "max size reached for WAL, rotating WAL file",
+                );
+            }
+            let new_writer = self.rotate_writer().await?;
+            let old_writer = mem::replace(&mut *writer, new_writer);
+            self.add_writer_to_checkpoint_pending(old_writer);
+        }
+
         Ok(())
     }
 

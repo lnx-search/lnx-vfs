@@ -179,6 +179,11 @@ impl LogFileWriter {
         entry: LogEntry,
         metadata: Option<PageMetadata>,
     ) -> io::Result<()> {
+        #[cfg(test)]
+        fail::fail_point!("wal::write_log", |_| Err(io::Error::other(
+            "WAL write_log fail point error"
+        )));
+
         self.ensure_file_writeable()?;
         let result = self.write_log_inner(entry, metadata).await;
         if result.is_err() {
@@ -193,6 +198,11 @@ impl LogFileWriter {
     ///
     /// Returns the position the file is flushed up to.
     pub async fn sync(&mut self) -> io::Result<()> {
+        #[cfg(test)]
+        fail::fail_point!("wal::sync", |_| Err(io::Error::other(
+            "WAL sync fail point error"
+        )));
+
         self.ensure_file_writeable()?;
         let result = self.sync_inner().await;
         if result.is_err() {

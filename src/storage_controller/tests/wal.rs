@@ -272,3 +272,16 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
     assert_eq!(controller.num_free_writers(), 0);
     assert_eq!(controller.num_checkpoint_pending_writers(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_write_coalesce_updates() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = WalController::create(ctx.clone(), WalConfig::default())
+        .await
+        .expect("Failed to create WalController");
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("file::rw::submit_write", "return(-4)").unwrap();
+
+    scenario.teardown();
+}
