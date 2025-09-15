@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use crate::controller::wal::{WalConfig, WalController, WalError};
 use crate::directory::FileGroup;
 use crate::layout::log::{LogEntry, LogOp};
 use crate::layout::{PageFileId, PageId};
-use crate::storage_controller::wal::{WalConfig, WalController, WalError};
 use crate::{ctx, page_op_log};
 
 #[rstest::rstest]
@@ -54,13 +54,13 @@ async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usi
 #[rstest::rstest]
 #[trace]
 #[tokio::test]
-async fn test_controller_op_stamp(#[values(1, 4, 30, 120)] num_entries: usize) {
+async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_entries: usize) {
     let ctx = ctx::FileContext::for_test(false).await;
     let controller = WalController::create(ctx.clone(), WalConfig::default())
         .await
         .expect("Failed to create WalController");
 
-    assert_eq!(controller.next_op_stamp(), 0);
+    assert_eq!(controller.next_checkpoint_op_stamp(), 0);
 
     let mut entries = Vec::with_capacity(num_entries);
     for id in 0..num_entries {
@@ -79,7 +79,14 @@ async fn test_controller_op_stamp(#[values(1, 4, 30, 120)] num_entries: usize) {
         .write_updates(entries)
         .await
         .expect("controller should write entries");
-    assert_eq!(controller.next_op_stamp(), num_entries as u64 + 1);
+
+    // This is because the checkpoint op stamp should only be incremented
+    // when a writer is rotated.
+    assert_eq!(
+        controller.next_checkpoint_op_stamp(),
+        1 + controller.num_checkpoint_pending_writers() as u64,
+        "op stamp should align with the number of pending writers",
+    );
 }
 
 #[tokio::test]
@@ -118,7 +125,7 @@ async fn test_controller_rotate_writers() {
     assert_eq!(controller.num_free_writers(), 0);
     assert_eq!(controller.num_checkpoint_pending_writers(), 1);
 
-    let checkpoint_op_stamp = controller.next_op_stamp();
+    let checkpoint_op_stamp = controller.next_checkpoint_op_stamp();
     controller
         .recycle_writers(checkpoint_op_stamp)
         .await
@@ -152,7 +159,7 @@ async fn test_evict_free_writers() {
     assert_eq!(controller.num_free_writers(), 0);
     assert_eq!(controller.num_checkpoint_pending_writers(), 2);
 
-    let checkpoint_op_stamp = controller.next_op_stamp();
+    let checkpoint_op_stamp = controller.next_checkpoint_op_stamp();
     controller
         .recycle_writers(checkpoint_op_stamp)
         .await
@@ -268,10 +275,14 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
     assert_eq!(controller.num_checkpoint_pending_writers(), 1);
 
     controller
-        .recycle_writers(5)
+        .prepare_checkpoint()
         .await
-        .expect("writers should be recycled into free writers list");
+        .expect("Failed to prepare checkpoint");
     assert_eq!(controller.num_free_writers(), 0);
+    assert_eq!(controller.num_checkpoint_pending_writers(), 2);
+
+    controller.recycle_writers(0).await.unwrap();
+    assert_eq!(controller.num_free_writers(), 1);
     assert_eq!(controller.num_checkpoint_pending_writers(), 1);
 }
 

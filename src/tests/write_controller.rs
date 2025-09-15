@@ -1,7 +1,7 @@
 use crate::disk_allocator::{AllocSpan, InitState, PageAllocator};
 use crate::layout::PageFileId;
+use crate::page_allocator::WriteController;
 use crate::page_data::NUM_PAGES_PER_BLOCK;
-use crate::write_controller::WriteController;
 
 #[test]
 fn test_empty_write_controller() {

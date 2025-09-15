@@ -64,9 +64,9 @@ pub struct WalController {
     checkpoint_pending_writers: Mutex<VecDeque<TaggedWriter>>,
     /// The current active WAL writer.
     active_writer: tokio::sync::Mutex<page_op_log::LogFileWriter>,
-    /// The current op stamp that is incremented for every update
-    /// to the page metadata state.
-    op_stamp: AtomicU64,
+    /// The current op stamp that is incremented for every checkpoint operation
+    /// performed on the log.
+    checkpoint_op_stamp: AtomicU64,
     /// Enqueued operations from other tasks that are waiting for the writer
     /// lock. This allows the system to coalesce writes.
     enqueued_operations: Mutex<EnqueuedOperations>,
@@ -93,7 +93,7 @@ impl WalController {
             free_writers: Mutex::new(VecDeque::new()),
             checkpoint_pending_writers: Mutex::new(VecDeque::new()),
             active_writer: tokio::sync::Mutex::new(writer),
-            op_stamp: AtomicU64::new(0),
+            checkpoint_op_stamp: AtomicU64::new(0),
             enqueued_operations: Mutex::new(EnqueuedOperations::default()),
             total_write_operations: AtomicU64::new(0),
             total_coalesced_write_operations: AtomicU64::new(0),
@@ -164,7 +164,6 @@ impl WalController {
             }
 
             for (entry, metadata) in op.updates {
-                self.next_op_stamp();
                 writer.write_log(entry, metadata).await?;
             }
         }
@@ -202,8 +201,8 @@ impl WalController {
 
     #[inline]
     /// Increment the op stamp counter and return the value.
-    pub fn next_op_stamp(&self) -> u64 {
-        self.op_stamp.fetch_add(1, Ordering::Relaxed)
+    pub fn next_checkpoint_op_stamp(&self) -> u64 {
+        self.checkpoint_op_stamp.fetch_add(1, Ordering::Relaxed)
     }
 
     #[inline]
@@ -328,7 +327,7 @@ impl WalController {
 
     fn add_writer_to_checkpoint_pending(&self, writer: page_op_log::LogFileWriter) {
         let file = writer.into_file();
-        let op_stamp = self.next_op_stamp();
+        let op_stamp = self.next_checkpoint_op_stamp();
         let tagged = TaggedWriter { file, op_stamp };
         let mut waiting_writers = self.checkpoint_pending_writers.lock();
         waiting_writers.push_back(tagged);

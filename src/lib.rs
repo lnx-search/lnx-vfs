@@ -4,6 +4,7 @@ mod arena;
 mod buffer;
 mod cache;
 mod checkpoint;
+mod controller;
 mod core;
 mod ctx;
 mod directory;
@@ -11,15 +12,14 @@ mod disk_allocator;
 mod encryption_key;
 mod file;
 mod layout;
+mod page_allocator;
 mod page_data;
 mod page_op_log;
-mod storage_controller;
 mod stream_reader;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
 mod transaction;
 mod utils;
-mod write_controller;
 
 use std::ops::Range;
 

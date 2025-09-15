@@ -55,6 +55,13 @@ impl PageMetadata {
 /// rewrite of the table state.
 pub struct PageChangeCheckpoint(#[rkyv(with = rkyv::with::AsBox)] Vec<PageMetadata>);
 
+impl PageChangeCheckpoint {
+    /// Creates a new [PageChangeCheckpoint] with the given capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+}
+
 impl Deref for PageChangeCheckpoint {
     type Target = Vec<PageMetadata>;
 
