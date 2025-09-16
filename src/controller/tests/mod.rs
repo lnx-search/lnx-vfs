@@ -1,1 +1,2 @@
+mod checkpoint;
 mod wal;

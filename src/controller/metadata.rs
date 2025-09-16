@@ -170,10 +170,11 @@ impl PageTable {
     pub fn from_existing_state(pages: &[PageMetadata]) -> Self {
         let table = Self::default();
         table.write_pages(pages);
+        table.checkpoint(table.get_current_op_stamp());
         table
     }
 
-    fn write_pages(&self, to_update: &[PageMetadata]) {
+    pub(super) fn write_pages(&self, to_update: &[PageMetadata]) {
         let first_page = match to_update.first() {
             None => return,
             Some(first_page) => first_page,
@@ -200,7 +201,7 @@ impl PageTable {
         self.change_op_stamp.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn collect_pages(
+    pub(super) fn collect_pages(
         &self,
         start_page: PageId,
         data_range: Range<usize>,
@@ -265,7 +266,7 @@ impl PageTable {
     }
 
     /// Returns if the page table has been modified since the last checkpoint.
-    fn has_changed(&self) -> bool {
+    pub(super) fn has_changed(&self) -> bool {
         // TODO: Too strong?
         let current_op_stamp = self.change_op_stamp.load(Ordering::Acquire);
         current_op_stamp > self.last_checkpoint.load(Ordering::Acquire)
@@ -306,6 +307,7 @@ mod tests {
                 context: [0; 40],
             },
         ]);
+        assert!(!table.has_changed());
 
         let pages = table.page_shards[0].read();
         assert_eq!(pages[4].id, PageId(4));
