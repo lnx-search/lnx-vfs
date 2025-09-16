@@ -287,6 +287,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_page_table_from_existing_state() {
+        let table = PageTable::from_existing_state(&[
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: PageId(1),
+                id: PageId(4),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: PageId(1),
+                id: PageId((NUM_PAGES_PER_BLOCK + 4) as u32),
+                data_len: 0,
+                context: [0; 40],
+            },
+        ]);
+
+        let pages = table.page_shards[0].read();
+        assert_eq!(pages[4].id, PageId(4));
+        let pages = table.page_shards[1].read();
+        assert_eq!(pages[4].id, PageId((NUM_PAGES_PER_BLOCK + 4) as u32));
+    }
+
+    #[test]
     fn test_page_table_set_page() {
         let table = PageTable::default();
 
