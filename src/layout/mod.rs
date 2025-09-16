@@ -43,6 +43,7 @@ mod tests;
     Copy,
     Clone,
     Ord,
+    Hash,
     PartialOrd,
     Eq,
     PartialEq,

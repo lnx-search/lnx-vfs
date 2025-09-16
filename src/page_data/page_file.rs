@@ -8,7 +8,7 @@ use crate::directory::FileGroup;
 use crate::file::DynamicGuard;
 use crate::layout::file_metadata::Encryption;
 use crate::layout::{PageFileId, PageId, file_metadata};
-use crate::page_data::{DEFAULT_PAGE_SIZE, MAX_NUM_PAGES};
+use crate::page_data::{DISK_PAGE_SIZE, MAX_NUM_PAGES};
 use crate::{ctx, file};
 
 const SYNC_COALESCE_DURATION: Duration = Duration::from_millis(1);
@@ -197,7 +197,7 @@ impl PageFile {
     }
 
     fn resolve_pos(&self, page_id: PageId) -> u64 {
-        let relative_position = page_id.0 as u64 * DEFAULT_PAGE_SIZE as u64;
+        let relative_position = page_id.0 as u64 * DISK_PAGE_SIZE as u64;
         relative_position + self.data_offset
     }
 }
