@@ -23,19 +23,31 @@ type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, ahash::RandomState>;
 /// The metadata controller handles the global page table state
 /// and checkpointing the metadata tied to each page of data.
 pub struct MetadataController {
-    ctx: Arc<ctx::FileContext>,
     lookup_table: ConcurrentHashMap<PageGroupId, (PageFileId, PageId)>,
     page_tables: ConcurrentHashMap<PageFileId, PageTable>,
 }
 
 impl MetadataController {
     /// Create a new empty [MetadataController].
-    pub fn empty(ctx: Arc<ctx::FileContext>) -> Self {
+    pub fn empty() -> Self {
         Self {
-            ctx,
             lookup_table: ConcurrentHashMap::with_hasher(ahash::RandomState::default()),
             page_tables: ConcurrentHashMap::with_hasher(ahash::RandomState::default()),
         }
+    }
+
+    /// Insert a new page table with some pre-existing page table.
+    pub fn insert_page_table(&self, page_file_id: PageFileId, page_table: PageTable) {
+        let tables = self.page_tables.pin();
+        if tables.contains_key(&page_file_id) {
+            panic!("page table already exists");
+        }
+        tables.insert(page_file_id, page_table);
+    }
+
+    /// Creates a new blank page table for the given page file.
+    pub fn create_blank_page_table(&self, page_file_id: PageFileId) {
+        self.insert_page_table(page_file_id, PageTable::default())
     }
 
     /// Find the first page of a page group and return the page table
@@ -76,15 +88,28 @@ impl MetadataController {
         page_table.collect_pages(start_page, data_range, results);
     }
 
+    /// Write [PageMetadata] entries to a target page file.
+    pub fn write_pages(&self, page_file_id: PageFileId, pages: &[PageMetadata]) {
+        let tables = self.page_tables.pin();
+        let page_table = tables
+            .get(&page_file_id)
+            .expect("page file ID should exist as provided by user");
+
+        page_table.write_pages(pages);
+    }
+
     /// Checkpoint the current memory state.
     ///
     /// Any page table that has changed since the last checkpoint and creates a new checkpoint file.
     ///
     /// This operation is technically incremental, if a page table has not changed from the last
     /// checkpoint then a new checkpoint file is not created.
-    pub async fn checkpoint(&self) -> Result<(), WriteCheckpointError> {
+    pub async fn checkpoint(
+        &self,
+        ctx: Arc<ctx::FileContext>,
+    ) -> Result<(), WriteCheckpointError> {
         for (page_file_id, page_table) in self.page_tables.pin().iter() {
-            checkpoint_page_table(self.ctx.clone(), *page_file_id, page_table).await?;
+            checkpoint_page_table(ctx.clone(), *page_file_id, page_table).await?;
         }
         Ok(())
     }
@@ -94,7 +119,7 @@ type GuardedPages = RwLock<Box<[PageMetadata; NUM_PAGES_PER_BLOCK]>>;
 
 /// A [PageTable] holds the individual [PageMetadata] entries for each page file,
 /// tying the data stored in the data file with its metadata.
-pub(super) struct PageTable {
+pub struct PageTable {
     /// A set of shards containing the page metadata.
     ///
     /// This is done in order to reduce lock contention under load.
@@ -141,6 +166,13 @@ impl Default for PageTable {
 }
 
 impl PageTable {
+    /// Create a new [PageTable] using some existing set of pages.
+    pub fn from_existing_state(pages: &[PageMetadata]) -> Self {
+        let table = Self::default();
+        table.write_pages(pages);
+        table
+    }
+
     fn write_pages(&self, to_update: &[PageMetadata]) {
         let first_page = match to_update.first() {
             None => return,
