@@ -1,3 +1,5 @@
+use std::mem;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -55,9 +57,39 @@ pub(super) struct PageTable {
     last_checkpoint: AtomicU64,
 }
 
+impl Default for PageTable {
+    fn default() -> Self {
+        let mut uninit_shards: [MaybeUninit<GuardedPages>; NUM_BLOCKS_PER_FILE] = [const { MaybeUninit::uninit() }; NUM_BLOCKS_PER_FILE];
+
+        for idx in 0..NUM_BLOCKS_PER_FILE {
+            let mut uninit_pages = Box::new_uninit_slice(NUM_PAGES_PER_BLOCK);
+            for page_id in 0..NUM_PAGES_PER_BLOCK {
+                uninit_pages[page_id].write(PageMetadata::empty());
+            }
+
+            // SAFETY: We have initialised each element in the array and the size of the array
+            //         is aligned with the size of the array we're casting to.
+            let pages = unsafe {
+                let raw = Box::into_raw(uninit_pages);
+                Box::from_raw(raw as *mut [PageMetadata; NUM_PAGES_PER_BLOCK])
+            };
+
+            uninit_shards[idx].write(RwLock::new(pages));
+        }
+
+        let init_shards = unsafe { mem::transmute::<_, [GuardedPages; NUM_BLOCKS_PER_FILE]>(uninit_shards) };
+
+        Self {
+            page_shards: init_shards,
+            change_op_stamp: AtomicU64::new(0),
+            last_checkpoint: AtomicU64::new(0),
+        }
+    }
+}
+
 impl PageTable {
     /// Update a specific page in the page table.
-    fn set_page(&mut self, page: PageMetadata) {
+    fn set_page(&self, page: PageMetadata) {
         assert!(
             page.id.0 < MAX_NUM_PAGES as u32,
             "page ID is beyond the bounds of the page table"
@@ -115,11 +147,81 @@ impl PageTable {
 
     /// Returns the current op stamp of the page table.
     pub(super) fn get_current_op_stamp(&self) -> u64 {
-        self.last_checkpoint.load(Ordering::Acquire)
+        self.change_op_stamp.load(Ordering::Acquire)
     }
 
     /// Updates the last checkpointed op stamp to the new value.
     pub(super) fn checkpoint(&self, op_stamp: u64) {
         self.last_checkpoint.store(op_stamp, Ordering::Release);
     }
+}
+
+
+#[cfg(all(test, not(feature = "test-miri")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_page_table_set_page() {
+        let table = PageTable::default();
+        assert!(table.get_page(PageId(4)).is_none());
+
+        let metadata = PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(1),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        };
+
+        table.set_page(metadata);
+
+        assert!(table.get_page(PageId(4)).is_some());
+    }
+
+    #[test]
+    fn test_page_table_collect_non_empty_pages() {
+        let table = PageTable::default();
+        let metadata = PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(1),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        };
+        table.set_page(metadata);
+
+        let mut pages = Vec::new();
+        table.collect_non_empty_pages(&mut pages);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].id.0, 4);
+    }
+
+    #[test]
+    fn test_page_table_change_detection() {
+        let table = PageTable::default();
+
+        assert!(!table.has_changed());
+
+        let metadata = PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(1),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        };
+        table.set_page(metadata);
+
+        assert!(table.has_changed());
+
+        let op_stamp = table.get_current_op_stamp();
+        assert_eq!(op_stamp, 1);
+
+        table.checkpoint(1);
+        assert!(!table.has_changed());
+    }
+
 }
