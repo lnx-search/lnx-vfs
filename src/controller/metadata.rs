@@ -61,6 +61,7 @@ impl Default for PageTable {
     fn default() -> Self {
         let mut uninit_shards: [MaybeUninit<GuardedPages>; NUM_BLOCKS_PER_FILE] = [const { MaybeUninit::uninit() }; NUM_BLOCKS_PER_FILE];
 
+        #[allow(clippy::needless_range_loop)]
         for idx in 0..NUM_BLOCKS_PER_FILE {
             let mut uninit_pages = Box::new_uninit_slice(NUM_PAGES_PER_BLOCK);
             for page_id in 0..NUM_PAGES_PER_BLOCK {
