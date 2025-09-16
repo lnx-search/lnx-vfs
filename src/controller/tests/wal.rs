@@ -311,7 +311,7 @@ async fn test_write_coalesce_updates() {
 
     let scenario = fail::FailScenario::setup();
     fail::cfg("wal::write_log", "sleep(1)").unwrap();
-    fail::cfg("wal::sync", "sleep(100)").unwrap();
+    fail::cfg("wal::sync", "sleep(200)").unwrap();
 
     let task1 = tokio::spawn({
         let controller = controller.clone();
