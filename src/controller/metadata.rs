@@ -9,6 +9,7 @@ use parking_lot::RwLock;
 use super::checkpoint::checkpoint_page_table;
 use crate::checkpoint::WriteCheckpointError;
 use crate::ctx;
+use crate::directory::FileId;
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::{
@@ -19,6 +20,18 @@ use crate::page_data::{
 };
 
 type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, ahash::RandomState>;
+
+#[derive(Debug, thiserror::Error)]
+#[error("failed to checkpoint metadata state: {cause}")]
+/// An error that occurred while checkpointing the changed page tables
+/// in the metadata controller.
+pub struct MetadataCheckpointError {
+    /// The cause of the error.
+    pub cause: WriteCheckpointError,
+    /// The page tables that were successfully checkpointed
+    /// before the error.
+    pub completed_checkpoints: Vec<(PageFileId, FileId)>,
+}
 
 /// The metadata controller handles the global page table state
 /// and checkpointing the metadata tied to each page of data.
@@ -50,12 +63,36 @@ impl MetadataController {
         self.insert_page_table(page_file_id, PageTable::default())
     }
 
+    /// Returns whether a given page file & its page table
+    /// exists within the controller.
+    pub fn contains_page_table(&self, page_file_id: PageFileId) -> bool {
+        let tables = self.page_tables.pin();
+        tables.contains_key(&page_file_id)
+    }
+
     /// Find the first page of a page group and return the page table
     /// it is stored at and the page ID of the first page.
     ///
     /// Returns `None` if the group does not exist.
     pub fn find_first_page(&self, group: PageGroupId) -> Option<(PageFileId, PageId)> {
         self.lookup_table.pin().get(&group).copied()
+    }
+
+    /// Insert the given page group into the controller and associate it with
+    /// the given page table (via the page file ID) and the first page containing
+    /// the start of the group data.
+    pub fn insert_page_group(
+        &self,
+        group: PageGroupId,
+        page_file_id: PageFileId,
+        first_page_id: PageId,
+    ) {
+        if !self.contains_page_table(page_file_id) {
+            panic!("page table does not exist for page file: {page_file_id:?}");
+        }
+
+        let lookup = self.lookup_table.pin();
+        lookup.insert(group, (page_file_id, first_page_id));
     }
 
     /// Collects the pages of a given page group within a given page file.
@@ -75,11 +112,6 @@ impl MetadataController {
         data_range: Range<usize>,
         results: &mut Vec<PageMetadata>,
     ) {
-        assert!(
-            start_page.0 < MAX_NUM_PAGES as u32,
-            "page ID is beyond the bounds of the page table"
-        );
-
         let tables = self.page_tables.pin();
         let page_table = tables
             .get(&page_file_id)
@@ -107,11 +139,29 @@ impl MetadataController {
     pub async fn checkpoint(
         &self,
         ctx: Arc<ctx::FileContext>,
-    ) -> Result<(), WriteCheckpointError> {
+    ) -> Result<Vec<(PageFileId, FileId)>, MetadataCheckpointError> {
+        let mut completed_checkpoints = Vec::new();
         for (page_file_id, page_table) in self.page_tables.pin().iter() {
-            checkpoint_page_table(ctx.clone(), *page_file_id, page_table).await?;
+            if !page_table.has_changed() {
+                continue;
+            }
+
+            let result =
+                checkpoint_page_table(ctx.clone(), *page_file_id, page_table).await;
+
+            match result {
+                Ok(file_id) => {
+                    completed_checkpoints.push((*page_file_id, file_id));
+                },
+                Err(cause) => {
+                    return Err(MetadataCheckpointError {
+                        cause,
+                        completed_checkpoints,
+                    });
+                },
+            };
         }
-        Ok(())
+        Ok(completed_checkpoints)
     }
 }
 
@@ -234,6 +284,10 @@ impl PageTable {
             if num_pages_skipped < n_pages_skip {
                 num_pages_skipped += 1;
             } else {
+                assert!(
+                    !page_metadata.is_empty(),
+                    "BUG: page being referenced is empty"
+                );
                 results.push(*page_metadata);
                 num_pages_taken += 1;
             }

@@ -14,6 +14,13 @@ pub async fn checkpoint_page_table(
     page_file_id: PageFileId,
     page_table: &PageTable,
 ) -> Result<FileId, WriteCheckpointError> {
+    #[cfg(test)]
+    fail::fail_point!("checkpoint::checkpoint_page_table", |_| Err(
+        WriteCheckpointError::IO(std::io::Error::other(
+            "checkpoint_page_table fail point error"
+        ))
+    ));
+
     let op_stamp = page_table.get_current_op_stamp();
 
     let mut non_empty_pages = PageChangeCheckpoint::with_capacity(NUM_PAGES_PER_BLOCK);
