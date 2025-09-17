@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::mem;
 use std::sync::Arc;
 
 use foldhash::HashMapExt;
@@ -11,15 +12,16 @@ use crate::checkpoint::{
     read_checkpoint,
     write_checkpoint,
 };
-use crate::ctx;
 use crate::directory::{FileGroup, FileId};
+use crate::layout::log::{EntryPair, LogOp};
 use crate::layout::page_metadata::{PageChangeCheckpoint, PageMetadata};
 use crate::layout::{PageFileId, PageGroupId};
 use crate::page_data::NUM_PAGES_PER_BLOCK;
+use crate::{ctx, page_op_log};
 
 #[tracing::instrument(skip(ctx, page_table))]
 /// Checkpoint the target page table if any in-memory state has changed.
-pub async fn checkpoint_page_table(
+pub(super) async fn checkpoint_page_table(
     ctx: Arc<ctx::FileContext>,
     page_file_id: PageFileId,
     page_table: &PageTable,
@@ -68,7 +70,7 @@ pub struct LastCheckpointedState {
 /// Read all persisted page tables from their checkpoints.
 ///
 /// This does NOT recover any additional state from the WAL.
-pub async fn read_checkpoints(
+pub(super) async fn read_checkpoints(
     ctx: Arc<ctx::FileContext>,
 ) -> Result<LastCheckpointedState, ReadCheckpointError> {
     use std::collections::btree_map::Entry;
@@ -148,7 +150,7 @@ fn reconstruct_lookup_table_from_pages(
 
     for page in pages {
         // There should not be any empty pages, but just in case.
-        if page.is_empty() {
+        if page.is_unassigned() {
             continue;
         }
 
@@ -186,7 +188,7 @@ mod tests {
     #[test]
     fn test_reconstruct_lookup_table_from_pages() {
         let pages = &[
-            PageMetadata::empty(),
+            PageMetadata::null(),
             PageMetadata {
                 group: PageGroupId(1),
                 revision: 0,

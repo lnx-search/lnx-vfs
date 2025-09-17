@@ -219,6 +219,11 @@ impl LogFileWriter {
     ) -> io::Result<()> {
         self.assign_writer_context(&mut entry);
 
+        // Used as a sanity check that the behaviour is consistent with what other parts
+        // other the system expects.
+        #[cfg(debug_assertions)]
+        sanity_check_log_values(&entry, metadata.as_ref());
+
         let (entry, metadata) = match self.wip_block.push_entry(entry, metadata) {
             Ok(()) => return Ok(()),
             Err(pair) => pair,
@@ -391,6 +396,17 @@ struct InflightIop {
     expected_write_size: usize,
 }
 
+#[cfg(debug_assertions)]
+fn sanity_check_log_values(entry: &LogEntry, metadata: Option<&PageMetadata>) {
+    assert_ne!(entry.transaction_n_entries, 0);
+    assert_ne!(entry.transaction_id, u64::MAX);
+
+    if let Some(metadata) = metadata {
+        assert_eq!(entry.page_id, metadata.id);
+        assert!(metadata.next_page_id > metadata.id);
+    }
+}
+
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests {
     use super::*;
@@ -408,7 +424,7 @@ mod tests {
         let entry = LogEntry {
             sequence_id: 0,
             transaction_id: 0,
-            transaction_n_entries: 0,
+            transaction_n_entries: 1,
             page_id: PageId(5),
             page_file_id: PageFileId(1),
             op: LogOp::Free,

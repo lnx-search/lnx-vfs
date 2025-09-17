@@ -51,7 +51,7 @@ fn run_log_writer_single_entry_flush<const N_ITERS: usize>(
     let entry = LogEntry {
         sequence_id: 0,
         transaction_id: 0,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_file_id: PageFileId(1),
         page_id: PageId(1),
         op: LogOp::Free,

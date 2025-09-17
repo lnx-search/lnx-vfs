@@ -100,8 +100,8 @@ fn test_decode_err_most_errors(
 
 #[test]
 fn test_empty_page_check() {
-    let metadata = PageMetadata::empty();
-    assert!(metadata.is_empty());
+    let metadata = PageMetadata::null();
+    assert!(metadata.is_unassigned());
 }
 
 fn cipher_1() -> encrypt::Cipher {

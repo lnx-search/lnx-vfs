@@ -21,7 +21,7 @@ fn cipher_1() -> encrypt::Cipher {
     sample_log_block(LogEntry {
         sequence_id: 0,
         transaction_id: 1,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(5),
         page_file_id: PageFileId(1),
         op: LogOp::Write,
@@ -32,21 +32,10 @@ fn cipher_1() -> encrypt::Cipher {
     sample_log_block(LogEntry {
         sequence_id: 0,
         transaction_id: 1,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(5),
         page_file_id: PageFileId(1),
         op: LogOp::Free,
-        }),
-    None,
-)]
-#[case::encode_op_flush(
-    sample_log_block(LogEntry {
-        sequence_id: 0,
-        transaction_id: 1,
-        transaction_n_entries: 0,
-        page_id: PageId(5),
-        page_file_id: PageFileId(1),
-        op: LogOp::Flush,
         }),
     None,
 )]
@@ -54,7 +43,7 @@ fn cipher_1() -> encrypt::Cipher {
     sample_log_block(LogEntry {
         sequence_id: 0,
         transaction_id: 1,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(5),
         page_file_id: PageFileId(1),
         op: LogOp::Write,
@@ -88,7 +77,7 @@ fn test_encode_log_errors(
     let block = sample_log_block(LogEntry {
         sequence_id: 0,
         transaction_id: 1,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(5),
         page_file_id: PageFileId(1),
         op: LogOp::Write,
@@ -105,7 +94,7 @@ fn test_encode_block_full() {
     let entry = LogEntry {
         sequence_id: 0,
         transaction_id: 0,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(5),
         page_file_id: PageFileId(1),
         op: LogOp::Write,
@@ -115,9 +104,7 @@ fn test_encode_block_full() {
     for _ in 0..8 {
         block.push_entry(entry, None).unwrap();
     }
-    block
-        .push_entry(entry, Some(PageMetadata::empty()))
-        .unwrap();
+    block.push_entry(entry, Some(PageMetadata::null())).unwrap();
     assert_eq!(block.remaining_capacity(), 24);
 
     let mut output = [0; 512];
@@ -149,7 +136,7 @@ fn test_encode_block_without_metadata(
         let entry = LogEntry {
             sequence_id: 0,
             transaction_id: 0,
-            transaction_n_entries: 0,
+            transaction_n_entries: 1,
             page_id: PageId(5),
             page_file_id: PageFileId(1),
             op: LogOp::Write,
@@ -182,13 +169,13 @@ fn test_encode_block_with_metadata(#[case] encryption: bool, #[case] n_blocks: u
         let entry = LogEntry {
             sequence_id: 0,
             transaction_id: 0,
-            transaction_n_entries: 0,
+            transaction_n_entries: 1,
             page_id: PageId(5),
             page_file_id: PageFileId(1),
             op: LogOp::Write,
         };
 
-        let metadata = PageMetadata::empty();
+        let metadata = PageMetadata::null();
 
         block
             .push_entry(entry, Some(metadata))

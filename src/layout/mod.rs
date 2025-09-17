@@ -55,6 +55,16 @@ mod tests;
 /// A unique identifier for a group of pages.
 pub struct PageGroupId(pub(crate) u64);
 
+impl PageGroupId {
+    /// A null group ID for representing page group.
+    pub const NULL: PageGroupId = PageGroupId(u64::MAX);
+
+    /// Returns if the page group ID is `null`.
+    pub const fn is_null(&self) -> bool {
+        self.0 == u64::MAX
+    }
+}
+
 #[derive(
     Copy,
     Clone,
@@ -102,7 +112,7 @@ impl PageId {
 
     /// Returns if the page ID is a terminator value and not an actual
     /// page identifier. This is used to signal the end of a chain.
-    pub fn is_terminator(&self) -> bool {
+    pub const fn is_terminator(&self) -> bool {
         self.0 == u32::MAX
     }
 }

@@ -19,6 +19,8 @@ pub struct PageMetadata {
     /// Used to determine if a page is newer than another when assigned the same group ID.
     pub(crate) revision: u32,
     /// The [PageId] of  next that is part of the group.
+    ///
+    /// This ID must be a higher logical ID than the page's own ID.
     pub(crate) next_page_id: PageId,
     /// The ID of the page.
     pub(crate) id: PageId,
@@ -31,12 +33,35 @@ pub struct PageMetadata {
 }
 
 impl PageMetadata {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.id.is_terminator() && self.group == PageGroupId(u64::MAX)
+    /// Returns if the page is considered empty/unassigned or not.
+    pub(crate) const fn is_unassigned(&self) -> bool {
+        self.group.is_null()
     }
 
-    /// Creates a new [PageMetadata] entry representing an empty page.
-    pub(crate) const fn empty() -> Self {
+    /// Returns if the page is considered null.
+    pub(crate) const fn is_null(&self) -> bool {
+        self.id.is_terminator()
+    }
+
+    /// Creates a new [PageMetadata] entry representing an empty page with no assigned
+    /// information.
+    pub(crate) const fn null() -> Self {
+        Self {
+            id: PageId::TERMINATOR,
+            group: PageGroupId::NULL,
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            data_len: 0,
+            context: [0; 40],
+        }
+    }
+
+    /// Creates a new [PageMetadata] entry representing an empty page with an assigned
+    /// [PageId].
+    ///
+    /// This differs from [PageMetadata::null] as the page ID is assigned and is effectively
+    /// a "valid" page to be used within the system metadata tables.
+    pub(crate) const fn empty(page_id: PageId) -> Self {
         Self {
             id: PageId::TERMINATOR,
             group: PageGroupId(u64::MAX),

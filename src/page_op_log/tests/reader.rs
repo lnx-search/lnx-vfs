@@ -66,7 +66,7 @@ async fn make_sample_file(
             let entry = LogEntry {
                 sequence_id: seq_id,
                 transaction_id: 0,
-                transaction_n_entries: 0,
+                transaction_n_entries: 1,
                 page_id: PageId(((block_id * 7) + page_id) as u32),
                 page_file_id: PageFileId(1),
                 op: LogOp::Write,
@@ -290,7 +290,7 @@ fn fill_buffer_with_blocks(
 
         let entry = LogEntry {
             transaction_id: 0,
-            transaction_n_entries: 0,
+            transaction_n_entries: 1,
             sequence_id: 0,
             page_file_id: PageFileId(1),
             page_id: PageId(page_id as u32),

@@ -18,7 +18,7 @@ async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usi
     let mut entries = Vec::with_capacity(num_entries);
     for id in 0..num_entries {
         let entry = LogEntry {
-            transaction_id: id as u64,
+            transaction_id: 1,
             transaction_n_entries: 1,
             sequence_id: 1,
             page_file_id: PageFileId(1),

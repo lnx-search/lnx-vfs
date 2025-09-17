@@ -24,7 +24,7 @@ async fn test_auto_flush() {
     let entry = LogEntry {
         sequence_id: 0,
         transaction_id: 0,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(1),
         page_file_id: PageFileId(1),
         op: LogOp::Free,
@@ -61,7 +61,7 @@ async fn test_all_entries_flush(
         let entry = LogEntry {
             sequence_id: 0,
             transaction_id: 0,
-            transaction_n_entries: 0,
+            transaction_n_entries: 1,
             page_id: PageId(1),
             page_file_id: PageFileId(id as u32),
             op: LogOp::Free,
@@ -101,15 +101,15 @@ async fn test_entries_and_metadata(
         let entry = LogEntry {
             sequence_id: 0,
             transaction_id: 0,
-            transaction_n_entries: 0,
-            page_id: PageId(1),
+            transaction_n_entries: 1,
+            page_id: PageId(id as u32),
             page_file_id: PageFileId(id as u32),
             op: LogOp::Free,
         };
 
         let metadata = PageMetadata {
             id: PageId(id as u32),
-            ..PageMetadata::empty()
+            ..PageMetadata::null()
         };
 
         writer
@@ -146,7 +146,7 @@ async fn test_no_close_on_write_error_but_lockout() {
     let entry = LogEntry {
         sequence_id: 0,
         transaction_id: 0,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(1),
         page_file_id: PageFileId(1),
         op: LogOp::Free,
@@ -196,7 +196,7 @@ async fn test_storage_full() {
     let entry = LogEntry {
         sequence_id: 0,
         transaction_id: 0,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(1),
         page_file_id: PageFileId(1),
         op: LogOp::Free,
@@ -233,7 +233,7 @@ async fn test_readable_results_fuzz(
         let entry = LogEntry {
             sequence_id: 0,
             transaction_id: 0,
-            transaction_n_entries: 0,
+            transaction_n_entries: 1,
             page_id: PageId(page_id),
             page_file_id: PageFileId(1),
             op: LogOp::Free,
@@ -245,7 +245,7 @@ async fn test_readable_results_fuzz(
     let entry = LogEntry {
         sequence_id: 0,
         transaction_id: 0,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(num_entries),
         page_file_id: PageFileId(1),
         op: LogOp::Free,
@@ -299,7 +299,7 @@ async fn fill_buffer(writer: &mut LogFileWriter) -> io::Result<()> {
     let entry = LogEntry {
         sequence_id: 0,
         transaction_id: 0,
-        transaction_n_entries: 0,
+        transaction_n_entries: 1,
         page_id: PageId(1),
         page_file_id: PageFileId(1),
         op: LogOp::Free,

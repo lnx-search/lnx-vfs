@@ -31,7 +31,7 @@ async fn write_log_entries(
             op: LogOp::Write,
         };
 
-        let mut metadata = page_metadata::PageMetadata::empty();
+        let mut metadata = page_metadata::PageMetadata::null();
         metadata.id = PageId(page_id as u32);
         metadata.group = PageGroupId(1);
 

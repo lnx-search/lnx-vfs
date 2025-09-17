@@ -260,7 +260,7 @@ impl Default for PageTable {
         for idx in 0..NUM_BLOCKS_PER_FILE {
             let mut uninit_pages = Box::new_uninit_slice(NUM_PAGES_PER_BLOCK);
             for page_id in 0..NUM_PAGES_PER_BLOCK {
-                uninit_pages[page_id].write(PageMetadata::empty());
+                uninit_pages[page_id].write(PageMetadata::null());
             }
 
             // SAFETY: We have initialised each element in the array and the size of the array
@@ -358,7 +358,7 @@ impl PageTable {
                 num_pages_skipped += 1;
             } else {
                 assert!(
-                    !page_metadata.is_empty(),
+                    !page_metadata.is_unassigned(),
                     "BUG: page being referenced is empty"
                 );
                 results.push(*page_metadata);
@@ -385,7 +385,7 @@ impl PageTable {
     pub(super) fn collect_non_empty_pages(&self, pages: &mut Vec<PageMetadata>) {
         for shard in self.page_shards.iter() {
             for metadata in shard.read().iter() {
-                if !metadata.is_empty() {
+                if !metadata.is_unassigned() {
                     pages.push(*metadata);
                 }
             }
@@ -448,7 +448,7 @@ mod tests {
 
         {
             let pages = table.page_shards[0].read();
-            assert!(pages[4].is_empty());
+            assert!(pages[4].is_unassigned());
         }
 
         let metadata = PageMetadata {
@@ -472,8 +472,8 @@ mod tests {
 
         {
             let pages = table.page_shards[0].read();
-            assert!(pages[5].is_empty());
-            assert!(pages[6].is_empty());
+            assert!(pages[5].is_unassigned());
+            assert!(pages[6].is_unassigned());
         }
 
         // Test looping of metadata updates within same lock.
@@ -505,12 +505,12 @@ mod tests {
         let table = PageTable::default();
         {
             let pages = table.page_shards[0].read();
-            assert!(pages[5].is_empty());
+            assert!(pages[5].is_unassigned());
         }
 
         {
             let pages = table.page_shards[1].read();
-            assert!(pages[4].is_empty());
+            assert!(pages[4].is_unassigned());
         }
 
         // Test looping of metadata updates within same lock.
@@ -582,4 +582,7 @@ mod tests {
         table.checkpoint(1);
         assert!(!table.has_changed());
     }
+
+    #[test]
+    fn test_page_table_set_empty_page() {}
 }

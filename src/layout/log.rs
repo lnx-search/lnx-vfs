@@ -219,8 +219,12 @@ pub struct EntryPair {
 pub struct LogEntry {
     /// The transaction ID that groups multiple operations together
     /// to form a single atomic transaction.
+    ///
+    /// The transaction ID can never be `u64::MAX`.
     pub transaction_id: u64,
     /// The number of entries this transaction encompasses.
+    ///
+    /// This is at least `1`.
     pub transaction_n_entries: u32,
     /// The current sequence ID of the page allocation table.
     pub sequence_id: u32,
@@ -241,8 +245,6 @@ pub enum LogOp {
     Write = 0x01,
     /// The page has been freed and can be reused.
     Free = 0x02,
-    /// The entry is used to update the flushed sequence ID.
-    Flush = 0x03,
     /// Update the metadata attached to the page in the table without
     /// updating the page itself.
     UpdateTableMetadata = 0x04,
@@ -272,7 +274,7 @@ mod tests {
                     LogEntry {
                         sequence_id: 0,
                         transaction_id: 0,
-                        transaction_n_entries: 0,
+                        transaction_n_entries: 1,
                         page_id: PageId(0),
                         page_file_id: PageFileId(1),
                         op: LogOp::Write,
@@ -287,7 +289,7 @@ mod tests {
                 LogEntry {
                     sequence_id: 0,
                     transaction_id: 0,
-                    transaction_n_entries: 0,
+                    transaction_n_entries: 1,
                     page_id: PageId(0),
                     page_file_id: PageFileId(1),
                     op: LogOp::Write,
@@ -306,12 +308,12 @@ mod tests {
                     LogEntry {
                         sequence_id: 0,
                         transaction_id: 0,
-                        transaction_n_entries: 0,
+                        transaction_n_entries: 1,
                         page_id: PageId(0),
                         page_file_id: PageFileId(1),
                         op: LogOp::Write,
                     },
-                    Some(PageMetadata::empty()),
+                    Some(PageMetadata::null()),
                 )
                 .unwrap();
         }
@@ -321,12 +323,12 @@ mod tests {
                 LogEntry {
                     sequence_id: 0,
                     transaction_id: 0,
-                    transaction_n_entries: 0,
+                    transaction_n_entries: 1,
                     page_id: PageId(0),
                     page_file_id: PageFileId(1),
                     op: LogOp::Write,
                 },
-                Some(PageMetadata::empty()),
+                Some(PageMetadata::null()),
             )
             .expect_err("block should be full");
     }
