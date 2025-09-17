@@ -48,7 +48,7 @@ pub enum WalError {
 }
 
 /// The [WalController] manages a set of [page_op_log::LogFileWriter]s and
-/// handles checkpointing and write coelesing to improve efficiency of the writer.
+/// handles checkpointing and coalesce writes to improve efficiency of the writer.
 ///
 /// There is only one WAL file being written to at any one point in time.
 pub struct WalController {
