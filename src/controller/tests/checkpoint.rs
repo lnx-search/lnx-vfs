@@ -58,10 +58,10 @@ async fn test_file_save(#[case] entries: &[PageMetadata]) {
         .await
         .unwrap();
 
-    let pages = read_checkpoint(&ctx, &file)
+    let checkpoint = read_checkpoint(&ctx, &file)
         .await
         .expect("read checkpoint file");
-    assert_eq!(pages.as_slice(), entries);
+    assert_eq!(checkpoint.updates.as_slice(), entries);
 }
 
 #[tokio::test]
