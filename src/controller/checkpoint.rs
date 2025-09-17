@@ -129,6 +129,11 @@ fn reconstruct_lookup_table_from_pages(
 
     let mut lookup_table = foldhash::HashMap::with_capacity(1_000);
     for page in pages {
+        // There should not be any empty pages, but just in case.
+        if page.is_empty() {
+            continue;
+        }
+
         let lookup_entry = LookupEntry {
             page_file_id,
             first_page_id: page.id,
@@ -155,6 +160,94 @@ fn reconstruct_lookup_table_from_pages(
     }
 
     lookup_table
+}
+
+#[cfg(all(test, not(feature = "test-miri")))]
+mod tests {
+    use super::*;
+    use crate::layout::PageId;
+
+    #[test]
+    fn test_reconstruct_lookup_table_from_pages() {
+        let pages = &[
+            PageMetadata::empty(),
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: PageId(5),
+                id: PageId(4),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(5),
+                revision: 0,
+                next_page_id: PageId(6),
+                id: PageId(1),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: PageId(4),
+                id: PageId(3),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(3),
+                revision: 0,
+                next_page_id: PageId(9),
+                id: PageId(2),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(3),
+                revision: 2,
+                next_page_id: PageId(9),
+                id: PageId(5),
+                data_len: 0,
+                context: [0; 40],
+            },
+        ];
+
+        let mut lookup = reconstruct_lookup_table_from_pages(PageFileId(1), pages)
+            .into_iter()
+            .collect::<Vec<_>>();
+        lookup.sort_by_key(|(id, _)| *id);
+
+        assert_eq!(
+            lookup,
+            &[
+                (
+                    PageGroupId(1),
+                    LookupEntry {
+                        page_file_id: PageFileId(1),
+                        first_page_id: PageId(3),
+                        revision: 0
+                    }
+                ),
+                (
+                    PageGroupId(3),
+                    LookupEntry {
+                        page_file_id: PageFileId(1),
+                        first_page_id: PageId(5),
+                        revision: 2
+                    }
+                ),
+                (
+                    PageGroupId(5),
+                    LookupEntry {
+                        page_file_id: PageFileId(1),
+                        first_page_id: PageId(1),
+                        revision: 0
+                    }
+                ),
+            ],
+        );
+    }
 }
 
 #[cfg(all(test, not(feature = "test-miri"), feature = "bench-lib-unstable"))]
