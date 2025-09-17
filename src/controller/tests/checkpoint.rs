@@ -1,5 +1,5 @@
 use crate::checkpoint::read_checkpoint;
-use crate::controller::checkpoint::checkpoint_page_table;
+use crate::controller::checkpoint::{checkpoint_page_table, read_checkpoints};
 use crate::controller::metadata::PageTable;
 use crate::ctx;
 use crate::directory::FileGroup;
@@ -85,4 +85,40 @@ async fn test_page_table_checkpointed_post_write() {
 
     // checkpoint_page_table should update the memory checkpoint.
     assert!(!page_table.has_changed());
+}
+
+#[tokio::test]
+async fn test_page_table_load_from_checkpoints() {
+    let ctx = ctx::FileContext::for_test(false).await;
+
+    let pages = &[PageMetadata {
+        group: PageGroupId(1),
+        revision: 0,
+        next_page_id: PageId(1),
+        id: PageId(4),
+        data_len: 0,
+        context: [0; 40],
+    }];
+
+    let page_table = PageTable::default();
+    page_table.write_pages(pages);
+    assert!(page_table.has_changed());
+
+    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+        .await
+        .expect("Checkpoint page table failed");
+
+    let page_tables = read_checkpoints(ctx)
+        .await
+        .expect("all checkpoints should be loaded");
+    assert_eq!(page_tables.len(), 1);
+
+    let page_table = page_tables
+        .get(&PageFileId(0))
+        .expect("checkpoint page table should exist");
+    assert!(!page_table.has_changed());
+
+    let mut collected_pages = Vec::new();
+    page_table.collect_non_empty_pages(&mut collected_pages);
+    assert_eq!(collected_pages, pages);
 }

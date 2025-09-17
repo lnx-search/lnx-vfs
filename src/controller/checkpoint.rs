@@ -59,7 +59,7 @@ pub async fn checkpoint_page_table(
 /// Read all persisted page tables from their checkpoints.
 ///
 /// This does NOT recover any additional state from the WAL.
-pub async fn read_page_tables_from_checkpoints(
+pub async fn read_checkpoints(
     ctx: Arc<ctx::FileContext>,
 ) -> Result<BTreeMap<PageFileId, PageTable>, ReadCheckpointError> {
     let directory = ctx.directory();
