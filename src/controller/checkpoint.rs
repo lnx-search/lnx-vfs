@@ -8,6 +8,7 @@ use crate::layout::PageFileId;
 use crate::layout::page_metadata::PageChangeCheckpoint;
 use crate::page_data::NUM_PAGES_PER_BLOCK;
 
+#[tracing::instrument(skip(ctx, page_table))]
 /// Checkpoint the target page table if any in-memory state has changed.
 pub async fn checkpoint_page_table(
     ctx: Arc<ctx::FileContext>,
@@ -40,6 +41,8 @@ pub async fn checkpoint_page_table(
 
     // Once it is safely persisted, we update the memory checkpoint.
     page_table.checkpoint(op_stamp);
+
+    tracing::info!(checkpoint_op_stamp = op_stamp, "checkpointed page table");
 
     Ok(file_id)
 }

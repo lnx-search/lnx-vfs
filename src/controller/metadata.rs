@@ -1,15 +1,16 @@
-use std::mem;
+use std::collections::BTreeMap;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::{io, mem};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use super::checkpoint::checkpoint_page_table;
 use crate::checkpoint::WriteCheckpointError;
 use crate::ctx;
-use crate::directory::FileId;
+use crate::directory::{FileGroup, FileId};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::{
@@ -21,31 +22,25 @@ use crate::page_data::{
 
 type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, ahash::RandomState>;
 
-#[derive(Debug, thiserror::Error)]
-#[error("failed to checkpoint metadata state: {cause}")]
-/// An error that occurred while checkpointing the changed page tables
-/// in the metadata controller.
-pub struct MetadataCheckpointError {
-    /// The cause of the error.
-    pub cause: WriteCheckpointError,
-    /// The page tables that were successfully checkpointed
-    /// before the error.
-    pub completed_checkpoints: Vec<(PageFileId, FileId)>,
-}
-
 /// The metadata controller handles the global page table state
 /// and checkpointing the metadata tied to each page of data.
 pub struct MetadataController {
+    ctx: Arc<ctx::FileContext>,
     lookup_table: ConcurrentHashMap<PageGroupId, (PageFileId, PageId)>,
     page_tables: ConcurrentHashMap<PageFileId, PageTable>,
+    active_checkpoint_files: Mutex<BTreeMap<PageFileId, FileId>>,
+    files_to_cleanup: Mutex<Vec<FileId>>,
 }
 
 impl MetadataController {
     /// Create a new empty [MetadataController].
-    pub fn empty() -> Self {
+    pub fn empty(ctx: Arc<ctx::FileContext>) -> Self {
         Self {
+            ctx,
             lookup_table: ConcurrentHashMap::with_hasher(ahash::RandomState::default()),
             page_tables: ConcurrentHashMap::with_hasher(ahash::RandomState::default()),
+            active_checkpoint_files: Mutex::new(BTreeMap::new()),
+            files_to_cleanup: Mutex::new(Vec::new()),
         }
     }
 
@@ -130,38 +125,68 @@ impl MetadataController {
         page_table.write_pages(pages);
     }
 
+    #[tracing::instrument(skip(self))]
     /// Checkpoint the current memory state.
     ///
     /// Any page table that has changed since the last checkpoint and creates a new checkpoint file.
     ///
     /// This operation is technically incremental, if a page table has not changed from the last
     /// checkpoint then a new checkpoint file is not created.
-    pub async fn checkpoint(
-        &self,
-        ctx: Arc<ctx::FileContext>,
-    ) -> Result<Vec<(PageFileId, FileId)>, MetadataCheckpointError> {
-        let mut completed_checkpoints = Vec::new();
+    pub async fn checkpoint(&self) -> Result<usize, WriteCheckpointError> {
+        let mut num_checkpointed_files = 0;
         for (page_file_id, page_table) in self.page_tables.pin().iter() {
             if !page_table.has_changed() {
                 continue;
             }
 
-            let result =
-                checkpoint_page_table(ctx.clone(), *page_file_id, page_table).await;
+            let file_id =
+                checkpoint_page_table(self.ctx.clone(), *page_file_id, page_table)
+                    .await?;
+            num_checkpointed_files += 1;
 
-            match result {
-                Ok(file_id) => {
-                    completed_checkpoints.push((*page_file_id, file_id));
-                },
-                Err(cause) => {
-                    return Err(MetadataCheckpointError {
-                        cause,
-                        completed_checkpoints,
-                    });
-                },
+            let maybe_old_file_id = {
+                let mut checkpoints = self.active_checkpoint_files.lock();
+                checkpoints.insert(*page_file_id, file_id)
             };
+
+            if let Some(old_file_id) = maybe_old_file_id {
+                self.files_to_cleanup.lock().push(old_file_id);
+            }
         }
-        Ok(completed_checkpoints)
+
+        self.garbage_collect_checkpoints().await?;
+
+        Ok(num_checkpointed_files)
+    }
+
+    /// Returns the number of files to be cleaned up.
+    pub fn num_files_to_cleanup(&self) -> usize {
+        self.files_to_cleanup.lock().len()
+    }
+
+    #[tracing::instrument(skip(self))]
+    /// Cleanup any checkpoint files that are not outdated and not needed.
+    pub async fn garbage_collect_checkpoints(&self) -> io::Result<()> {
+        tracing::info!("cleaning up unused checkpoint files");
+
+        #[cfg(test)]
+        fail::fail_point!("metadata::garbage_collect_checkpoints", |_| Err(
+            io::Error::other("garbage_collect_checkpoints fail point error")
+        ));
+
+        while let Some(file_id) = { self.files_to_cleanup.lock().pop() } {
+            let result = self
+                .ctx
+                .directory()
+                .remove_file(FileGroup::Metadata, file_id)
+                .await;
+
+            if result.is_err() {
+                self.files_to_cleanup.lock().push(file_id);
+            }
+            result?;
+        }
+        Ok(())
     }
 }
 

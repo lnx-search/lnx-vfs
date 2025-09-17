@@ -6,35 +6,39 @@ use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::{DISK_PAGE_SIZE, NUM_PAGES_PER_BLOCK};
 
-#[test]
-fn test_controller_insert_page_table() {
-    let controller = MetadataController::empty();
+#[tokio::test]
+async fn test_controller_insert_page_table() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     assert!(!controller.contains_page_table(PageFileId(1)));
     controller.insert_page_table(PageFileId(1), PageTable::default());
     assert!(controller.contains_page_table(PageFileId(1)));
 }
 
-#[test]
+#[tokio::test]
 #[should_panic(expected = "page table already exists")]
-fn test_controller_insert_page_table_panics_already_exists() {
-    let controller = MetadataController::empty();
+async fn test_controller_insert_page_table_panics_already_exists() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     assert!(!controller.contains_page_table(PageFileId(1)));
     controller.insert_page_table(PageFileId(1), PageTable::default());
     assert!(controller.contains_page_table(PageFileId(1)));
     controller.insert_page_table(PageFileId(1), PageTable::default());
 }
 
-#[test]
-fn test_controller_create_blank_page_table() {
-    let controller = MetadataController::empty();
+#[tokio::test]
+async fn test_controller_create_blank_page_table() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     assert!(!controller.contains_page_table(PageFileId(1)));
     controller.create_blank_page_table(PageFileId(1));
     assert!(controller.contains_page_table(PageFileId(1)));
 }
 
-#[test]
-fn test_controller_insert_page_group() {
-    let controller = MetadataController::empty();
+#[tokio::test]
+async fn test_controller_insert_page_group() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
 
     assert_eq!(controller.find_first_page(PageGroupId(1)), None);
@@ -45,10 +49,11 @@ fn test_controller_insert_page_group() {
     );
 }
 
-#[test]
+#[tokio::test]
 #[should_panic(expected = "page table does not exist for page file: PageFileId(1)")]
-fn test_controller_insert_page_group_panics_unknown_page_file() {
-    let controller = MetadataController::empty();
+async fn test_controller_insert_page_group_panics_unknown_page_file() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     controller.insert_page_group(PageGroupId(1), PageFileId(1), PageId(0));
 }
 
@@ -103,18 +108,21 @@ fn test_controller_insert_page_group_panics_unknown_page_file() {
     ]
 )]
 #[trace]
-fn test_controller_write_pages(#[case] entries: &[PageMetadata]) {
-    let controller = MetadataController::empty();
+#[tokio::test]
+async fn test_controller_write_pages(#[case] entries: &[PageMetadata]) {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
     controller.write_pages(PageFileId(1), entries);
     // NOTE: The page table has separate tests to check it was actually written.
     //       This is a sanity check.
 }
 
-#[test]
+#[tokio::test]
 #[should_panic(expected = "page file ID should exist as provided by user")]
-fn test_controller_write_pages_panics_unknown_page_file() {
-    let controller = MetadataController::empty();
+async fn test_controller_write_pages_panics_unknown_page_file() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     controller.write_pages(PageFileId(1), &[]);
 }
 
@@ -409,13 +417,15 @@ fn test_controller_write_pages_panics_unknown_page_file() {
     ]
 )]
 #[trace]
-fn test_controller_collect_pages(
+#[tokio::test]
+async fn test_controller_collect_pages(
     #[case] entries: &[PageMetadata],
     #[case] start_page_id: PageId,
     #[case] data_range: Range<usize>,
     #[case] expected_pages: &[PageMetadata],
 ) {
-    let controller = MetadataController::empty();
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
     controller.write_pages(PageFileId(1), entries);
 
@@ -424,18 +434,20 @@ fn test_controller_collect_pages(
     assert_eq!(pages, expected_pages);
 }
 
-#[test]
+#[tokio::test]
 #[should_panic(expected = "page file ID should exist as provided by user")]
-fn test_controller_collect_pages_panics_unknown_page_file() {
-    let controller = MetadataController::empty();
+async fn test_controller_collect_pages_panics_unknown_page_file() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     let mut pages = Vec::new();
     controller.collect_pages(PageFileId(1), PageId(0), 0..0, &mut pages);
 }
 
-#[test]
+#[tokio::test]
 #[should_panic(expected = "page ID is beyond the bounds of the page table")]
-fn test_controller_collect_pages_panics_out_of_bounds() {
-    let controller = MetadataController::empty();
+async fn test_controller_collect_pages_panics_out_of_bounds() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
 
     let mut pages = Vec::new();
@@ -445,19 +457,20 @@ fn test_controller_collect_pages_panics_out_of_bounds() {
 #[tokio::test]
 async fn test_controller_checkpoint() {
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = MetadataController::empty();
+    let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
     controller.create_blank_page_table(PageFileId(2));
     controller.create_blank_page_table(PageFileId(3));
 
     // The actual correctness of the files being written is tested in the checkpoint.rs file.
-    let checkpointed_files = controller
-        .checkpoint(ctx.clone())
+    let num_checkpointed_files = controller
+        .checkpoint()
         .await
         .expect("files should be checkpointed and returned");
 
     // No tables should be checkpointed as they have not changed.
-    assert!(checkpointed_files.is_empty());
+    assert_eq!(num_checkpointed_files, 0);
+    assert_eq!(controller.num_files_to_cleanup(), 0);
 
     controller.write_pages(
         PageFileId(1),
@@ -492,23 +505,19 @@ async fn test_controller_checkpoint() {
         ],
     );
 
-    let checkpointed_files = controller
-        .checkpoint(ctx)
+    let num_checkpointed_files = controller
+        .checkpoint()
         .await
         .expect("files should be checkpointed and returned");
-    let mut page_files_checkpointed = checkpointed_files
-        .into_iter()
-        .map(|(page_file_id, _)| page_file_id)
-        .collect::<Vec<_>>();
-    page_files_checkpointed.sort();
-    assert_eq!(page_files_checkpointed, &[PageFileId(1), PageFileId(2)]);
+    assert_eq!(num_checkpointed_files, 2);
+    // no files originally.
+    assert_eq!(controller.num_files_to_cleanup(), 0);
 }
 
 #[tokio::test]
 async fn test_controller_incremental_checkpoint() {
     let ctx = ctx::FileContext::for_test(false).await;
-
-    let controller = MetadataController::empty();
+    let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(0));
     controller.create_blank_page_table(PageFileId(1));
 
@@ -530,19 +539,75 @@ async fn test_controller_incremental_checkpoint() {
     // Ignore the first call on the fail point, then return pre-configured error.
     fail::cfg("checkpoint::checkpoint_page_table", "1*off->return").unwrap();
 
-    let err = controller
-        .checkpoint(ctx.clone())
+    let _err = controller
+        .checkpoint()
         .await
         .expect_err("checkpoint error should occur");
-    let first_page_file_id = err.completed_checkpoints[0].0;
 
     scenario.teardown();
 
     // The previously successfully tables have not changed, therefore they should be
     // appearing in the result of the next call.
-    let checkpointed_files = controller
-        .checkpoint(ctx)
+    let num_checkpointed_files = controller
+        .checkpoint()
         .await
         .expect("checkpoint should complete");
-    assert_ne!(checkpointed_files[0].0, first_page_file_id);
+    assert_eq!(num_checkpointed_files, 1);
+}
+
+#[tokio::test]
+async fn test_controller_gc_old_checkpoint_files() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
+    controller.create_blank_page_table(PageFileId(0));
+
+    controller.write_pages(
+        PageFileId(0),
+        &[PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(5),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        }],
+    );
+    let num_checkpointed_files = controller
+        .checkpoint()
+        .await
+        .expect("checkpoint should complete");
+    assert_eq!(num_checkpointed_files, 1);
+    assert_eq!(controller.num_files_to_cleanup(), 0);
+
+    controller.write_pages(
+        PageFileId(0),
+        &[PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(5),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        }],
+    );
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("metadata::garbage_collect_checkpoints", "return").unwrap();
+
+    let _err = controller
+        .checkpoint()
+        .await
+        .expect_err("checkpoint error should occur when gc attempted");
+    assert_eq!(controller.num_files_to_cleanup(), 1);
+
+    scenario.teardown();
+
+    let num_checkpointed_files = controller
+        .checkpoint()
+        .await
+        .expect("checkpoint should complete");
+    assert_eq!(num_checkpointed_files, 0);
+
+    // Checkpoint should still cleanup files
+    assert_eq!(controller.num_files_to_cleanup(), 0);
 }
