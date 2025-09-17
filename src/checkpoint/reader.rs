@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::buffer::ALLOC_PAGE_SIZE;
 use crate::directory::FileGroup;
 use crate::layout::file_metadata::Encryption;
-use crate::layout::{file_metadata, page_metadata};
+use crate::layout::{PageFileId, file_metadata, page_metadata};
 use crate::{ctx, file};
 
 #[derive(Debug, thiserror::Error)]
@@ -30,11 +30,20 @@ pub enum ReadCheckpointError {
     EncryptionStatusMismatch,
 }
 
+#[derive(Debug)]
+/// A checkpoint of page state for a given page file ID.
+pub struct Checkpoint {
+    /// The ID of the page file the state is tied to.
+    pub page_file_id: PageFileId,
+    /// The page state checkpoint.
+    pub updates: page_metadata::PageChangeCheckpoint,
+}
+
 /// Read a persisted metadata checkpoint.
 pub async fn read_checkpoint(
     ctx: &Arc<ctx::FileContext>,
     file: &file::ROFile,
-) -> Result<page_metadata::PageChangeCheckpoint, ReadCheckpointError> {
+) -> Result<Checkpoint, ReadCheckpointError> {
     let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
     let n = file.read_buffer(&mut header_buffer, 0).await?;
     if n == 0 {
@@ -82,5 +91,8 @@ pub async fn read_checkpoint(
     .await
     .expect("spawn worker thread")?;
 
-    Ok(checkpoint)
+    Ok(Checkpoint {
+        page_file_id: header.parent_page_file_id,
+        updates: checkpoint,
+    })
 }

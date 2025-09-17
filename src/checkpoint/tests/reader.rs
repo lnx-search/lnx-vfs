@@ -66,7 +66,7 @@ async fn test_checkpoint_reader(
     let checkpoint = crate::checkpoint::read_checkpoint(&ctx, &file)
         .await
         .expect("could not write checkpoint");
-    assert_eq!(checkpoint.len(), num_updates);
+    assert_eq!(checkpoint.updates.len(), num_updates);
 }
 
 #[rstest::rstest]

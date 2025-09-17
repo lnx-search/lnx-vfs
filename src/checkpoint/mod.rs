@@ -3,7 +3,7 @@ mod reader;
 mod tests;
 mod writer;
 
-pub use self::reader::{ReadCheckpointError, read_checkpoint};
+pub use self::reader::{Checkpoint, ReadCheckpointError, read_checkpoint};
 pub use self::writer::{WriteCheckpointError, write_checkpoint};
 use crate::directory::FileId;
 use crate::layout::PageFileId;
