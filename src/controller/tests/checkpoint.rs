@@ -122,3 +122,86 @@ async fn test_page_table_load_from_checkpoints() {
     page_table.collect_non_empty_pages(&mut collected_pages);
     assert_eq!(collected_pages, pages);
 }
+
+#[tokio::test]
+async fn test_page_table_load_from_checkpoints_cleanup_outdated_files() {
+    let ctx = ctx::FileContext::for_test(false).await;
+
+    let page_table = PageTable::default();
+    page_table.write_pages(&[PageMetadata {
+        group: PageGroupId(1),
+        revision: 0,
+        next_page_id: PageId(1),
+        id: PageId(4),
+        data_len: 0,
+        context: [0; 40],
+    }]);
+    assert!(page_table.has_changed());
+    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+        .await
+        .expect("Checkpoint page table failed");
+
+    page_table.write_pages(&[PageMetadata {
+        group: PageGroupId(1),
+        revision: 0,
+        next_page_id: PageId(1),
+        id: PageId(5),
+        data_len: 0,
+        context: [0; 40],
+    }]);
+    assert!(page_table.has_changed());
+    let new_file_id = checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+        .await
+        .expect("Checkpoint page table failed");
+
+    let page_tables = read_checkpoints(ctx.clone())
+        .await
+        .expect("all checkpoints should be loaded");
+    assert_eq!(page_tables.len(), 1);
+
+    let file_ids = ctx.directory().list_dir(FileGroup::Metadata).await;
+    assert_eq!(&file_ids, &[new_file_id]);
+}
+
+#[tokio::test]
+async fn test_page_table_load_from_checkpoints_skips_cleanup_errors() {
+    let ctx = ctx::FileContext::for_test(false).await;
+
+    let page_table = PageTable::default();
+    page_table.write_pages(&[PageMetadata {
+        group: PageGroupId(1),
+        revision: 0,
+        next_page_id: PageId(1),
+        id: PageId(4),
+        data_len: 0,
+        context: [0; 40],
+    }]);
+    assert!(page_table.has_changed());
+
+    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+        .await
+        .expect("Checkpoint page table failed");
+
+    page_table.write_pages(&[PageMetadata {
+        group: PageGroupId(1),
+        revision: 0,
+        next_page_id: PageId(1),
+        id: PageId(5),
+        data_len: 0,
+        context: [0; 40],
+    }]);
+    assert!(page_table.has_changed());
+    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+        .await
+        .expect("Checkpoint page table failed");
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("directory::remove_file", "return(-4)").unwrap();
+
+    let page_tables = read_checkpoints(ctx)
+        .await
+        .expect("all checkpoints should be loaded");
+    assert_eq!(page_tables.len(), 1);
+
+    scenario.teardown();
+}
