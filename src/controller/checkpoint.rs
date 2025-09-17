@@ -56,13 +56,21 @@ pub async fn checkpoint_page_table(
     Ok(file_id)
 }
 
+/// The state of the metadata controller after the last successful checkpoint.
+pub struct LastCheckpointedState {
+    /// The page group lookup table.
+    pub lookup_table: foldhash::HashMap<PageGroupId, LookupEntry>,
+    /// The recovered page tables.
+    pub page_tables: BTreeMap<PageFileId, PageTable>,
+}
+
 #[tracing::instrument(skip(ctx))]
 /// Read all persisted page tables from their checkpoints.
 ///
 /// This does NOT recover any additional state from the WAL.
 pub async fn read_checkpoints(
     ctx: Arc<ctx::FileContext>,
-) -> Result<BTreeMap<PageFileId, PageTable>, ReadCheckpointError> {
+) -> Result<LastCheckpointedState, ReadCheckpointError> {
     use std::collections::btree_map::Entry;
 
     let directory = ctx.directory();
@@ -96,12 +104,19 @@ pub async fn read_checkpoints(
         "collected active checkpoints"
     );
 
+    let mut lookup_table = foldhash::HashMap::with_capacity(1_000);
     let mut page_tables = BTreeMap::new();
     for (page_file_id, (_, checkpoint)) in active_checkpoints {
         tracing::info!(
             page_file_id = ?page_file_id,
             num_allocated_pages = checkpoint.updates.len(),
             "loading page table",
+        );
+
+        reconstruct_lookup_table_from_pages(
+            &mut lookup_table,
+            page_file_id,
+            &checkpoint.updates,
         );
 
         let page_table = PageTable::from_existing_state(&checkpoint.updates);
@@ -114,7 +129,10 @@ pub async fn read_checkpoints(
         }
     }
 
-    Ok(page_tables)
+    Ok(LastCheckpointedState {
+        lookup_table,
+        page_tables,
+    })
 }
 
 /// Reconstructs the lookup table for page groups.
@@ -122,12 +140,12 @@ pub async fn read_checkpoints(
 /// This assumes that page sequences are written from the smallest ID to the largest ID
 /// in order to maintain ordering of data.
 fn reconstruct_lookup_table_from_pages(
+    lookup_table: &mut foldhash::HashMap<PageGroupId, LookupEntry>,
     page_file_id: PageFileId,
     pages: &[PageMetadata],
-) -> foldhash::HashMap<PageGroupId, LookupEntry> {
+) {
     use std::collections::hash_map::Entry;
 
-    let mut lookup_table = foldhash::HashMap::with_capacity(1_000);
     for page in pages {
         // There should not be any empty pages, but just in case.
         if page.is_empty() {
@@ -158,8 +176,6 @@ fn reconstruct_lookup_table_from_pages(
             },
         }
     }
-
-    lookup_table
 }
 
 #[cfg(all(test, not(feature = "test-miri")))]
@@ -213,9 +229,10 @@ mod tests {
             },
         ];
 
-        let mut lookup = reconstruct_lookup_table_from_pages(PageFileId(1), pages)
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut lookup = foldhash::HashMap::new();
+        reconstruct_lookup_table_from_pages(&mut lookup, PageFileId(1), pages);
+
+        let mut lookup = lookup.into_iter().collect::<Vec<_>>();
         lookup.sort_by_key(|(id, _)| *id);
 
         assert_eq!(

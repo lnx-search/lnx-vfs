@@ -50,12 +50,19 @@ impl MetadataController {
     pub async fn open(
         ctx: Arc<ctx::FileContext>,
     ) -> Result<Self, OpenMetadataControllerError> {
-        let page_tables = super::checkpoint::read_checkpoints(ctx.clone()).await?;
+        let checkpointed_state =
+            super::checkpoint::read_checkpoints(ctx.clone()).await?;
 
         let controller = Self::empty(ctx.clone());
-        for (page_file_id, page_table) in page_tables {
+        for (page_file_id, page_table) in checkpointed_state.page_tables {
             controller.insert_page_table(page_file_id, page_table);
         }
+
+        let lookup_table_guard = controller.lookup_table.pin();
+        for (page_group_id, lookup_entry) in checkpointed_state.lookup_table {
+            lookup_table_guard.insert(page_group_id, lookup_entry);
+        }
+        drop(lookup_table_guard);
 
         Ok(controller)
     }

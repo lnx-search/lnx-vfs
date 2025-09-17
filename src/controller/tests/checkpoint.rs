@@ -108,12 +108,13 @@ async fn test_page_table_load_from_checkpoints() {
         .await
         .expect("Checkpoint page table failed");
 
-    let page_tables = read_checkpoints(ctx)
+    let checkpointed_state = read_checkpoints(ctx)
         .await
         .expect("all checkpoints should be loaded");
-    assert_eq!(page_tables.len(), 1);
+    assert_eq!(checkpointed_state.page_tables.len(), 1);
 
-    let page_table = page_tables
+    let page_table = checkpointed_state
+        .page_tables
         .get(&PageFileId(0))
         .expect("checkpoint page table should exist");
     assert!(!page_table.has_changed());
@@ -154,10 +155,10 @@ async fn test_page_table_load_from_checkpoints_cleanup_outdated_files() {
         .await
         .expect("Checkpoint page table failed");
 
-    let page_tables = read_checkpoints(ctx.clone())
+    let checkpointed_state = read_checkpoints(ctx.clone())
         .await
         .expect("all checkpoints should be loaded");
-    assert_eq!(page_tables.len(), 1);
+    assert_eq!(checkpointed_state.page_tables.len(), 1);
 
     let file_ids = ctx.directory().list_dir(FileGroup::Metadata).await;
     assert_eq!(&file_ids, &[new_file_id]);
@@ -198,10 +199,10 @@ async fn test_page_table_load_from_checkpoints_skips_cleanup_errors() {
     let scenario = fail::FailScenario::setup();
     fail::cfg("directory::remove_file", "return(-4)").unwrap();
 
-    let page_tables = read_checkpoints(ctx)
+    let checkpointed_state = read_checkpoints(ctx)
         .await
         .expect("all checkpoints should be loaded");
-    assert_eq!(page_tables.len(), 1);
+    assert_eq!(checkpointed_state.page_tables.len(), 1);
 
     scenario.teardown();
 }
