@@ -1,7 +1,15 @@
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
 use super::metadata::PageTable;
-use crate::checkpoint::{WriteCheckpointError, write_checkpoint};
+use crate::checkpoint::{
+    Checkpoint,
+    ReadCheckpointError,
+    WriteCheckpointError,
+    read_checkpoint,
+    write_checkpoint,
+};
 use crate::ctx;
 use crate::directory::{FileGroup, FileId};
 use crate::layout::PageFileId;
@@ -45,4 +53,63 @@ pub async fn checkpoint_page_table(
     tracing::info!(checkpoint_op_stamp = op_stamp, "checkpointed page table");
 
     Ok(file_id)
+}
+
+#[tracing::instrument(skip(ctx))]
+/// Read all persisted page tables from their checkpoints.
+///
+/// This does NOT recover any additional state from the WAL.
+pub async fn read_page_tables_from_checkpoints(
+    ctx: Arc<ctx::FileContext>,
+) -> Result<BTreeMap<PageFileId, PageTable>, ReadCheckpointError> {
+    let directory = ctx.directory();
+    let file_ids = directory.list_dir(FileGroup::Metadata).await;
+
+    let mut active_checkpoints: BTreeMap<PageFileId, (FileId, Checkpoint)> =
+        BTreeMap::new();
+    let mut files_to_cleanup = Vec::new();
+    for file_id in file_ids {
+        let file = directory.get_ro_file(FileGroup::Metadata, file_id).await?;
+
+        let checkpoint = read_checkpoint(&ctx, &file).await?;
+
+        match active_checkpoints.entry(checkpoint.page_file_id) {
+            Entry::Vacant(entry) => {
+                entry.insert((file_id, checkpoint));
+            },
+            Entry::Occupied(mut entry) => {
+                let &(existing_file_id, _) = entry.get();
+                if file_id > existing_file_id {
+                    entry.insert((file_id, checkpoint));
+                    files_to_cleanup.push(existing_file_id);
+                }
+            },
+        }
+    }
+
+    tracing::info!(
+        num_active_checkpoints = active_checkpoints.len(),
+        files_to_cleanup = ?files_to_cleanup,
+        "collected active checkpoints"
+    );
+
+    let mut page_tables = BTreeMap::new();
+    for (page_file_id, (_, checkpoint)) in active_checkpoints {
+        tracing::info!(
+            page_file_id = ?page_file_id,
+            num_allocated_pages = checkpoint.updates.len(),
+            "loading page table",
+        );
+
+        let page_table = PageTable::from_existing_state(&checkpoint.updates);
+        page_tables.insert(page_file_id, page_table);
+    }
+
+    for file_id in files_to_cleanup {
+        if let Err(err) = directory.remove_file(FileGroup::Metadata, file_id).await {
+            tracing::error!(error = %err, "failed to remove old checkpoint file");
+        }
+    }
+
+    Ok(page_tables)
 }
