@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
-use super::metadata::PageTable;
+use foldhash::HashMapExt;
+
+use super::metadata::{LookupEntry, PageTable};
 use crate::checkpoint::{
     Checkpoint,
     ReadCheckpointError,
@@ -12,8 +13,8 @@ use crate::checkpoint::{
 };
 use crate::ctx;
 use crate::directory::{FileGroup, FileId};
-use crate::layout::PageFileId;
-use crate::layout::page_metadata::PageChangeCheckpoint;
+use crate::layout::page_metadata::{PageChangeCheckpoint, PageMetadata};
+use crate::layout::{PageFileId, PageGroupId};
 use crate::page_data::NUM_PAGES_PER_BLOCK;
 
 #[tracing::instrument(skip(ctx, page_table))]
@@ -62,6 +63,8 @@ pub async fn checkpoint_page_table(
 pub async fn read_checkpoints(
     ctx: Arc<ctx::FileContext>,
 ) -> Result<BTreeMap<PageFileId, PageTable>, ReadCheckpointError> {
+    use std::collections::btree_map::Entry;
+
     let directory = ctx.directory();
     let file_ids = directory.list_dir(FileGroup::Metadata).await;
 
@@ -112,4 +115,84 @@ pub async fn read_checkpoints(
     }
 
     Ok(page_tables)
+}
+
+/// Reconstructs the lookup table for page groups.
+///
+/// This assumes that page sequences are written from the smallest ID to the largest ID
+/// in order to maintain ordering of data.
+fn reconstruct_lookup_table_from_pages(
+    page_file_id: PageFileId,
+    pages: &[PageMetadata],
+) -> foldhash::HashMap<PageGroupId, LookupEntry> {
+    use std::collections::hash_map::Entry;
+
+    let mut lookup_table = foldhash::HashMap::with_capacity(1_000);
+    for page in pages {
+        let lookup_entry = LookupEntry {
+            page_file_id,
+            first_page_id: page.id,
+            revision: page.revision,
+        };
+
+        match lookup_table.entry(page.group) {
+            Entry::Vacant(entry) => {
+                entry.insert(lookup_entry);
+            },
+            Entry::Occupied(mut entry) => {
+                let existing_page = entry.get();
+
+                // - If the new page has a newer revision, use that.
+                // - If the page revisions match, but we have a lower page ID we assign that.
+                if page.revision > existing_page.revision
+                    || (page.revision == existing_page.revision
+                        && page.id < existing_page.first_page_id)
+                {
+                    entry.insert(lookup_entry);
+                }
+            },
+        }
+    }
+
+    lookup_table
+}
+
+#[cfg(all(test, not(feature = "test-miri"), feature = "bench-lib-unstable"))]
+mod benches {
+    extern crate test;
+
+    use std::hint::black_box;
+
+    use super::*;
+    use crate::layout::PageId;
+    use crate::page_data::NUM_BLOCKS_PER_FILE;
+
+    #[bench]
+    fn reconstruct_lookup_table(bencher: &mut test::Bencher) -> anyhow::Result<()> {
+        let gen_page_id = || {
+            PageId(fastrand::u32(
+                0..(NUM_BLOCKS_PER_FILE * NUM_PAGES_PER_BLOCK) as u32,
+            ))
+        };
+        let mut entries = Vec::with_capacity(NUM_BLOCKS_PER_FILE * NUM_PAGES_PER_BLOCK);
+        for _ in 0..NUM_BLOCKS_PER_FILE * NUM_PAGES_PER_BLOCK {
+            entries.push(PageMetadata {
+                group: PageGroupId(fastrand::u64(0..10_000)),
+                revision: fastrand::u32(0..50),
+                next_page_id: gen_page_id(),
+                id: gen_page_id(),
+                data_len: 0,
+                context: [0; 40],
+            });
+        }
+
+        bencher.iter(|| {
+            reconstruct_lookup_table_from_pages(
+                black_box(PageFileId(0)),
+                black_box(&entries),
+            )
+        });
+
+        Ok(())
+    }
 }

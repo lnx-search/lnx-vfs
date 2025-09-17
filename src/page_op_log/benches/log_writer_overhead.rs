@@ -4,8 +4,6 @@
 
 extern crate test;
 
-use std::sync::Arc;
-
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::layout::log::{LogEntry, LogOp};

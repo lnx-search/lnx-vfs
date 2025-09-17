@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::controller::metadata::{MetadataController, PageTable};
+use crate::controller::metadata::{LookupEntry, MetadataController, PageTable};
 use crate::ctx;
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
@@ -42,10 +42,21 @@ async fn test_controller_insert_page_group() {
     controller.create_blank_page_table(PageFileId(1));
 
     assert_eq!(controller.find_first_page(PageGroupId(1)), None);
-    controller.insert_page_group(PageGroupId(1), PageFileId(1), PageId(0));
+    controller.insert_page_group(
+        PageGroupId(1),
+        LookupEntry {
+            page_file_id: PageFileId(1),
+            first_page_id: PageId(0),
+            revision: 0,
+        },
+    );
     assert_eq!(
         controller.find_first_page(PageGroupId(1)),
-        Some((PageFileId(1), PageId(0)))
+        Some(LookupEntry {
+            page_file_id: PageFileId(1),
+            first_page_id: PageId(0),
+            revision: 0,
+        }),
     );
 }
 
@@ -54,7 +65,14 @@ async fn test_controller_insert_page_group() {
 async fn test_controller_insert_page_group_panics_unknown_page_file() {
     let ctx = ctx::FileContext::for_test(false).await;
     let controller = MetadataController::empty(ctx);
-    controller.insert_page_group(PageGroupId(1), PageFileId(1), PageId(0));
+    controller.insert_page_group(
+        PageGroupId(1),
+        LookupEntry {
+            page_file_id: PageFileId(1),
+            first_page_id: PageId(0),
+            revision: 0,
+        },
+    );
 }
 
 #[rstest::rstest]

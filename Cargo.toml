@@ -19,12 +19,12 @@ crc32fast = "1.4"
 serde = "1"
 serde_derive = "1"
 rmp-serde = "1"
-ahash = "0.8"
 rkyv = "0.8"
 libc = "0.2"
 smallvec = "1"
 stable_deref_trait = "1"
 hex = "0.4"
+foldhash = "0.2"
 
 # Encryption at rest
 chacha20poly1305 = "0.10"

@@ -17,9 +17,10 @@ pub use self::page_file::{CacheLayer, ReadRef};
 /// A unique identifier for a cache layer.
 pub type LayerId = u32;
 
-type LivePagesLfu = moka::sync::Cache<(LayerId, PageIndex), (), ahash::RandomState>;
+type LivePagesLfu =
+    moka::sync::Cache<(LayerId, PageIndex), (), foldhash::fast::RandomState>;
 type LayerEvictionSenders =
-    ahash::HashMap<LayerId, crossbeam_channel::Sender<PageIndex>>;
+    foldhash::HashMap<LayerId, crossbeam_channel::Sender<PageIndex>>;
 
 /// The page file cache
 ///
@@ -86,7 +87,7 @@ impl PageFileCache {
                 }
             })
             .eviction_policy(EvictionPolicy::tiny_lfu())
-            .build_with_hasher(ahash::RandomState::new());
+            .build_with_hasher(foldhash::fast::RandomState::default());
 
         Self {
             num_pages,

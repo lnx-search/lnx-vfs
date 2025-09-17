@@ -7,9 +7,7 @@ use std::{io, mem};
 
 use parking_lot::{Mutex, RwLock};
 
-use super::checkpoint::checkpoint_page_table;
-use crate::checkpoint::WriteCheckpointError;
-use crate::ctx;
+use crate::checkpoint::{ReadCheckpointError, WriteCheckpointError};
 use crate::directory::{FileGroup, FileId};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
@@ -19,26 +17,59 @@ use crate::page_data::{
     NUM_BLOCKS_PER_FILE,
     NUM_PAGES_PER_BLOCK,
 };
+use crate::{ctx, page_op_log};
 
-type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, ahash::RandomState>;
+type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, foldhash::fast::RandomState>;
+
+#[derive(Debug, thiserror::Error)]
+/// An error preventing the [MetadataController] from opening
+/// and recovering the previously persisted state.
+pub enum OpenMetadataControllerError {
+    #[error(transparent)]
+    /// The controller could not recover page data from existing checkpoints.
+    CheckpointError(#[from] ReadCheckpointError),
+    #[error(transparent)]
+    /// The controller could not recovery metadata updates from replaying
+    /// the log.
+    WalRecoveryError(#[from] page_op_log::LogOpenReadError),
+}
 
 /// The metadata controller handles the global page table state
 /// and checkpointing the metadata tied to each page of data.
 pub struct MetadataController {
     ctx: Arc<ctx::FileContext>,
-    lookup_table: ConcurrentHashMap<PageGroupId, (PageFileId, PageId)>,
+    lookup_table: ConcurrentHashMap<PageGroupId, LookupEntry>,
     page_tables: ConcurrentHashMap<PageFileId, PageTable>,
     active_checkpoint_files: Mutex<BTreeMap<PageFileId, FileId>>,
     files_to_cleanup: Mutex<Vec<FileId>>,
 }
 
 impl MetadataController {
+    /// Opens a new [MetadataController] and re-populates data using the page table
+    /// checkpoints and replays any WAL file changes.
+    pub async fn open(
+        ctx: Arc<ctx::FileContext>,
+    ) -> Result<Self, OpenMetadataControllerError> {
+        let page_tables = super::checkpoint::read_checkpoints(ctx.clone()).await?;
+
+        let controller = Self::empty(ctx.clone());
+        for (page_file_id, page_table) in page_tables {
+            controller.insert_page_table(page_file_id, page_table);
+        }
+
+        Ok(controller)
+    }
+
     /// Create a new empty [MetadataController].
     pub fn empty(ctx: Arc<ctx::FileContext>) -> Self {
         Self {
             ctx,
-            lookup_table: ConcurrentHashMap::with_hasher(ahash::RandomState::default()),
-            page_tables: ConcurrentHashMap::with_hasher(ahash::RandomState::default()),
+            lookup_table: ConcurrentHashMap::with_hasher(
+                foldhash::fast::RandomState::default(),
+            ),
+            page_tables: ConcurrentHashMap::with_hasher(
+                foldhash::fast::RandomState::default(),
+            ),
             active_checkpoint_files: Mutex::new(BTreeMap::new()),
             files_to_cleanup: Mutex::new(Vec::new()),
         }
@@ -69,25 +100,23 @@ impl MetadataController {
     /// it is stored at and the page ID of the first page.
     ///
     /// Returns `None` if the group does not exist.
-    pub fn find_first_page(&self, group: PageGroupId) -> Option<(PageFileId, PageId)> {
+    pub fn find_first_page(&self, group: PageGroupId) -> Option<LookupEntry> {
         self.lookup_table.pin().get(&group).copied()
     }
 
     /// Insert the given page group into the controller and associate it with
     /// the given page table (via the page file ID) and the first page containing
     /// the start of the group data.
-    pub fn insert_page_group(
-        &self,
-        group: PageGroupId,
-        page_file_id: PageFileId,
-        first_page_id: PageId,
-    ) {
-        if !self.contains_page_table(page_file_id) {
-            panic!("page table does not exist for page file: {page_file_id:?}");
+    pub fn insert_page_group(&self, group: PageGroupId, entry: LookupEntry) {
+        if !self.contains_page_table(entry.page_file_id) {
+            panic!(
+                "page table does not exist for page file: {:?}",
+                entry.page_file_id
+            );
         }
 
         let lookup = self.lookup_table.pin();
-        lookup.insert(group, (page_file_id, first_page_id));
+        lookup.insert(group, entry);
     }
 
     /// Collects the pages of a given page group within a given page file.
@@ -139,9 +168,12 @@ impl MetadataController {
                 continue;
             }
 
-            let file_id =
-                checkpoint_page_table(self.ctx.clone(), *page_file_id, page_table)
-                    .await?;
+            let file_id = super::checkpoint::checkpoint_page_table(
+                self.ctx.clone(),
+                *page_file_id,
+                page_table,
+            )
+            .await?;
             num_checkpointed_files += 1;
 
             let maybe_old_file_id = {
@@ -188,6 +220,15 @@ impl MetadataController {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialOrd, PartialEq)]
+/// A lookup entry contains the location of the first page that a page group
+/// contains and the revision of the page group.
+pub struct LookupEntry {
+    pub page_file_id: PageFileId,
+    pub first_page_id: PageId,
+    pub revision: u32,
 }
 
 type GuardedPages = RwLock<Box<[PageMetadata; NUM_PAGES_PER_BLOCK]>>;
