@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use crate::controller::metadata::{LookupEntry, MetadataController, PageTable};
+use crate::controller::tests::{create_wal_file, make_log_entry, write_log_entries};
 use crate::ctx;
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
@@ -660,11 +661,137 @@ async fn test_controller_gc_old_checkpoint_files() {
 }
 
 #[tokio::test]
-async fn test_controller_recover_from_checkpoints() {}
+async fn test_controller_recover_from_checkpoints() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx.clone());
+    controller.create_blank_page_table(PageFileId(2));
+
+    let all_pages = &[
+        PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(5),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        },
+        PageMetadata {
+            group: PageGroupId(2),
+            revision: 0,
+            next_page_id: PageId(24_000),
+            id: PageId(5),
+            data_len: 0,
+            context: [0; 40],
+        },
+        PageMetadata {
+            group: PageGroupId(5),
+            revision: 0,
+            next_page_id: PageId(24_000),
+            id: PageId(7),
+            data_len: 0,
+            context: [0; 40],
+        },
+        // This page should overwrite the GroupId 5 entry.
+        PageMetadata {
+            group: PageGroupId(6),
+            revision: 0,
+            next_page_id: PageId(24_000),
+            id: PageId(7),
+            data_len: 0,
+            context: [0; 40],
+        },
+    ];
+    controller.write_pages(PageFileId(2), all_pages);
+
+    let num_checkpointed_files = controller.checkpoint().await.unwrap();
+    assert_eq!(num_checkpointed_files, 1);
+    drop(controller);
+
+    let controller = MetadataController::open(ctx)
+        .await
+        .expect("controller should be opened without error");
+    assert_eq!(controller.num_page_groups(), 3);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageFileId(2), PageId(4), 0..50, &mut pages);
+    assert_eq!(pages, &[all_pages[0]]);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageFileId(2), PageId(5), 0..50, &mut pages);
+    assert_eq!(pages, &[all_pages[1]]);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageFileId(2), PageId(7), 0..50, &mut pages);
+    assert_eq!(pages, &[all_pages[3]]);
+}
 
 #[tokio::test]
-async fn test_controller_recover_from_wal() {}
+async fn test_controller_recover_from_wal() {
+    let ctx = ctx::FileContext::for_test(false).await;
 
+    let wal_file = create_wal_file(&ctx).await;
+    let entries = &[
+        // Normal transaction that was completed.
+        make_log_entry(PageGroupId(0), PageId(0), 0, 2, PageFileId(1), PageId(1)),
+        make_log_entry(
+            PageGroupId(0),
+            PageId(1),
+            0,
+            2,
+            PageFileId(1),
+            PageId::TERMINATOR,
+        ),
+        // Aborted transaction
+        make_log_entry(PageGroupId(1), PageId(1), 1, 2, PageFileId(1), PageId(4)),
+        // Transaction that is applied to a different page file.
+        make_log_entry(
+            PageGroupId(2),
+            PageId(5),
+            2,
+            1,
+            PageFileId(3),
+            PageId::TERMINATOR,
+        ),
+    ];
+
+    write_log_entries(ctx.clone(), wal_file.clone(), entries, 0).await;
+
+    let controller = MetadataController::open(ctx)
+        .await
+        .expect("controller should be opened without error");
+    assert_eq!(controller.num_page_groups(), 2);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageFileId(1), PageId(0), 0..50, &mut pages);
+    assert_eq!(
+        pages,
+        &[PageMetadata {
+            group: PageGroupId(0),
+            revision: 0,
+            next_page_id: PageId(1),
+            id: PageId(0),
+            data_len: 0,
+            context: [0; 40],
+        }]
+    );
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageFileId(3), PageId(5), 0..50, &mut pages);
+    assert_eq!(
+        pages,
+        &[PageMetadata {
+            group: PageGroupId(2),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(5),
+            data_len: 0,
+            context: [0; 40],
+        }]
+    );
+}
+
+// Debugging tip: Ignore this set of tests if the `test_controller_recover_from_checkpoints`
+// test is also failing, as it is probably unrelated to the fuzzing.
 #[rstest::rstest]
 #[case::fail_read_checkpoint("checkpoint::read_checkpoint", "return", true)]
 #[case::fail_remove_file("directory::remove_file", "return", false)]
@@ -672,7 +799,7 @@ async fn test_controller_recover_from_wal() {}
 #[case::blocking_remove_file("directory::remove_file", "sleep(200)", false)]
 #[trace]
 #[tokio::test]
-async fn test_controller_recovery_fuzz(
+async fn test_controller_recovery_checkpoint_fuzz(
     #[case] fail_point: &str,
     #[case] fail_action: &str,
     #[case] expect_error: bool,
