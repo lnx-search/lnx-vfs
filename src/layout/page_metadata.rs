@@ -63,7 +63,7 @@ impl PageMetadata {
     /// a "valid" page to be used within the system metadata tables.
     pub(crate) const fn empty(page_id: PageId) -> Self {
         Self {
-            id: PageId::TERMINATOR,
+            id: page_id,
             group: PageGroupId(u64::MAX),
             revision: 0,
             next_page_id: PageId::TERMINATOR,

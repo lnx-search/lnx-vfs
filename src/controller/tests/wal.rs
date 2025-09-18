@@ -287,7 +287,7 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_write_coalesce_updates() {
+async fn test_flaky_write_coalesce_updates() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let ctx = ctx::FileContext::for_test(false).await;

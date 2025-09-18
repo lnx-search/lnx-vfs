@@ -8,6 +8,7 @@ use std::{io, mem};
 use parking_lot::{Mutex, RwLock};
 
 use crate::checkpoint::{ReadCheckpointError, WriteCheckpointError};
+use crate::ctx;
 use crate::directory::{FileGroup, FileId};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
@@ -17,7 +18,6 @@ use crate::page_data::{
     NUM_BLOCKS_PER_FILE,
     NUM_PAGES_PER_BLOCK,
 };
-use crate::{ctx, page_op_log};
 
 type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, foldhash::fast::RandomState>;
 
@@ -27,11 +27,14 @@ type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, foldhash::fast::RandomState
 pub enum OpenMetadataControllerError {
     #[error(transparent)]
     /// The controller could not recover page data from existing checkpoints.
-    CheckpointError(#[from] ReadCheckpointError),
+    ReadCheckpoint(#[from] ReadCheckpointError),
+    #[error(transparent)]
+    /// The controller could not create a new checkpoint after recovering the WAL.
+    WriteCheckpoint(#[from] WriteCheckpointError),
     #[error(transparent)]
     /// The controller could not recovery metadata updates from replaying
     /// the log.
-    WalRecoveryError(#[from] page_op_log::LogOpenReadError),
+    WalRecovery(#[from] super::checkpoint::RecoverWalError),
 }
 
 /// The metadata controller handles the global page table state
@@ -50,13 +53,20 @@ impl MetadataController {
     pub async fn open(
         ctx: Arc<ctx::FileContext>,
     ) -> Result<Self, OpenMetadataControllerError> {
-        let checkpointed_state =
+        let mut checkpointed_state =
             super::checkpoint::read_checkpoints(ctx.clone()).await?;
 
         let controller = Self::empty(ctx.clone());
         for (page_file_id, page_table) in checkpointed_state.page_tables {
             controller.insert_page_table(page_file_id, page_table);
         }
+
+        super::checkpoint::recover_wal_updates(
+            ctx.clone(),
+            &mut checkpointed_state.lookup_table,
+            &controller,
+        )
+        .await?;
 
         let lookup_table_guard = controller.lookup_table.pin();
         for (page_group_id, lookup_entry) in checkpointed_state.lookup_table {
@@ -302,6 +312,7 @@ impl PageTable {
             None => return,
             Some(first_page) => first_page,
         };
+        assert!(!first_page.is_null(), "provided page cannot be null");
 
         let mut block_idx = (first_page.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
         let mut page_idx = (first_page.id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
@@ -310,6 +321,8 @@ impl PageTable {
         block_shard[page_idx] = *first_page;
 
         for metadata in to_update.iter().skip(1) {
+            assert!(!first_page.is_null(), "provided page cannot be null");
+
             let old_block_idx = block_idx;
             block_idx = (metadata.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
             page_idx = (metadata.id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
@@ -359,7 +372,7 @@ impl PageTable {
             } else {
                 assert!(
                     !page_metadata.is_unassigned(),
-                    "BUG: page being referenced is empty"
+                    "BUG: page being referenced is unassigned"
                 );
                 results.push(*page_metadata);
                 num_pages_taken += 1;
@@ -584,5 +597,35 @@ mod tests {
     }
 
     #[test]
-    fn test_page_table_set_empty_page() {}
+    fn test_page_table_set_empty_page() {
+        let table = PageTable::default();
+
+        let metadata = PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(1),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        };
+        table.write_pages(&[metadata]);
+
+        let mut pages = Vec::new();
+        table.collect_non_empty_pages(&mut pages);
+        assert_eq!(pages.len(), 1);
+
+        let metadata = PageMetadata::empty(PageId(4));
+        table.write_pages(&[metadata]);
+
+        let mut pages = Vec::new();
+        table.collect_non_empty_pages(&mut pages);
+        assert_eq!(pages.len(), 0);
+    }
+
+    #[should_panic(expected = "provided page cannot be null")]
+    #[test]
+    fn page_table_panics_on_null_page() {
+        let table = PageTable::default();
+        table.write_pages(&[PageMetadata::null()]);
+    }
 }

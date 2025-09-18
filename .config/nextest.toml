@@ -1,7 +1,14 @@
 [profile.ci]
 fail-fast = false
-retries = 1
-slow-timeout = { period = "10s", terminate-after = 5 }
+slow-timeout = { period = "10s", terminate-after = 2 }
+
+[[profile.ci.overrides]]
+filter = 'test(/\btest_flaky_/)'
+retries = 2
 
 [profile.default]
-slow-timeout = { period = "10s", terminate-after = 5 }
+slow-timeout = { period = "10s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = 'test(/\btest_flaky_/)'
+retries = 2

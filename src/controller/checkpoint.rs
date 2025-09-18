@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use foldhash::HashMapExt;
 
-use super::metadata::{LookupEntry, PageTable};
+use super::metadata::{LookupEntry, MetadataController, PageTable};
 use crate::checkpoint::{
     Checkpoint,
     ReadCheckpointError,
@@ -135,6 +135,145 @@ pub(super) async fn read_checkpoints(
         lookup_table,
         page_tables,
     })
+}
+
+#[derive(Debug, thiserror::Error)]
+/// An error preventing the system from recovering the WAL.
+pub enum RecoverWalError {
+    #[error("IO error: {0}")]
+    /// An IO error occurred.
+    IO(#[from] std::io::Error),
+    #[error(transparent)]
+    /// The system could not open the WAL for reading.
+    OpenReaderError(#[from] page_op_log::LogOpenReadError),
+}
+
+#[tracing::instrument(skip_all)]
+/// Recover any additional updates to the metadata state which was not captured
+/// in the last checkpoint.
+///
+/// This reads each existing WAL log file until an error is encountered.
+/// We assume an error means the end of the log due to the layout of the WAL
+/// ensuring torn writes should not be possible in any situation.
+pub(super) async fn recover_wal_updates(
+    ctx: Arc<ctx::FileContext>,
+    lookup_table: &mut foldhash::HashMap<PageGroupId, LookupEntry>,
+    controller: &MetadataController,
+) -> Result<(), RecoverWalError> {
+    let directory = ctx.directory();
+    let file_ids = directory.list_dir(FileGroup::Wal).await;
+
+    let mut page_metadata_entries = foldhash::HashMap::new();
+    let mut num_entries_recovered = 0;
+    let mut num_transactions_aborted = 0;
+    for file_id in file_ids {
+        page_metadata_entries.clear();
+
+        recover_wal_file(
+            ctx.clone(),
+            file_id,
+            &mut page_metadata_entries,
+            &mut num_entries_recovered,
+            &mut num_transactions_aborted,
+        )
+        .await?;
+
+        for (page_file_id, metadata_entries) in page_metadata_entries.iter() {
+            reconstruct_lookup_table_from_pages(
+                lookup_table,
+                *page_file_id,
+                metadata_entries,
+            );
+
+            controller.write_pages(*page_file_id, metadata_entries);
+        }
+    }
+
+    tracing::info!(
+        num_transactions_aborted = num_transactions_aborted,
+        num_entries_recovered = num_entries_recovered,
+        "recovered WAL file changes"
+    );
+
+    Ok(())
+}
+
+#[tracing::instrument(skip(ctx))]
+async fn recover_wal_file(
+    ctx: Arc<ctx::FileContext>,
+    file_id: FileId,
+    page_metadata_entries: &mut foldhash::HashMap<PageFileId, Vec<PageMetadata>>,
+    num_entries_recovered: &mut usize,
+    num_transactions_aborted: &mut usize,
+) -> Result<(), RecoverWalError> {
+    use std::collections::hash_map::Entry;
+
+    let directory = ctx.directory();
+    tracing::info!("reading WAL file");
+
+    let file = directory.get_ro_file(FileGroup::Wal, file_id).await?;
+    let mut reader = page_op_log::LogFileReader::open(ctx.clone(), file).await?;
+
+    let mut current_transaction_id = 0;
+    let mut required_transaction_size = 0;
+    let mut transaction_state = Vec::with_capacity(100);
+    loop {
+        let block = match reader.next_block().await {
+            Ok(Some(block)) => block,
+            Ok(None) => break,
+            Err(err) => {
+                // NOTE: This does not mean something is wrong, this is a normal branch to hit
+                //       because old blocks will fail to decode when we recycle the log, but
+                //       the system will attempt to decode it anyway.
+                tracing::debug!(error = ?err, "encountered error decoding block, terminating");
+                break;
+            },
+        };
+
+        for entry in block.entries() {
+            let EntryPair { log, metadata } = entry;
+
+            if current_transaction_id != log.transaction_id {
+                *num_transactions_aborted += !transaction_state.is_empty() as usize;
+                current_transaction_id = log.transaction_id;
+                required_transaction_size = log.transaction_n_entries as usize;
+                transaction_state.clear();
+            }
+
+            match log.op {
+                LogOp::Free => transaction_state.push(PageMetadata::empty(log.page_id)),
+                LogOp::UpdateTableMetadata | LogOp::Write => {
+                    let metadata = **metadata.as_ref().expect(
+                        "metadata entry must always be present with write or update op",
+                    );
+                    transaction_state.push(metadata);
+                },
+            }
+
+            if transaction_state.len() == required_transaction_size {
+                *num_entries_recovered += transaction_state.len();
+
+                match page_metadata_entries.entry(log.page_file_id) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(mem::take(&mut transaction_state));
+                    },
+                    Entry::Occupied(mut entry) => {
+                        entry.get_mut().extend_from_slice(&transaction_state);
+                        transaction_state.clear();
+                    },
+                }
+            } else if transaction_state.len() > required_transaction_size {
+                panic!(
+                    "BUG: undefined system state! system expected {required_transaction_size} \
+                        operation in a transaction but got {}, this means the system \
+                        cannot be certain if the state updates it would apply are correct.",
+                    transaction_state.len(),
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Reconstructs the lookup table for page groups.

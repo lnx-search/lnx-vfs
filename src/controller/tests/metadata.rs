@@ -136,6 +136,35 @@ async fn test_controller_write_pages(#[case] entries: &[PageMetadata]) {
     //       This is a sanity check.
 }
 
+#[should_panic(expected = "BUG: page being referenced is unassigned")]
+#[tokio::test]
+async fn test_controller_set_empty() {
+    let ctx = ctx::FileContext::for_test(false).await;
+
+    let controller = MetadataController::empty(ctx);
+    controller.create_blank_page_table(PageFileId(1));
+    controller.write_pages(
+        PageFileId(1),
+        &[PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(1),
+            id: PageId(4),
+            data_len: 0,
+            context: [0; 40],
+        }],
+    );
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageFileId(1), PageId(4), 0..50, &mut pages);
+    assert_eq!(pages.len(), 1);
+
+    controller.write_pages(PageFileId(1), &[PageMetadata::empty(PageId(4))]);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageFileId(1), PageId(4), 0..50, &mut pages);
+}
+
 #[tokio::test]
 #[should_panic(expected = "page file ID should exist as provided by user")]
 async fn test_controller_write_pages_panics_unknown_page_file() {
@@ -378,7 +407,7 @@ async fn test_controller_write_pages_panics_unknown_page_file() {
         },
     ]
 )]
-#[should_panic(expected = "BUG: page being referenced is empty")]
+#[should_panic(expected = "BUG: page being referenced is unassigned")]
 #[case::next_page_id_not_terminator_or_missing_panics(
     &[
         PageMetadata {
