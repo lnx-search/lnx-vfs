@@ -658,3 +658,125 @@ async fn test_controller_gc_old_checkpoint_files() {
     // Checkpoint should still cleanup files
     assert_eq!(controller.num_files_to_cleanup(), 0);
 }
+
+#[tokio::test]
+async fn test_controller_recover_from_checkpoints() {}
+
+#[tokio::test]
+async fn test_controller_recover_from_wal() {}
+
+#[rstest::rstest]
+#[case::fail_read_checkpoint("checkpoint::read_checkpoint", "return", true)]
+#[case::fail_remove_file("directory::remove_file", "return", false)]
+#[case::blocking_read_checkpoint("checkpoint::read_checkpoint", "sleep(200)", false)]
+#[case::blocking_remove_file("directory::remove_file", "sleep(200)", false)]
+#[trace]
+#[tokio::test]
+async fn test_controller_recovery_fuzz(
+    #[case] fail_point: &str,
+    #[case] fail_action: &str,
+    #[case] expect_error: bool,
+    #[values(1, 5, 20)] num_page_tables: usize,
+    #[values(1, 3, 9, 133, 373)] num_entries_per_table: usize,
+) {
+    fastrand::seed(643634634637843);
+
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx.clone());
+
+    let mut page_id = 0;
+    for id in 0..num_page_tables {
+        let page_file_id = PageFileId(id as u32);
+        controller.create_blank_page_table(page_file_id);
+
+        let mut pages = Vec::new();
+        for _ in 0..num_entries_per_table {
+            page_id += 1;
+
+            let group_id = PageGroupId(fastrand::u64(0..500));
+            let metadata = PageMetadata {
+                group: group_id,
+                revision: fastrand::u32(0..10),
+                next_page_id: PageId(fastrand::u32(0..5_000)),
+                id: PageId(page_id),
+                data_len: 0,
+                context: [0; 40],
+            };
+
+            // Lookup entry not valid, but we don't care for this test.
+            controller.insert_page_group(
+                group_id,
+                LookupEntry {
+                    page_file_id,
+                    first_page_id: PageId::TERMINATOR,
+                    revision: 0,
+                },
+            );
+
+            pages.push(metadata);
+        }
+
+        controller.write_pages(page_file_id, &pages);
+    }
+
+    let num_checkpointed_files = controller
+        .checkpoint()
+        .await
+        .expect("checkpoint should complete");
+    assert_eq!(num_checkpointed_files, num_page_tables);
+
+    // Write one page and checkpoint again in order to check remove file fail point.
+    controller.write_pages(
+        PageFileId(0),
+        &[PageMetadata {
+            group: PageGroupId(1),
+            revision: fastrand::u32(0..10),
+            next_page_id: PageId(fastrand::u32(0..5_000)),
+            id: PageId(19999),
+            data_len: 0,
+            context: [0; 40],
+        }],
+    );
+    // Lookup entry not valid, but we don't care for this test.
+    controller.insert_page_group(
+        PageGroupId(1),
+        LookupEntry {
+            page_file_id: PageFileId(0),
+            first_page_id: PageId::TERMINATOR,
+            revision: 0,
+        },
+    );
+    let num_checkpointed_files = controller
+        .checkpoint()
+        .await
+        .expect("checkpoint should complete");
+    assert_eq!(num_checkpointed_files, 1);
+
+    let num_expected_page_groups = controller.num_page_groups();
+    drop(controller);
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg(fail_point, fail_action).unwrap();
+
+    let result = MetadataController::open(ctx.clone()).await;
+    if expect_error && result.is_ok() {
+        panic!("controller should encounter an error");
+    } else if let Err(err) = result
+        && !expect_error
+    {
+        panic!("controller errored unexpectedly: {err:?}");
+    }
+
+    scenario.teardown();
+
+    let controller = MetadataController::open(ctx)
+        .await
+        .expect("controller should be opened without error");
+    for id in 0..num_page_tables {
+        assert!(controller.contains_page_table(PageFileId(id as u32)));
+    }
+
+    assert_eq!(controller.num_page_groups(), num_expected_page_groups);
+}

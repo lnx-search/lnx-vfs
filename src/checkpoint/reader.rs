@@ -44,6 +44,12 @@ pub async fn read_checkpoint(
     ctx: &Arc<ctx::FileContext>,
     file: &file::ROFile,
 ) -> Result<Checkpoint, ReadCheckpointError> {
+    #[cfg(test)]
+    fail::fail_point!("checkpoint::read_checkpoint", |_| Err(io::Error::other(
+        "read_checkpoint fail point error"
+    )
+    .into()));
+
     let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
     let n = file.read_buffer(&mut header_buffer, 0).await?;
     if n == 0 {

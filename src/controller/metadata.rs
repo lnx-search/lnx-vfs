@@ -56,6 +56,11 @@ impl MetadataController {
         let mut checkpointed_state =
             super::checkpoint::read_checkpoints(ctx.clone()).await?;
 
+        tracing::info!(
+            num_checkpointed_page_files = checkpointed_state.page_tables.len(),
+            "checkpoints read",
+        );
+
         let controller = Self::empty(ctx.clone());
         for (page_file_id, page_table) in checkpointed_state.page_tables {
             controller.insert_page_table(page_file_id, page_table);
@@ -67,6 +72,11 @@ impl MetadataController {
             &controller,
         )
         .await?;
+
+        tracing::info!(
+            num_page_groups = checkpointed_state.lookup_table.len(),
+            "recovered state from WAL & checkpoints"
+        );
 
         let lookup_table_guard = controller.lookup_table.pin();
         for (page_group_id, lookup_entry) in checkpointed_state.lookup_table {
@@ -119,6 +129,12 @@ impl MetadataController {
     /// Returns `None` if the group does not exist.
     pub fn find_first_page(&self, group: PageGroupId) -> Option<LookupEntry> {
         self.lookup_table.pin().get(&group).copied()
+    }
+
+    #[inline]
+    /// Returns the number of page groups in the system.
+    pub fn num_page_groups(&self) -> usize {
+        self.lookup_table.len()
     }
 
     /// Insert the given page group into the controller and associate it with
