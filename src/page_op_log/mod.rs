@@ -22,6 +22,8 @@ pub struct MetadataHeader {
     /// NOTE: This ID changes every time the WAL is flushed, although the disk
     /// allocation stays the same, the file itself is seen as 'new'.
     pub(super) log_file_id: u64,
+    /// The timestamp of when the header was created in milliseconds.
+    pub(super) timestamp: u64,
     /// Signals if the data in the log is encrypted or not.
     pub(super) encryption: Encryption,
 }

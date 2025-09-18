@@ -45,6 +45,7 @@ pub enum LogOpenReadError {
 pub struct LogFileReader {
     ctx: Arc<ctx::FileContext>,
     log_file_id: u64,
+    creation_timestamp: u64,
     reader: StreamReader,
     scratch_space: Box<[u8; log::LOG_BLOCK_SIZE]>,
 }
@@ -94,6 +95,7 @@ impl LogFileReader {
             ctx,
             file,
             header.log_file_id,
+            header.timestamp,
             file_metadata::HEADER_SIZE as u64,
         ))
     }
@@ -106,6 +108,7 @@ impl LogFileReader {
         ctx: Arc<ctx::FileContext>,
         file: file::ROFile,
         log_file_id: u64,
+        creation_timestamp: u64,
         log_offset: u64,
     ) -> Self {
         let reader = StreamReaderBuilder::new(ctx.clone(), file)
@@ -115,9 +118,16 @@ impl LogFileReader {
         Self {
             ctx,
             log_file_id,
+            creation_timestamp,
             reader,
             scratch_space: Box::new([0; log::LOG_BLOCK_SIZE]),
         }
+    }
+
+    #[inline]
+    /// Returns the creation timestamp of the WAL in milliseconds.
+    pub fn creation_timestamp(&self) -> u64 {
+        self.creation_timestamp
     }
 
     #[tracing::instrument("wal::read_block", skip(self))]

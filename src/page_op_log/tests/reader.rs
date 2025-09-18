@@ -22,7 +22,8 @@ async fn test_log_reader(
 
     make_sample_file(&ctx, &mut file, num_blocks, offset).await;
 
-    let mut reader = LogFileReader::new(ctx, file.into(), 1, offset);
+    let mut reader = LogFileReader::new(ctx, file.into(), 1, 5, offset);
+    assert_eq!(reader.creation_timestamp(), 5);
 
     let mut blocks = Vec::new();
     while let Some(block) = reader.next_block().await.expect("Failed to read block") {
@@ -114,6 +115,7 @@ async fn test_header_processing(#[values(false, true)] encryption: bool) {
 
     let header = MetadataHeader {
         log_file_id: 1,
+        timestamp: 50,
         encryption: ctx.get_encryption_status(),
     };
     setup_file_with_header(&ctx, &file, header).await;
@@ -121,6 +123,7 @@ async fn test_header_processing(#[values(false, true)] encryption: bool) {
     let reader = LogFileReader::open(ctx, file.into())
         .await
         .expect("log reader should process header");
+    assert_eq!(reader.creation_timestamp(), 50);
     assert_eq!(
         format!("{reader:?}"),
         "LogFileReader(file_id=FileId(1000), log_file_id=1)",
@@ -135,6 +138,7 @@ async fn test_header_encryption_missmatch() {
 
     let header = MetadataHeader {
         log_file_id: 1,
+        timestamp: 5,
         encryption: encoding_ctx.get_encryption_status(),
     };
     setup_file_with_header(&encoding_ctx, &file, header).await;
@@ -184,7 +188,8 @@ async fn test_skip_corrupted_or_previous_blocks(
 
     file.write_buffer(&mut buffer, 0).await.unwrap();
 
-    let mut reader = LogFileReader::new(ctx, file.into(), 1, 0);
+    let mut reader = LogFileReader::new(ctx, file.into(), 1, 5, 0);
+    assert_eq!(reader.creation_timestamp(), 5);
 
     let mut blocks_recovered = 0;
     loop {

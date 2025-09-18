@@ -1,5 +1,6 @@
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, mem};
 
 use crate::buffer::DmaBuffer;
@@ -75,8 +76,14 @@ impl LogFileWriter {
         ctx: Arc<ctx::FileContext>,
         file: file::RWFile,
     ) -> Result<Self, LogOpenWriteError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
         let header = MetadataHeader {
             log_file_id: super::generate_random_log_id(),
+            timestamp: now,
             encryption: ctx.get_encryption_status(),
         };
 
