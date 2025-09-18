@@ -6,7 +6,6 @@ use foldhash::HashMapExt;
 
 use super::metadata::{LookupEntry, MetadataController, PageTable};
 use crate::checkpoint::{
-    Checkpoint,
     ReadCheckpointError,
     WriteCheckpointError,
     read_checkpoint,
@@ -37,6 +36,7 @@ pub(super) async fn checkpoint_page_table(
 
     let mut non_empty_pages = PageChangeCheckpoint::with_capacity(NUM_PAGES_PER_BLOCK);
     page_table.collect_non_empty_pages(&mut non_empty_pages);
+    let num_allocated_pages = non_empty_pages.len();
 
     let directory = ctx.directory();
     let file_id = directory
@@ -53,7 +53,12 @@ pub(super) async fn checkpoint_page_table(
     // Once it is safely persisted, we update the memory checkpoint.
     page_table.checkpoint(op_stamp);
 
-    tracing::info!(checkpoint_op_stamp = op_stamp, "checkpointed page table");
+    tracing::info!(
+        file_id = ?file_id,
+        checkpoint_op_stamp = op_stamp,
+        num_allocated_pages = num_allocated_pages,
+        "checkpointed page table",
+    );
 
     Ok(file_id)
 }
