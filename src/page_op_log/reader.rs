@@ -45,7 +45,7 @@ pub enum LogOpenReadError {
 pub struct LogFileReader {
     ctx: Arc<ctx::FileContext>,
     log_file_id: u64,
-    creation_timestamp: u64,
+    order_key: u64,
     reader: StreamReader,
     scratch_space: Box<[u8; log::LOG_BLOCK_SIZE]>,
 }
@@ -54,9 +54,10 @@ impl std::fmt::Debug for LogFileReader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "LogFileReader(file_id={:?}, log_file_id={})",
+            "LogFileReader(file_id={:?}, log_file_id={}, order={})",
             self.reader.file_id(),
             self.log_file_id,
+            self.order_key,
         )
     }
 }
@@ -95,7 +96,7 @@ impl LogFileReader {
             ctx,
             file,
             header.log_file_id,
-            header.timestamp,
+            header.order_key,
             file_metadata::HEADER_SIZE as u64,
         ))
     }
@@ -108,7 +109,7 @@ impl LogFileReader {
         ctx: Arc<ctx::FileContext>,
         file: file::ROFile,
         log_file_id: u64,
-        creation_timestamp: u64,
+        order_key: u64,
         log_offset: u64,
     ) -> Self {
         let reader = StreamReaderBuilder::new(ctx.clone(), file)
@@ -118,7 +119,7 @@ impl LogFileReader {
         Self {
             ctx,
             log_file_id,
-            creation_timestamp,
+            order_key,
             reader,
             scratch_space: Box::new([0; log::LOG_BLOCK_SIZE]),
         }
@@ -131,9 +132,10 @@ impl LogFileReader {
     }
 
     #[inline]
-    /// Returns the creation timestamp of the WAL in milliseconds.
-    pub fn creation_timestamp(&self) -> u64 {
-        self.creation_timestamp
+    /// Returns the order key of the WAL which can be used to
+    /// ensure events are recovered and applied in the right order.
+    pub fn order_key(&self) -> u64 {
+        self.order_key
     }
 
     #[tracing::instrument("wal::read_block", skip(self))]

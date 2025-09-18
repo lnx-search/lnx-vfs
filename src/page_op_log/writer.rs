@@ -1,6 +1,6 @@
 use std::io::ErrorKind;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{io, mem};
 
 use crate::buffer::DmaBuffer;
@@ -15,6 +15,7 @@ use crate::{ctx, file};
 
 const BUFFER_SIZE: usize = 128 << 10;
 const SEQUENCE_ID_START: u32 = 1;
+static ORDER_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevent the writer from opening the log.
@@ -76,14 +77,11 @@ impl LogFileWriter {
         ctx: Arc<ctx::FileContext>,
         file: file::RWFile,
     ) -> Result<Self, LogOpenWriteError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let order_key = ORDER_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         let header = MetadataHeader {
             log_file_id: super::generate_random_log_id(),
-            timestamp: now,
+            order_key,
             encryption: ctx.get_encryption_status(),
         };
 

@@ -78,8 +78,7 @@ pub(super) async fn read_checkpoints(
     let directory = ctx.directory();
     let file_ids = directory.list_dir(FileGroup::Metadata).await;
 
-    let mut active_checkpoints: BTreeMap<PageFileId, (FileId, Checkpoint)> =
-        BTreeMap::new();
+    let mut active_checkpoints = BTreeMap::new();
     let mut files_to_cleanup = Vec::new();
     for file_id in file_ids {
         let file = directory.get_ro_file(FileGroup::Metadata, file_id).await?;
@@ -92,6 +91,10 @@ pub(super) async fn read_checkpoints(
             },
             Entry::Occupied(mut entry) => {
                 let &(existing_file_id, _) = entry.get();
+
+                // Checkpoint files can be replayed in the order of their file ID assignment as
+                // the next checkpoint will always have a file ID larger than the preceding one
+                // it is taking over from.
                 if file_id > existing_file_id {
                     entry.insert((file_id, checkpoint));
                     files_to_cleanup.push(existing_file_id);
@@ -171,7 +174,7 @@ pub(super) async fn recover_wal_updates(
     }
     // Sort the WAL files in order of their creation/initialisation
     // to ensure events are replayed correctly.
-    readers.sort_by_key(|reader| reader.creation_timestamp());
+    readers.sort_by_key(|reader| reader.order_key());
 
     let mut page_metadata_entries = foldhash::HashMap::new();
     let mut num_entries_recovered = 0;
@@ -188,6 +191,16 @@ pub(super) async fn recover_wal_updates(
         .await?;
 
         for (page_file_id, metadata_entries) in page_metadata_entries.iter() {
+            tracing::debug!(
+                page_file_id = ?page_file_id,
+                num_metadata_entries = metadata_entries.len(),
+                "recovered metadata entries for page file",
+            );
+
+            if !controller.contains_page_table(*page_file_id) {
+                controller.create_blank_page_table(*page_file_id);
+            }
+
             reconstruct_lookup_table_from_pages(
                 lookup_table,
                 *page_file_id,
@@ -218,7 +231,7 @@ async fn recover_wal_file(
 
     tracing::info!("reading WAL file");
 
-    let mut current_transaction_id = 0;
+    let mut current_transaction_id = u64::MAX;
     let mut required_transaction_size = 0;
     let mut transaction_state = Vec::with_capacity(100);
     loop {
