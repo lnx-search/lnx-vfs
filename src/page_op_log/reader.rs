@@ -2,7 +2,7 @@ use std::io;
 use std::sync::Arc;
 
 use super::MetadataHeader;
-use crate::directory::FileGroup;
+use crate::directory::{FileGroup, FileId};
 use crate::layout::file_metadata::Encryption;
 use crate::layout::{file_metadata, log};
 use crate::stream_reader::{StreamReader, StreamReaderBuilder};
@@ -122,6 +122,12 @@ impl LogFileReader {
             reader,
             scratch_space: Box::new([0; log::LOG_BLOCK_SIZE]),
         }
+    }
+
+    #[inline]
+    /// Returns the [FileId] of the underlying file used by the reader.
+    pub fn file_id(&self) -> FileId {
+        self.reader.file_id()
     }
 
     #[inline]

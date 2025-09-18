@@ -163,15 +163,24 @@ pub(super) async fn recover_wal_updates(
     let directory = ctx.directory();
     let file_ids = directory.list_dir(FileGroup::Wal).await;
 
+    let mut readers = Vec::with_capacity(file_ids.len());
+    for file_id in file_ids {
+        let file = directory.get_ro_file(FileGroup::Wal, file_id).await?;
+        let reader = page_op_log::LogFileReader::open(ctx.clone(), file).await?;
+        readers.push(reader);
+    }
+    // Sort the WAL files in order of their creation/initialisation
+    // to ensure events are replayed correctly.
+    readers.sort_by_key(|reader| reader.creation_timestamp());
+
     let mut page_metadata_entries = foldhash::HashMap::new();
     let mut num_entries_recovered = 0;
     let mut num_transactions_aborted = 0;
-    for file_id in file_ids {
+    for reader in readers {
         page_metadata_entries.clear();
 
         recover_wal_file(
-            ctx.clone(),
-            file_id,
+            reader,
             &mut page_metadata_entries,
             &mut num_entries_recovered,
             &mut num_transactions_aborted,
@@ -198,21 +207,16 @@ pub(super) async fn recover_wal_updates(
     Ok(())
 }
 
-#[tracing::instrument(skip(ctx))]
+#[tracing::instrument(skip_all, fields(file_id = ?reader.file_id()))]
 async fn recover_wal_file(
-    ctx: Arc<ctx::FileContext>,
-    file_id: FileId,
+    mut reader: page_op_log::LogFileReader,
     page_metadata_entries: &mut foldhash::HashMap<PageFileId, Vec<PageMetadata>>,
     num_entries_recovered: &mut usize,
     num_transactions_aborted: &mut usize,
 ) -> Result<(), RecoverWalError> {
     use std::collections::hash_map::Entry;
 
-    let directory = ctx.directory();
     tracing::info!("reading WAL file");
-
-    let file = directory.get_ro_file(FileGroup::Wal, file_id).await?;
-    let mut reader = page_op_log::LogFileReader::open(ctx.clone(), file).await?;
 
     let mut current_transaction_id = 0;
     let mut required_transaction_size = 0;
