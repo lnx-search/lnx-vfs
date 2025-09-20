@@ -1,3 +1,6 @@
+use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
+
 use crate::arena::ArenaAllocator;
 use crate::buffer;
 use crate::buffer::ALLOC_PAGE_SIZE;
@@ -11,6 +14,7 @@ pub struct FileContext {
     cipher: Option<encrypt::Cipher>,
     arena_allocator: ArenaAllocator,
     directory: SystemDirectory,
+    configs: parking_lot::RwLock<BTreeMap<TypeId, Box<dyn Any + Send + Sync>>>,
     #[cfg(test)]
     tmp_dir: std::sync::Arc<tempfile::TempDir>,
 }
@@ -47,6 +51,7 @@ impl FileContext {
             cipher,
             arena_allocator: ArenaAllocator::new(100),
             directory,
+            configs: parking_lot::RwLock::new(BTreeMap::new()),
             tmp_dir,
         })
     }
@@ -119,6 +124,32 @@ impl FileContext {
     /// Returns a reference to the [SystemDirectory].
     pub fn directory(&self) -> &SystemDirectory {
         &self.directory
+    }
+
+    /// Set a config value in the context.
+    pub fn set_config<C: Any + Send + Sync + Clone>(&self, config: C) {
+        let config_value = Box::new(config) as Box<dyn Any + Send + Sync>;
+        self.configs.write().insert(TypeId::of::<C>(), config_value);
+    }
+
+    #[track_caller]
+    /// Get a config value from the context.
+    ///
+    /// Panics if the config does not exist.
+    pub fn config<C: Any + Send + Sync + Clone>(&self) -> C {
+        self.config_opt().expect("config not initialized")
+    }
+
+    #[track_caller]
+    /// Get a config value from the context.
+    ///
+    /// Panics if the config does not exist.
+    pub fn config_opt<C: Any + Send + Sync + Clone>(&self) -> Option<C> {
+        self.configs
+            .read()
+            .get(&TypeId::of::<C>())
+            .and_then(|config| config.downcast_ref())
+            .cloned()
     }
 
     #[cfg(test)]

@@ -11,7 +11,8 @@ use crate::{ctx, page_op_log};
 #[tokio::test]
 async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usize) {
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), WalConfig::default())
+    ctx.set_config(WalConfig::default());
+    let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
@@ -56,7 +57,8 @@ async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usi
 #[tokio::test]
 async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_entries: usize) {
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), WalConfig::default())
+    ctx.set_config(WalConfig::default());
+    let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
@@ -92,7 +94,8 @@ async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_entries: usi
 #[tokio::test]
 async fn test_controller_rotate_writers() {
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), WalConfig::default())
+    ctx.set_config(WalConfig::default());
+    let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
@@ -142,7 +145,8 @@ async fn test_evict_free_writers() {
     };
 
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), config)
+    ctx.set_config(config);
+    let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
@@ -176,7 +180,8 @@ async fn test_wal_file_rotation_due_to_size() {
     };
 
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), config)
+    ctx.set_config(config);
+    let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
@@ -207,7 +212,8 @@ async fn test_wal_file_rotation_due_to_size() {
 #[tokio::test]
 async fn test_wal_file_rotate_due_to_error() {
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), WalConfig::default())
+    ctx.set_config(WalConfig::default());
+    let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
@@ -245,7 +251,8 @@ async fn test_wal_file_rotate_due_to_error() {
 #[tokio::test]
 async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), WalConfig::default())
+    ctx.set_config(WalConfig::default());
+    let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
@@ -291,7 +298,8 @@ async fn test_flaky_write_coalesce_updates() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let ctx = ctx::FileContext::for_test(false).await;
-    let controller = WalController::create(ctx.clone(), WalConfig::default())
+    ctx.set_config(WalConfig::default());
+    let controller = WalController::create(ctx.clone())
         .await
         .map(Arc::new)
         .expect("Failed to create WalController");

@@ -29,9 +29,6 @@ pub enum OpenMetadataControllerError {
     /// The controller could not recover page data from existing checkpoints.
     ReadCheckpoint(#[from] ReadCheckpointError),
     #[error(transparent)]
-    /// The controller could not create a new checkpoint after recovering the WAL.
-    WriteCheckpoint(#[from] WriteCheckpointError),
-    #[error(transparent)]
     /// The controller could not recovery metadata updates from replaying
     /// the log.
     WalRecovery(#[from] super::checkpoint::RecoverWalError),
