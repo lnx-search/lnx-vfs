@@ -261,7 +261,45 @@ pub struct LookupEntry {
     pub revision: u32,
 }
 
-type GuardedPages = RwLock<Box<[PageMetadata; NUM_PAGES_PER_BLOCK]>>;
+struct PageBlock {
+    metadata: Box<[PageMetadata; NUM_PAGES_PER_BLOCK]>,
+    num_allocated_pages: usize,
+}
+
+impl Default for PageBlock {
+    fn default() -> Self {
+        let mut uninit_pages = Box::new_uninit_slice(NUM_PAGES_PER_BLOCK);
+        for page_id in 0..NUM_PAGES_PER_BLOCK {
+            uninit_pages[page_id].write(PageMetadata::null());
+        }
+
+        // SAFETY: We have initialised each element in the array and the size of the array
+        //         is aligned with the size of the array we're casting to.
+        let pages = unsafe {
+            let raw = Box::into_raw(uninit_pages);
+            Box::from_raw(raw as *mut [PageMetadata; NUM_PAGES_PER_BLOCK])
+        };
+
+        Self {
+            metadata: pages,
+            num_allocated_pages: 0,
+        }
+    }
+}
+
+impl PageBlock {
+    fn write_page(&mut self, index: usize, metadata: PageMetadata) {
+        let new_page_unassigned = metadata.is_unassigned();
+        let old_page_unassigned = self.metadata[index].is_unassigned();
+        self.metadata[index] = metadata;
+
+        if old_page_unassigned && !new_page_unassigned {
+            self.num_allocated_pages += 1;
+        } else if !old_page_unassigned && new_page_unassigned {
+            self.num_allocated_pages -= 1;
+        }
+    }
+}
 
 /// A [PageTable] holds the individual [PageMetadata] entries for each page file,
 /// tying the data stored in the data file with its metadata.
@@ -269,37 +307,25 @@ pub struct PageTable {
     /// A set of shards containing the page metadata.
     ///
     /// This is done in order to reduce lock contention under load.
-    page_shards: [GuardedPages; NUM_BLOCKS_PER_FILE],
+    page_shards: [RwLock<PageBlock>; NUM_BLOCKS_PER_FILE],
     change_op_stamp: AtomicU64,
     last_checkpoint: AtomicU64,
 }
 
 impl Default for PageTable {
     fn default() -> Self {
-        let mut uninit_shards: [MaybeUninit<GuardedPages>; NUM_BLOCKS_PER_FILE] =
+        let mut uninit_shards: [MaybeUninit<RwLock<PageBlock>>; NUM_BLOCKS_PER_FILE] =
             [const { MaybeUninit::uninit() }; NUM_BLOCKS_PER_FILE];
 
         #[allow(clippy::needless_range_loop)]
         for idx in 0..NUM_BLOCKS_PER_FILE {
-            let mut uninit_pages = Box::new_uninit_slice(NUM_PAGES_PER_BLOCK);
-            for page_id in 0..NUM_PAGES_PER_BLOCK {
-                uninit_pages[page_id].write(PageMetadata::null());
-            }
-
-            // SAFETY: We have initialised each element in the array and the size of the array
-            //         is aligned with the size of the array we're casting to.
-            let pages = unsafe {
-                let raw = Box::into_raw(uninit_pages);
-                Box::from_raw(raw as *mut [PageMetadata; NUM_PAGES_PER_BLOCK])
-            };
-
-            uninit_shards[idx].write(RwLock::new(pages));
+            uninit_shards[idx].write(RwLock::new(PageBlock::default()));
         }
 
         let init_shards = unsafe {
             mem::transmute::<
-                [MaybeUninit<GuardedPages>; NUM_BLOCKS_PER_FILE],
-                [GuardedPages; NUM_BLOCKS_PER_FILE],
+                [MaybeUninit<RwLock<PageBlock>>; NUM_BLOCKS_PER_FILE],
+                [RwLock<PageBlock>; NUM_BLOCKS_PER_FILE],
             >(uninit_shards)
         };
 
@@ -320,6 +346,16 @@ impl PageTable {
         table
     }
 
+    /// Returns the number of assigned pages in the page table.
+    pub(super) fn num_assigned_pages(&self) -> usize {
+        let mut total = 0;
+        for shard in &self.page_shards {
+            let block = shard.read();
+            total += block.num_allocated_pages;
+        }
+        total
+    }
+
     pub(super) fn write_pages(&self, to_update: &[PageMetadata]) {
         let first_page = match to_update.first() {
             None => return,
@@ -331,7 +367,7 @@ impl PageTable {
         let mut page_idx = (first_page.id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
 
         let mut block_shard = self.page_shards[block_idx].write();
-        block_shard[page_idx] = *first_page;
+        block_shard.write_page(page_idx, *first_page);
 
         for metadata in to_update.iter().skip(1) {
             assert!(!first_page.is_null(), "provided page cannot be null");
@@ -344,7 +380,7 @@ impl PageTable {
                 block_shard = self.page_shards[block_idx].write();
             }
 
-            block_shard[page_idx] = *metadata;
+            block_shard.write_page(page_idx, *metadata);
         }
 
         self.change_op_stamp.fetch_add(1, Ordering::SeqCst);
@@ -379,7 +415,7 @@ impl PageTable {
         let mut num_pages_skipped = 0;
         let mut block_shard = self.page_shards[block_idx].read();
         while num_pages_taken < n_pages_take {
-            let page_metadata = &block_shard[page_idx];
+            let page_metadata = &block_shard.metadata[page_idx];
             if num_pages_skipped < n_pages_skip {
                 num_pages_skipped += 1;
             } else {
@@ -407,10 +443,10 @@ impl PageTable {
         drop(block_shard);
     }
 
-    /// Fills the vector with any pages that are not empty within the page table.
-    pub(super) fn collect_non_empty_pages(&self, pages: &mut Vec<PageMetadata>) {
+    /// Fills the vector with any pages that are not unassigned within the page table.
+    pub(super) fn collect_assigned_pages(&self, pages: &mut Vec<PageMetadata>) {
         for shard in self.page_shards.iter() {
-            for metadata in shard.read().iter() {
+            for metadata in shard.read().metadata.iter() {
                 if !metadata.is_unassigned() {
                     pages.push(*metadata);
                 }
@@ -463,9 +499,12 @@ mod tests {
         assert!(!table.has_changed());
 
         let pages = table.page_shards[0].read();
-        assert_eq!(pages[4].id, PageId(4));
+        assert_eq!(pages.metadata[4].id, PageId(4));
         let pages = table.page_shards[1].read();
-        assert_eq!(pages[4].id, PageId((NUM_PAGES_PER_BLOCK + 4) as u32));
+        assert_eq!(
+            pages.metadata[4].id,
+            PageId((NUM_PAGES_PER_BLOCK + 4) as u32)
+        );
     }
 
     #[test]
@@ -474,7 +513,7 @@ mod tests {
 
         {
             let pages = table.page_shards[0].read();
-            assert!(pages[4].is_unassigned());
+            assert!(pages.metadata[4].is_unassigned());
         }
 
         let metadata = PageMetadata {
@@ -489,7 +528,7 @@ mod tests {
         table.write_pages(&[metadata]);
 
         let pages = table.page_shards[0].read();
-        assert_eq!(pages[4].id, PageId(4));
+        assert_eq!(pages.metadata[4].id, PageId(4));
     }
 
     #[test]
@@ -498,8 +537,8 @@ mod tests {
 
         {
             let pages = table.page_shards[0].read();
-            assert!(pages[5].is_unassigned());
-            assert!(pages[6].is_unassigned());
+            assert!(pages.metadata[5].is_unassigned());
+            assert!(pages.metadata[6].is_unassigned());
         }
 
         // Test looping of metadata updates within same lock.
@@ -522,8 +561,8 @@ mod tests {
         table.write_pages(&[metadata1, metadata2]);
 
         let pages = table.page_shards[0].read();
-        assert_eq!(pages[5].id, PageId(5));
-        assert_eq!(pages[6].id, PageId(6));
+        assert_eq!(pages.metadata[5].id, PageId(5));
+        assert_eq!(pages.metadata[6].id, PageId(6));
     }
 
     #[test]
@@ -531,12 +570,12 @@ mod tests {
         let table = PageTable::default();
         {
             let pages = table.page_shards[0].read();
-            assert!(pages[5].is_unassigned());
+            assert!(pages.metadata[5].is_unassigned());
         }
 
         {
             let pages = table.page_shards[1].read();
-            assert!(pages[4].is_unassigned());
+            assert!(pages.metadata[4].is_unassigned());
         }
 
         // Test looping of metadata updates within same lock.
@@ -559,10 +598,13 @@ mod tests {
         table.write_pages(&[metadata1, metadata2]);
 
         let pages = table.page_shards[0].read();
-        assert_eq!(pages[5].id, PageId(5));
+        assert_eq!(pages.metadata[5].id, PageId(5));
 
         let pages = table.page_shards[1].read();
-        assert_eq!(pages[4].id, PageId((NUM_PAGES_PER_BLOCK + 4) as u32));
+        assert_eq!(
+            pages.metadata[4].id,
+            PageId((NUM_PAGES_PER_BLOCK + 4) as u32)
+        );
     }
 
     #[test]
@@ -579,7 +621,7 @@ mod tests {
         table.write_pages(&[metadata]);
 
         let mut pages = Vec::new();
-        table.collect_non_empty_pages(&mut pages);
+        table.collect_assigned_pages(&mut pages);
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].id.0, 4);
     }
@@ -624,14 +666,14 @@ mod tests {
         table.write_pages(&[metadata]);
 
         let mut pages = Vec::new();
-        table.collect_non_empty_pages(&mut pages);
+        table.collect_assigned_pages(&mut pages);
         assert_eq!(pages.len(), 1);
 
-        let metadata = PageMetadata::empty(PageId(4));
+        let metadata = PageMetadata::unassigned(PageId(4));
         table.write_pages(&[metadata]);
 
         let mut pages = Vec::new();
-        table.collect_non_empty_pages(&mut pages);
+        table.collect_assigned_pages(&mut pages);
         assert_eq!(pages.len(), 0);
     }
 
@@ -640,5 +682,43 @@ mod tests {
     fn page_table_panics_on_null_page() {
         let table = PageTable::default();
         table.write_pages(&[PageMetadata::null()]);
+    }
+
+    #[rstest::rstest]
+    #[case::write_empty_on_empty(
+        PageMetadata::unassigned(PageId(4)),
+        PageMetadata::unassigned(PageId(4)),
+        0,
+        0
+    )]
+    #[case::write_empty_on_full(
+        PageMetadata { group: PageGroupId(0), revision: 0, next_page_id: PageId::TERMINATOR, id: PageId(4), data_len: 0, context: [0; 40]},
+        PageMetadata::unassigned(PageId(4)),
+        1,
+        0,
+    )]
+    #[case::write_full_on_full(
+        PageMetadata { group: PageGroupId(0), revision: 0, next_page_id: PageId::TERMINATOR, id: PageId(4), data_len: 0, context: [0; 40]},
+        PageMetadata { group: PageGroupId(0), revision: 2, next_page_id: PageId::TERMINATOR, id: PageId(4), data_len: 0, context: [0; 40]},
+        1,
+        1,
+    )]
+    #[case::write_full_on_empty(
+        PageMetadata::unassigned(PageId(4)),
+        PageMetadata { group: PageGroupId(0), revision: 2, next_page_id: PageId::TERMINATOR, id: PageId(4), data_len: 0, context: [0; 40]},
+        0,
+        1,
+    )]
+    fn test_metadata_allocation_count(
+        #[case] base_page: PageMetadata,
+        #[case] write_page: PageMetadata,
+        #[case] initial_count: usize,
+        #[case] expected_count: usize,
+    ) {
+        let table = PageTable::from_existing_state(&[base_page]);
+        assert_eq!(table.num_assigned_pages(), initial_count);
+
+        table.write_pages(&[write_page]);
+        assert_eq!(table.num_assigned_pages(), expected_count);
     }
 }
