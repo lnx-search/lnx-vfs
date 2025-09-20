@@ -160,7 +160,7 @@ async fn test_controller_set_empty() {
     controller.collect_pages(PageFileId(1), PageId(4), 0..50, &mut pages);
     assert_eq!(pages.len(), 1);
 
-    controller.write_pages(PageFileId(1), &[PageMetadata::empty(PageId(4))]);
+    controller.write_pages(PageFileId(1), &[PageMetadata::unassigned(PageId(4))]);
 
     let mut pages = Vec::new();
     controller.collect_pages(PageFileId(1), PageId(4), 0..50, &mut pages);

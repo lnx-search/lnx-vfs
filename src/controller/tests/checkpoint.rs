@@ -129,7 +129,7 @@ async fn test_page_table_load_from_checkpoints() {
     assert!(!page_table.has_changed());
 
     let mut collected_pages = Vec::new();
-    page_table.collect_non_empty_pages(&mut collected_pages);
+    page_table.collect_assigned_pages(&mut collected_pages);
     assert_eq!(collected_pages, pages);
 }
 

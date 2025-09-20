@@ -34,9 +34,9 @@ pub(super) async fn checkpoint_page_table(
 
     let op_stamp = page_table.get_current_op_stamp();
 
-    let mut non_empty_pages = PageChangeCheckpoint::with_capacity(NUM_PAGES_PER_BLOCK);
-    page_table.collect_non_empty_pages(&mut non_empty_pages);
-    let num_allocated_pages = non_empty_pages.len();
+    let mut assigned_pages = PageChangeCheckpoint::with_capacity(NUM_PAGES_PER_BLOCK);
+    page_table.collect_assigned_pages(&mut assigned_pages);
+    let num_allocated_pages = assigned_pages.len();
 
     let directory = ctx.directory();
     let file_id = directory
@@ -44,7 +44,7 @@ pub(super) async fn checkpoint_page_table(
         .await?;
     let file = directory.get_rw_file(FileGroup::Metadata, file_id).await?;
 
-    write_checkpoint(&ctx, &file, page_file_id, non_empty_pages).await?;
+    write_checkpoint(&ctx, &file, page_file_id, assigned_pages).await?;
 
     directory
         .persist_atomic_file(FileGroup::Metadata, file_id)
@@ -263,7 +263,9 @@ async fn recover_wal_file(
             }
 
             match log.op {
-                LogOp::Free => transaction_state.push(PageMetadata::empty(log.page_id)),
+                LogOp::Free => {
+                    transaction_state.push(PageMetadata::unassigned(log.page_id))
+                },
                 LogOp::UpdateTableMetadata | LogOp::Write => {
                     let metadata = **metadata.as_ref().expect(
                         "metadata entry must always be present with write or update op",

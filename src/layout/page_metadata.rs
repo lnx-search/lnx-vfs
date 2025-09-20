@@ -57,11 +57,11 @@ impl PageMetadata {
     }
 
     /// Creates a new [PageMetadata] entry representing an empty page with an assigned
-    /// [PageId].
+    /// [PageId] but an _unassigned_ page group.
     ///
     /// This differs from [PageMetadata::null] as the page ID is assigned and is effectively
     /// a "valid" page to be used within the system metadata tables.
-    pub(crate) const fn empty(page_id: PageId) -> Self {
+    pub(crate) const fn unassigned(page_id: PageId) -> Self {
         Self {
             id: page_id,
             group: PageGroupId(u64::MAX),
