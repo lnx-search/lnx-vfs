@@ -25,8 +25,8 @@ const DEFAULT_AMPLIFICATION_FACTOR: f32 = 1.2;
 ///   more data overall which may end up causing a slow-down.
 ///   For example, an amplification factor of `1.2` would allow a reading upto 20% more data
 ///   in order to merge the IOPS.
-pub fn coalesce_read(
-    ranges: &[Range<u32>],
+pub fn coalesce_read<'r>(
+    ranges: impl IntoIterator<Item = &'r Range<u32>>,
     max_iop_page_spans: u32,
     amplification_factor: Option<f32>,
 ) -> SmallVec<[Range<u32>; 8]> {
@@ -39,12 +39,8 @@ pub fn coalesce_read(
 
     let mut iops = SmallVec::<[Range<u32>; 8]>::new();
 
-    if ranges.is_empty() {
-        return iops;
-    }
-
     // Perform a simple concat on ranges which are continuous to one another
-    let mut ranges = ranges.iter().peekable();
+    let mut ranges = ranges.into_iter().peekable();
     while let Some(range) = ranges.next() {
         let mut span = range.clone();
 
@@ -96,8 +92,8 @@ pub fn coalesce_read(
 /// The behaviour can be altered by adjusting the config parameters:
 ///
 /// - `max_iop_page_spans` the maximum number of pages the final IOP is allowed to span.
-pub fn coalesce_write(
-    ranges: &[Range<u32>],
+pub fn coalesce_write<'r>(
+    ranges: impl IntoIterator<Item = &'r Range<u32>>,
     max_iop_page_spans: u32,
 ) -> SmallVec<[Range<u32>; 8]> {
     coalesce_read(ranges, max_iop_page_spans, Some(1.0))
