@@ -4,6 +4,7 @@ mod arena;
 mod buffer;
 mod cache;
 mod checkpoint;
+pub mod coalesce;
 mod controller;
 mod core;
 mod ctx;

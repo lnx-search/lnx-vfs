@@ -3,7 +3,6 @@ use crate::directory::FileId;
 use crate::layout::PageFileId;
 use crate::layout::file_metadata::Encryption;
 
-mod coalesce;
 mod page_file;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
