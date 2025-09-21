@@ -30,6 +30,22 @@ impl PageFileAllocator {
         lock.insert(id, Mutex::new(allocator));
     }
 
+    #[cfg(test)]
+    pub(super) fn num_page_files(&self) -> usize {
+        self.page_files.read().len()
+    }
+
+    /// Returns the amount of capacity the allocator has in pages across
+    /// all page files.
+    pub(super) fn capacity(&self) -> usize {
+        let mut total = 0;
+        let files = self.page_files.read();
+        for allocator in files.values() {
+            total += allocator.lock().spare_capacity() as usize;
+        }
+        total
+    }
+
     /// Remove an existing page file from the writer controller if it exists.
     pub(super) fn remove_page_file(&self, id: PageFileId) {
         let mut lock = self.page_files.write();

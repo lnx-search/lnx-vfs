@@ -82,3 +82,19 @@ our log of metadata operations that need to be recovered and re-applied on resta
 - ["Can Applications Recover from fsync Failures?" - CuttleFS Paper](https://dl.acm.org/doi/fullHtml/10.1145/3450338)
 - [The XFS source code](https://elixir.bootlin.com/linux/v6.14.11/source/fs/xfs)
 - [The EXT4 source code](https://elixir.bootlin.com/linux/v6.14.11/source/fs/ext4)
+
+## Controllers
+
+The system was built effectively from the bottom up, however, there is a bit of a messy connection point for
+all the various individual components as they begin to be connected (particularly around metadata handling.)
+
+The implementation is not terribly pretty, but in short:
+
+- The WAL controller manages new WAL files and rotations
+- The metadata controller manages recovery from checkpoints & WAL files _and_ lookup table handling and page
+  metadata information. 
+  * It is used to create the initial disk allocators, but not to update them.
+  * The updating of group ID lookups and page metadata information, although they're under the same controller
+    are not performed as part of the same operation.
+- The storage controller wraps all the others and adds the "transactional" part of the storage system ensuring
+  that the in-memory state is correct when aborting etc...

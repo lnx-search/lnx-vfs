@@ -18,7 +18,7 @@ use crate::page_data::{
     NUM_BLOCKS_PER_FILE,
     NUM_PAGES_PER_BLOCK,
 };
-use crate::{ctx, disk_allocator};
+use crate::{ctx, disk_allocator, page_file_allocator};
 
 type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, foldhash::fast::RandomState>;
 
@@ -119,6 +119,22 @@ impl MetadataController {
     pub fn contains_page_table(&self, page_file_id: PageFileId) -> bool {
         let tables = self.page_tables.pin();
         tables.contains_key(&page_file_id)
+    }
+
+    /// Crates a [page_file_allocator::PageFileAllocator] for each existing page file
+    /// and sets the allocator to represent its current state.
+    ///
+    /// This does _not_ update the allocators after they have been created.
+    pub fn create_page_file_allocator(&self) -> page_file_allocator::PageFileAllocator {
+        let allocator = page_file_allocator::PageFileAllocator::default();
+
+        let tables = self.page_tables.pin();
+        for (page_file_id, page_table) in tables.iter() {
+            let page_allocator = page_table.create_allocator();
+            allocator.insert_page_file(*page_file_id, page_allocator);
+        }
+
+        allocator
     }
 
     #[inline]

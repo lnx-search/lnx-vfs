@@ -907,3 +907,42 @@ async fn test_controller_recovery_checkpoint_fuzz(
 
     assert_eq!(controller.num_page_groups(), num_expected_page_groups);
 }
+
+#[tokio::test]
+async fn test_controller_create_page_file_allocator() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
+    controller.create_blank_page_table(PageFileId(0));
+
+    let entries = &[
+        PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(1),
+            data_len: 0,
+            context: [0; 40],
+        },
+        PageMetadata {
+            group: PageGroupId(2),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(25_000),
+            data_len: 0,
+            context: [0; 40],
+        },
+        PageMetadata {
+            group: PageGroupId(3),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(169_000),
+            data_len: 0,
+            context: [0; 40],
+        },
+    ];
+    controller.write_pages(PageFileId(0), entries);
+
+    let page_file_allocator = controller.create_page_file_allocator();
+    assert_eq!(page_file_allocator.num_page_files(), 1);
+    assert_eq!(page_file_allocator.capacity(), 442_368)
+}
