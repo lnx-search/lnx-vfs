@@ -9,12 +9,12 @@ use crate::layout::PageFileId;
 #[derive(Default)]
 /// The write controller manages what pages should be written within the file
 /// and internally manages the page allocator.
-pub(super) struct WriteController {
+pub(super) struct PageFileAllocator {
     /// The set of page files currently available for writing.
     page_files: RwLock<BTreeMap<PageFileId, Mutex<disk_allocator::PageAllocator>>>,
 }
 
-impl WriteController {
+impl PageFileAllocator {
     /// Insert a new page file into the writer controller.
     pub(super) fn insert_page_file(
         &self,
@@ -84,7 +84,7 @@ impl WriteController {
 /// the reservation preventing free page space being used by failed
 /// write operations.
 pub(super) struct WriteAllocTx<'controller> {
-    controller: &'controller WriteController,
+    controller: &'controller PageFileAllocator,
     page_file_id: PageFileId,
     spans: SmallVec<[AllocSpan; 8]>,
     is_commited: bool,

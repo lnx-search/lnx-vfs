@@ -1,11 +1,13 @@
 use std::io;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, atomic};
 
-use super::metadata::{MetadataController, OpenMetadataControllerError};
+use super::metadata::{LookupEntry, MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
 use crate::checkpoint::WriteCheckpointError;
 use crate::ctx;
 use crate::directory::FileGroup;
+use crate::layout::PageGroupId;
 
 #[derive(Debug, thiserror::Error)]
 /// An error preventing the [StorageController] from
@@ -28,6 +30,7 @@ pub enum OpenStorageControllerError {
 pub struct StorageController {
     metadata_controller: MetadataController,
     wal_controller: WalController,
+    transaction_id_counter: AtomicU64,
 }
 
 impl StorageController {
@@ -54,7 +57,60 @@ impl StorageController {
         Ok(Self {
             metadata_controller,
             wal_controller,
+            transaction_id_counter: AtomicU64::new(0),
         })
+    }
+
+    /// Create a new storage write transaction.
+    pub fn create_write_tx(&self) -> StorageWriteTx<'_> {
+        let transaction_id = self.transaction_id_counter.fetch_add(1, Ordering::Relaxed);
+        StorageWriteTx {
+            transaction_id,
+            transaction_n_entries: 0,
+            controller: self,
+        }
+    }
+
+    /// Create a new reader for a given [PageGroupId].
+    pub fn create_reader(&self, group: PageGroupId) -> Option<StorageReader<'_>> {
+        let lookup = self.metadata_controller.find_first_page(group)?;
+        Some(StorageReader {
+            group,
+            lookup,
+            controller: self,
+        })
+    }
+}
+
+/// A [StorageWriteTx] allows for performing multiple writes across multiple
+/// page group IDs as part of a single transaction.
+pub struct StorageWriteTx<'a> {
+    transaction_id: u64,
+    transaction_n_entries: u32,
+    controller: &'a StorageController,
+}
+
+impl std::fmt::Debug for StorageWriteTx<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "StorageWriteTx(tx_id={}, num_ops={})",
+            self.transaction_id, self.transaction_n_entries,
+        )
+    }
+}
+
+/// A [StorageReader] allows you to read data pages for a given
+/// page group.
+pub struct StorageReader<'a> {
+    group: PageGroupId,
+    lookup: LookupEntry,
+    controller: &'a StorageController,
+}
+
+impl std::fmt::Debug for StorageReader<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StorageReader(group={:?})", self.group)
     }
 }
 

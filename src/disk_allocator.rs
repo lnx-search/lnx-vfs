@@ -58,6 +58,7 @@ impl PageAllocator {
         }
     }
 
+    #[inline(always)]
     /// Free pages starting at `page_start` and continuing on for `len` pages.
     ///
     /// The page ranges must lay within the bounds of an allocation block.

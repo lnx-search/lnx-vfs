@@ -8,8 +8,8 @@ use std::{io, mem};
 use parking_lot::{Mutex, RwLock};
 
 use crate::checkpoint::{ReadCheckpointError, WriteCheckpointError};
-use crate::ctx;
 use crate::directory::{FileGroup, FileId};
+use crate::disk_allocator::InitState;
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::{
@@ -18,6 +18,7 @@ use crate::page_data::{
     NUM_BLOCKS_PER_FILE,
     NUM_PAGES_PER_BLOCK,
 };
+use crate::{ctx, disk_allocator};
 
 type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, foldhash::fast::RandomState>;
 
@@ -362,6 +363,35 @@ impl PageTable {
             total += block.num_allocated_pages;
         }
         total
+    }
+
+    /// Creates a new [disk_allocator::PageAllocator] configured to the current
+    /// state of the page table.
+    pub(super) fn create_allocator(&self) -> disk_allocator::PageAllocator {
+        if self.num_assigned_pages() == 0 {
+            return disk_allocator::PageAllocator::new(InitState::Free);
+        }
+
+        let mut allocator = disk_allocator::PageAllocator::new(InitState::Allocated);
+        for (block_id, block) in self.page_shards.iter().enumerate() {
+            let block = block.read();
+            let page_start = (block_id * NUM_PAGES_PER_BLOCK) as u32;
+
+            if block.num_allocated_pages == 0 {
+                allocator.free(page_start, NUM_PAGES_PER_BLOCK as u16);
+                continue;
+            }
+
+            // Tried to do some optimised complex thing, but it was harder to read and the
+            // compiler just absolutely kicked my arse.
+            for (offset, page) in block.metadata.iter().enumerate() {
+                if page.is_unassigned() {
+                    allocator.free(page_start + offset as u32, 1);
+                }
+            }
+        }
+
+        allocator
     }
 
     pub(super) fn unassign_pages_in_chain(&self, first_page_id: PageId) {
@@ -816,5 +846,156 @@ mod tests {
     }
 
     #[test]
-    fn test_unassign_pages_in_chain_undefined_behaviour_with_missing_terminator() {}
+    fn test_unassign_pages_in_chain_undefined_behaviour_with_missing_terminator() {
+        let pid1 = PageId(4);
+        let pid2 = PageId((NUM_PAGES_PER_BLOCK + 4) as u32);
+        let pid3 = PageId((NUM_PAGES_PER_BLOCK * 2 + 50) as u32);
+
+        let table = PageTable::from_existing_state(&[
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: pid2,
+                id: pid1,
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: pid3,
+                id: pid2,
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(2),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: pid3,
+                data_len: 0,
+                context: [0; 40],
+            },
+        ]);
+
+        // The difference here is the final page for group `1` is pointing to a page
+        // in group `2` which means the system will unassign a page it shouldn't
+        // This is a sanity check to ensure this behaviour doesn't change without
+        // us knowing about it.
+        {
+            let pages = table.page_shards[0].read();
+            assert!(!pages.metadata[4].is_unassigned());
+            let pages = table.page_shards[1].read();
+            assert!(!pages.metadata[4].is_unassigned());
+            let pages = table.page_shards[2].read();
+            assert!(!pages.metadata[50].is_unassigned());
+        }
+
+        table.unassign_pages_in_chain(pid1);
+
+        let pages = table.page_shards[0].read();
+        assert!(pages.metadata[4].is_unassigned());
+        let pages = table.page_shards[1].read();
+        assert!(pages.metadata[4].is_unassigned());
+        let pages = table.page_shards[2].read();
+        assert!(pages.metadata[50].is_unassigned());
+    }
+
+    #[test]
+    fn test_page_table_create_allocator() {
+        let table = PageTable::from_existing_state(&[
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: PageId(1),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(2),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: PageId(2),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(3),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: PageId(3),
+                data_len: 0,
+                context: [0; 40],
+            },
+        ]);
+
+        let mut allocator = table.create_allocator();
+        assert_eq!(
+            allocator.spare_capacity() as usize,
+            NUM_PAGES_PER_BLOCK * 29
+        ); // 29 blocks free, one marked full/sealed.
+
+        allocator.free(1, 3);
+        assert_eq!(
+            allocator.spare_capacity() as usize,
+            NUM_PAGES_PER_BLOCK * 30
+        ); // 30 blocks free
+    }
+
+    #[test]
+    fn test_page_table_create_allocator_sparse() {
+        let pid1 = PageId(4);
+        let pid2 = PageId((NUM_PAGES_PER_BLOCK + 4) as u32);
+        let pid3 = PageId((NUM_PAGES_PER_BLOCK * 13 + 50) as u32);
+
+        let table = PageTable::from_existing_state(&[
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: pid1,
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(2),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: pid2,
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(3),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: pid3,
+                data_len: 0,
+                context: [0; 40],
+            },
+        ]);
+
+        let mut allocator = table.create_allocator();
+        assert_eq!(
+            allocator.spare_capacity() as usize,
+            NUM_PAGES_PER_BLOCK * 27
+        );
+
+        allocator.free(pid1.0, 1);
+        assert_eq!(
+            allocator.spare_capacity() as usize,
+            NUM_PAGES_PER_BLOCK * 28
+        );
+        allocator.free(pid2.0, 1);
+        assert_eq!(
+            allocator.spare_capacity() as usize,
+            NUM_PAGES_PER_BLOCK * 29
+        );
+        allocator.free(pid3.0, 1);
+        assert_eq!(
+            allocator.spare_capacity() as usize,
+            NUM_PAGES_PER_BLOCK * 30
+        );
+    }
 }

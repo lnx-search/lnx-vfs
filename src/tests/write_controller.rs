@@ -1,11 +1,11 @@
 use crate::disk_allocator::{AllocSpan, InitState, PageAllocator};
 use crate::layout::PageFileId;
-use crate::page_allocator::WriteController;
 use crate::page_data::NUM_PAGES_PER_BLOCK;
+use crate::page_file_allocator::PageFileAllocator;
 
 #[test]
 fn test_empty_write_controller() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
     let tx = controller.get_alloc_tx(5);
     assert!(tx.is_none());
 }
@@ -13,13 +13,13 @@ fn test_empty_write_controller() {
 #[should_panic(expected = "BUG: page file does not exist while trying to free pages")]
 #[test]
 fn test_panic_on_free_non_existent_file() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
     controller.free(PageFileId(1), 44, 10);
 }
 
 #[test]
 fn test_page_alloc_commited() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
     let allocator = PageAllocator::new(InitState::Free);
     controller.insert_page_file(PageFileId(1), allocator);
 
@@ -66,7 +66,7 @@ fn test_page_alloc_commited() {
 
 #[test]
 fn test_page_alloc_reverted() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
     let allocator = PageAllocator::new(InitState::Free);
     controller.insert_page_file(PageFileId(1), allocator);
 
@@ -112,7 +112,7 @@ fn test_page_alloc_reverted() {
 
 #[test]
 fn test_page_alloc_page_file_full() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
     let allocator = PageAllocator::new(InitState::Allocated);
     controller.insert_page_file(PageFileId(1), allocator);
     let tx = controller.get_alloc_tx(1);
@@ -121,7 +121,7 @@ fn test_page_alloc_page_file_full() {
 
 #[test]
 fn test_remove_page_file() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
 
     let allocator = PageAllocator::new(InitState::Free);
     controller.insert_page_file(PageFileId(1), allocator);
@@ -141,7 +141,7 @@ fn test_remove_page_file() {
 
 #[test]
 fn test_free() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
     let allocator = PageAllocator::new(InitState::Allocated);
     controller.insert_page_file(PageFileId(1), allocator);
 
@@ -154,7 +154,7 @@ fn test_free() {
 #[should_panic(expected = "BUG: page file already exists in writer controller")]
 #[test]
 fn test_double_page_file_insert_panic() {
-    let controller = WriteController::default();
+    let controller = PageFileAllocator::default();
     let allocator = PageAllocator::new(InitState::Allocated);
     controller.insert_page_file(PageFileId(1), allocator);
     let allocator = PageAllocator::new(InitState::Allocated);
