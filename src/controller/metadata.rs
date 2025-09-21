@@ -120,18 +120,18 @@ impl MetadataController {
         tables.contains_key(&page_file_id)
     }
 
+    #[inline]
+    /// Returns the number of page groups in the system.
+    pub fn num_page_groups(&self) -> usize {
+        self.lookup_table.len()
+    }
+
     /// Find the first page of a page group and return the page table
     /// it is stored at and the page ID of the first page.
     ///
     /// Returns `None` if the group does not exist.
     pub fn find_first_page(&self, group: PageGroupId) -> Option<LookupEntry> {
         self.lookup_table.pin().get(&group).copied()
-    }
-
-    #[inline]
-    /// Returns the number of page groups in the system.
-    pub fn num_page_groups(&self) -> usize {
-        self.lookup_table.len()
     }
 
     /// Insert the given page group into the controller and associate it with
@@ -146,7 +146,15 @@ impl MetadataController {
         }
 
         let lookup = self.lookup_table.pin();
-        lookup.insert(group, entry);
+        if let Some(old_lookup) = lookup.insert(group, entry) {
+            let tables = self.page_tables.pin();
+            match tables.get(&old_lookup.page_file_id) {
+                None => {},
+                Some(page_table) => {
+                    page_table.unassign_pages_in_chain(old_lookup.first_page_id)
+                },
+            };
+        }
     }
 
     /// Collects the pages of a given page group within a given page file.
@@ -354,6 +362,39 @@ impl PageTable {
             total += block.num_allocated_pages;
         }
         total
+    }
+
+    pub(super) fn unassign_pages_in_chain(&self, first_page_id: PageId) {
+        if first_page_id.is_terminator() {
+            return;
+        }
+
+        let mut current_page_id = first_page_id;
+        let mut block_idx = (current_page_id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
+        let mut page_idx = (current_page_id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
+
+        let mut block_shard = self.page_shards[block_idx].write();
+        loop {
+            let page_metadata = &block_shard.metadata[page_idx];
+            let next_page_id = page_metadata.next_page_id;
+
+            block_shard.write_page(page_idx, PageMetadata::unassigned(current_page_id));
+
+            if next_page_id.is_terminator() {
+                break;
+            }
+
+            current_page_id = next_page_id;
+
+            let old_block_idx = block_idx;
+            block_idx = (current_page_id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
+            page_idx = (current_page_id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
+
+            if old_block_idx != block_idx {
+                block_shard = self.page_shards[block_idx].write();
+            }
+        }
+        drop(block_shard);
     }
 
     pub(super) fn write_pages(&self, to_update: &[PageMetadata]) {
@@ -721,4 +762,59 @@ mod tests {
         table.write_pages(&[write_page]);
         assert_eq!(table.num_assigned_pages(), expected_count);
     }
+
+    #[test]
+    fn test_unassign_pages_in_chain() {
+        let pid1 = PageId(4);
+        let pid2 = PageId((NUM_PAGES_PER_BLOCK + 4) as u32);
+        let pid3 = PageId((NUM_PAGES_PER_BLOCK * 2 + 50) as u32);
+
+        let table = PageTable::from_existing_state(&[
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: pid2,
+                id: pid1,
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: pid3,
+                id: pid2,
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(1),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: pid3,
+                data_len: 0,
+                context: [0; 40],
+            },
+        ]);
+
+        {
+            let pages = table.page_shards[0].read();
+            assert!(!pages.metadata[4].is_unassigned());
+            let pages = table.page_shards[1].read();
+            assert!(!pages.metadata[4].is_unassigned());
+            let pages = table.page_shards[2].read();
+            assert!(!pages.metadata[50].is_unassigned());
+        }
+
+        table.unassign_pages_in_chain(pid1);
+
+        let pages = table.page_shards[0].read();
+        assert!(pages.metadata[4].is_unassigned());
+        let pages = table.page_shards[1].read();
+        assert!(pages.metadata[4].is_unassigned());
+        let pages = table.page_shards[2].read();
+        assert!(pages.metadata[50].is_unassigned());
+    }
+
+    #[test]
+    fn test_unassign_pages_in_chain_undefined_behaviour_with_missing_terminator() {}
 }
