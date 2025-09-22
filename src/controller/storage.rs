@@ -1,13 +1,15 @@
 use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, atomic};
 
-use super::metadata::{LookupEntry, MetadataController, OpenMetadataControllerError};
+use super::metadata::{MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
 use crate::checkpoint::WriteCheckpointError;
+use crate::controller::page_file::PageFileController;
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::layout::PageGroupId;
+use crate::page_data::{CreatePageFileError, OpenPageFileError};
 
 #[derive(Debug, thiserror::Error)]
 /// An error preventing the [StorageController] from
@@ -24,13 +26,22 @@ pub enum OpenStorageControllerError {
     #[error(transparent)]
     /// The WAL controller could not be created.
     WalError(#[from] WalError),
+    #[error(transparent)]
+    /// The page file controller could not be opened.
+    PageFileOpen(#[from] OpenPageFileError),
+    #[error(transparent)]
+    /// The page file controller could not create a new page file.
+    PageFileCreate(#[from] CreatePageFileError),
 }
 
 /// The [StorageController] manages persisting updates to pages of data.
 pub struct StorageController {
     metadata_controller: MetadataController,
     wal_controller: WalController,
+    page_file_controller: PageFileController,
     transaction_id_counter: AtomicU64,
+
+    group_locks: parking_lot::Mutex<foldhash::HashSet<u64>>,
 }
 
 impl StorageController {
@@ -53,64 +64,31 @@ impl StorageController {
             .map_err(OpenStorageControllerError::CleanupWalFiles)?;
 
         let wal_controller = WalController::create(ctx.clone()).await?;
+        let page_file_controller =
+            PageFileController::open(ctx.clone(), &metadata_controller).await?;
 
         Ok(Self {
             metadata_controller,
             wal_controller,
+            page_file_controller,
             transaction_id_counter: AtomicU64::new(0),
+            group_locks: parking_lot::Mutex::new(foldhash::HashSet::default()),
         })
     }
 
     /// Create a new storage write transaction.
-    pub fn create_write_tx(&self) -> StorageWriteTx<'_> {
+    pub fn create_write_tx(&self) -> super::tx_write::StorageWriteTx<'_> {
         let transaction_id = self.transaction_id_counter.fetch_add(1, Ordering::Relaxed);
-        StorageWriteTx {
-            transaction_id,
-            transaction_n_entries: 0,
-            controller: self,
-        }
+        super::tx_write::StorageWriteTx::new(transaction_id, self)
     }
 
     /// Create a new reader for a given [PageGroupId].
-    pub fn create_reader(&self, group: PageGroupId) -> Option<StorageReader<'_>> {
+    pub fn create_reader(
+        &self,
+        group: PageGroupId,
+    ) -> Option<super::tx_read::StorageReader<'_>> {
         let lookup = self.metadata_controller.find_first_page(group)?;
-        Some(StorageReader {
-            group,
-            lookup,
-            controller: self,
-        })
-    }
-}
-
-/// A [StorageWriteTx] allows for performing multiple writes across multiple
-/// page group IDs as part of a single transaction.
-pub struct StorageWriteTx<'a> {
-    transaction_id: u64,
-    transaction_n_entries: u32,
-    controller: &'a StorageController,
-}
-
-impl std::fmt::Debug for StorageWriteTx<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "StorageWriteTx(tx_id={}, num_ops={})",
-            self.transaction_id, self.transaction_n_entries,
-        )
-    }
-}
-
-/// A [StorageReader] allows you to read data pages for a given
-/// page group.
-pub struct StorageReader<'a> {
-    group: PageGroupId,
-    lookup: LookupEntry,
-    controller: &'a StorageController,
-}
-
-impl std::fmt::Debug for StorageReader<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "StorageReader(group={:?})", self.group)
+        Some(super::tx_read::StorageReader::new(group, lookup, self))
     }
 }
 
