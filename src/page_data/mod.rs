@@ -2,6 +2,7 @@ pub use self::page_file::{CreatePageFileError, OpenPageFileError, PageFile};
 use crate::directory::FileId;
 use crate::layout::file_metadata::Encryption;
 use crate::layout::{PageFileId, PageId};
+mod encode;
 mod page_file;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;

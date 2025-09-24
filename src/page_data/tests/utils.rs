@@ -1,7 +1,12 @@
 use std::ops::Range;
-use crate::layout::page_metadata::PageMetadata;
+
 use crate::layout::PageId;
-use crate::page_data::utils::{copy_sparse_metadata_context, make_metadata_density_mask, metadata_is_contiguous};
+use crate::layout::page_metadata::PageMetadata;
+use crate::page_data::utils::{
+    copy_sparse_metadata_context,
+    make_metadata_density_mask,
+    metadata_is_contiguous,
+};
 
 #[rstest::rstest]
 #[case::single_page(
@@ -174,8 +179,6 @@ fn test_copy_sparse_metadata_context(
     }
 }
 
-
-
 #[rstest::rstest]
 #[case::single_page(
     &[make_empty_metadata(1)],
@@ -237,7 +240,6 @@ fn test_metadata_is_contiguous(
     let is_contiguous = metadata_is_contiguous(metadata);
     assert_eq!(is_contiguous, expect_contiguous);
 }
-
 
 fn make_empty_metadata(page_id: u32) -> PageMetadata {
     let mut page_metadata = PageMetadata::unassigned(PageId(page_id));

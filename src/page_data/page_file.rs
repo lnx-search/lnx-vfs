@@ -65,11 +65,8 @@ pub enum ReadPageError {
     /// An IO error occurred.
     IO(#[from] io::Error),
     #[error(transparent)]
-    /// The system was unable to decrypt the page data.
-    DecryptionError(#[from] encrypt::DecryptError),
-    #[error("page integrity check failed")]
-    /// The system was unable to verify the integrity of the page.
-    VerificationError,
+    /// The system was unable to decode the page data.
+    DecodeError(#[from] super::encode::DecodePageError),
     #[error("short read")]
     /// A short read occurred and should be retried.
     ShortRead,
@@ -306,11 +303,12 @@ impl PageFile {
                 let data_start = page_offset * DISK_PAGE_SIZE;
                 let data_end = data_start + DISK_PAGE_SIZE;
 
-                encode_page_data_inner(
+                let associated_data =
+                    page_associated_data(file_id, page_file_id, page_id);
+
+                super::encode::encode_page_data(
                     ctx.cipher(),
-                    page_file_id,
-                    file_id,
-                    page_id,
+                    &associated_data,
                     &mut buffer[data_start..data_end],
                     &mut context[ctx_start..ctx_end],
                 )?;
@@ -334,8 +332,8 @@ impl PageFile {
         decode_bitmask: u8,
         mut buffer: DmaBuffer,
     ) -> tokio::task::JoinHandle<Result<DmaBuffer, ReadPageError>> {
-        let page_file_id = self.id();
         let file_id = self.file_id();
+        let page_file_id = self.id();
         let ctx = self.ctx.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -352,11 +350,12 @@ impl PageFile {
                 let data_start = page_offset as usize * DISK_PAGE_SIZE;
                 let data_end = data_start + DISK_PAGE_SIZE;
 
-                decode_page_data_inner(
+                let associated_data =
+                    page_associated_data(file_id, page_file_id, page_id);
+
+                super::encode::decode_page_data(
                     ctx.cipher(),
-                    page_file_id,
-                    file_id,
-                    page_id,
+                    &associated_data,
                     &mut buffer[data_start..data_end],
                     &context[ctx_start..ctx_end],
                 )?;
@@ -370,61 +369,6 @@ impl PageFile {
         let relative_position = page_id.0 as u64 * DISK_PAGE_SIZE as u64;
         relative_position + self.data_offset
     }
-}
-
-/// Encode the provided page data and write the context to the page metadata.
-///
-/// If encryption at rest is enabled, this will encrypt the buffer, otherwise an integrity
-/// checksum will be calculated.
-fn encode_page_data_inner(
-    cipher: Option<&encrypt::Cipher>,
-    page_file_id: PageFileId,
-    file_id: FileId,
-    page_id: PageId,
-    page_data: &mut [u8],
-    context: &mut [u8],
-) -> Result<(), encrypt::EncryptError> {
-    let associated_data = page_associated_data(file_id, page_file_id, page_id);
-
-    if let Some(cipher) = cipher {
-        encrypt::encrypt_in_place(cipher, &associated_data, page_data, context)?;
-    } else {
-        integrity::write_check_bytes(None, &associated_data, page_data, context);
-    }
-
-    Ok(())
-}
-
-/// Decode the provided page data using the context provided.
-///
-/// If encryption at rest is enabled, this will decrypt the buffer, otherwise an integrity
-/// checksum will be calculated and verified against the stored checksum in the context.
-fn decode_page_data_inner(
-    cipher: Option<&encrypt::Cipher>,
-    page_file_id: PageFileId,
-    file_id: FileId,
-    page_id: PageId,
-    page_data: &mut [u8],
-    context: &[u8],
-) -> Result<(), ReadPageError> {
-    let associated_data = page_associated_data(file_id, page_file_id, page_id);
-
-    if let Some(cipher) = cipher {
-        encrypt::decrypt_in_place(cipher, &associated_data, page_data, context)?;
-    } else {
-        let is_valid = integrity::verify(
-            Encryption::Disabled,
-            None,
-            &associated_data,
-            page_data,
-            context,
-        );
-        if !is_valid {
-            return Err(ReadPageError::VerificationError);
-        }
-    }
-
-    Ok(())
 }
 
 fn validate_write_metadata_entries(
