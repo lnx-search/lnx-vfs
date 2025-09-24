@@ -2,7 +2,7 @@ extern crate test;
 
 use std::hint::black_box;
 
-use chacha20poly1305::XChaCha20Poly1305;
+use chacha20poly1305::{KeyInit, XChaCha20Poly1305};
 
 use crate::layout::encrypt;
 
@@ -22,11 +22,6 @@ fn encrypt_32kb_blocks(bencher: &mut test::Bencher) -> anyhow::Result<()> {
 }
 
 #[bench]
-fn encrypt_128kb_blocks(bencher: &mut test::Bencher) -> anyhow::Result<()> {
-    bench_encrypt::<{ 128 << 10 }>(bencher)
-}
-
-#[bench]
 fn decrypt_512b_blocks(bencher: &mut test::Bencher) -> anyhow::Result<()> {
     bench_decrypt::<512>(bencher)
 }
@@ -39,11 +34,6 @@ fn decrypt_8kb_blocks(bencher: &mut test::Bencher) -> anyhow::Result<()> {
 #[bench]
 fn decrypt_32kb_blocks(bencher: &mut test::Bencher) -> anyhow::Result<()> {
     bench_decrypt::<{ 32 << 10 }>(bencher)
-}
-
-#[bench]
-fn decrypt_128kb_blocks(bencher: &mut test::Bencher) -> anyhow::Result<()> {
-    bench_decrypt::<{ 128 << 10 }>(bencher)
 }
 
 fn bench_encrypt<const SIZE: usize>(b: &mut test::Bencher) -> anyhow::Result<()> {
@@ -85,7 +75,7 @@ fn bench_decrypt<const SIZE: usize>(b: &mut test::Bencher) -> anyhow::Result<()>
     fastrand::fill(&mut buffer);
     let num_blocks = buffer.len() / SIZE;
 
-    let mut context = vec![0; 40 * SIZE];
+    let mut context = vec![0; 40 * num_blocks];
 
     for pos in 0..num_blocks {
         let start = pos * SIZE;
@@ -97,7 +87,7 @@ fn bench_decrypt<const SIZE: usize>(b: &mut test::Bencher) -> anyhow::Result<()>
         encrypt::encrypt_in_place(
             &cipher,
             b"demo buffer data",
-            buffer,
+            &mut buffer[start..end],
             &mut context[ctx_start..ctx_end],
         )
         .unwrap();
@@ -111,13 +101,13 @@ fn bench_decrypt<const SIZE: usize>(b: &mut test::Bencher) -> anyhow::Result<()>
         let ctx_start = pos * 40;
         let ctx_end = ctx_start + 40;
 
-        let mut buffer = [0; SIZE];
-        buffer.copy_from_slice(&buffer[start..end]);
+        let mut tmp_buffer = [0; SIZE];
+        tmp_buffer.copy_from_slice(&buffer[start..end]);
 
         encrypt::decrypt_in_place(
             black_box(&cipher),
             black_box(b"demo buffer data"),
-            black_box(&buffer),
+            black_box(&mut tmp_buffer),
             black_box(&mut context[ctx_start..ctx_end]),
         )
         .unwrap();
