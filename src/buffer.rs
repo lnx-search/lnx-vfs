@@ -30,6 +30,12 @@ pub struct DmaBuffer {
     capacity: usize,
 }
 
+impl std::fmt::Debug for DmaBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DmaBuffer(len={})", self.capacity)
+    }
+}
+
 impl DmaBuffer {
     /// Create a new [DmaBuffer] using a new block of memory
     /// taken from the system allocator.

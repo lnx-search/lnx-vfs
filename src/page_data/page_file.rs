@@ -197,6 +197,7 @@ impl PageFile {
         let offset = self.resolve_pos(first_page_id);
         let buffer_ptr = buffer.as_mut_ptr();
         let guard = buffer.share_guard();
+        dbg!(buffer_len, offset);
 
         let reply = unsafe {
             self.file
@@ -238,10 +239,6 @@ impl PageFile {
         // We know the metadata entries are sorted because of the loop check we just did
         // and, we know there are at least 1 metadata entries in the set from our first check.
         let first_page_id = page_metadata_entries.first().unwrap().id;
-        assert!(
-            first_page_id.0 < MAX_NUM_PAGES as u32,
-            "BUG: page ID is beyond the bounds of the page file",
-        );
 
         let (mut buffer, context_block) = self
             .encode_page_data(first_page_id, page_metadata_entries.len(), buffer)
@@ -367,6 +364,7 @@ impl PageFile {
 
     fn resolve_pos(&self, page_id: PageId) -> u64 {
         let relative_position = page_id.0 as u64 * DISK_PAGE_SIZE as u64;
+        dbg!(relative_position);
         relative_position + self.data_offset
     }
 }
@@ -386,6 +384,13 @@ fn validate_write_metadata_entries(
             "iop size too large",
         ));
     }
+
+    let first_page_id = metadata.first().unwrap().id;
+    let last_page_id = metadata.last().unwrap().id;
+    assert!(
+        first_page_id.0 < MAX_NUM_PAGES as u32 && last_page_id.0 < MAX_NUM_PAGES as u32,
+        "BUG: page ID is beyond the bounds of the page file",
+    );
 
     let expected_len = metadata.len() * DISK_PAGE_SIZE;
     if buffer_len < expected_len {
@@ -421,9 +426,14 @@ fn validate_read_metadata_entries(
         ));
     }
 
-    let first_page_id = metadata.first().unwrap();
-    let last_page_id = metadata.last().unwrap();
-    let num_pages = (last_page_id.id.0 - first_page_id.id.0) as usize;
+    let first_page_id = metadata.first().unwrap().id;
+    let last_page_id = metadata.last().unwrap().id;
+    let num_pages = (last_page_id.0 - first_page_id.0) as usize + 1;
+
+    assert!(
+        first_page_id.0 < MAX_NUM_PAGES as u32 && last_page_id.0 < MAX_NUM_PAGES as u32,
+        "BUG: page ID is beyond the bounds of the page file",
+    );
 
     if num_pages > MAX_SINGLE_IOP_NUM_PAGES {
         return Err(io::Error::new(

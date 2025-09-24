@@ -45,10 +45,10 @@ fn page_associated_data(
     file_id: FileId,
     page_file_id: PageFileId,
     page_id: PageId,
-) -> [u8; 16] {
-    let mut buffer = [0; 16];
+) -> [u8; 12] {
+    let mut buffer = [0; 12];
     buffer[0..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
-    buffer[4..12].copy_from_slice(&page_id.0.to_le_bytes());
-    buffer[12..16].copy_from_slice(&page_file_id.0.to_le_bytes());
+    buffer[4..8].copy_from_slice(&page_file_id.0.to_le_bytes());
+    buffer[8..12].copy_from_slice(&page_id.0.to_le_bytes());
     buffer
 }
