@@ -197,7 +197,6 @@ impl PageFile {
         let offset = self.resolve_pos(first_page_id);
         let buffer_ptr = buffer.as_mut_ptr();
         let guard = buffer.share_guard();
-        dbg!(buffer_len, offset);
 
         let reply = unsafe {
             self.file
