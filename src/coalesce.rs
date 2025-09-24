@@ -25,8 +25,8 @@ const DEFAULT_AMPLIFICATION_FACTOR: f32 = 1.2;
 ///   more data overall which may end up causing a slow-down.
 ///   For example, an amplification factor of `1.2` would allow a reading upto 20% more data
 ///   in order to merge the IOPS.
-pub fn coalesce_read<'r>(
-    ranges: impl IntoIterator<Item = &'r Range<u32>>,
+pub fn coalesce_read(
+    ranges: impl IntoIterator<Item = Range<u32>>,
     max_iop_page_spans: u32,
     amplification_factor: Option<f32>,
 ) -> SmallVec<[Range<u32>; 8]> {
@@ -44,7 +44,7 @@ pub fn coalesce_read<'r>(
     while let Some(range) = ranges.next() {
         let mut span = range.clone();
 
-        while let Some(&next_page) = ranges.peek() {
+        while let Some(next_page) = ranges.peek() {
             let next_page = next_page.clone();
             let combined_len = span.len() + next_page.len();
 
@@ -92,8 +92,8 @@ pub fn coalesce_read<'r>(
 /// The behaviour can be altered by adjusting the config parameters:
 ///
 /// - `max_iop_page_spans` the maximum number of pages the final IOP is allowed to span.
-pub fn coalesce_write<'r>(
-    ranges: impl IntoIterator<Item = &'r Range<u32>>,
+pub fn coalesce_write(
+    ranges: impl IntoIterator<Item = Range<u32>>,
     max_iop_page_spans: u32,
 ) -> SmallVec<[Range<u32>; 8]> {
     coalesce_read(ranges, max_iop_page_spans, Some(1.0))
@@ -159,7 +159,8 @@ mod tests {
         #[case] amplification_factor: Option<f32>,
         #[case] expected_ranges: &[Range<u32>],
     ) {
-        let iops = coalesce_read(ranges, max_iop_page_spans, amplification_factor);
+        let iops =
+            coalesce_read(ranges.to_vec(), max_iop_page_spans, amplification_factor);
         assert_eq!(iops.as_slice(), expected_ranges);
     }
 
@@ -204,7 +205,7 @@ mod tests {
         #[case] max_iop_page_spans: u32,
         #[case] expected_ranges: &[Range<u32>],
     ) {
-        let iops = coalesce_write(ranges, max_iop_page_spans);
+        let iops = coalesce_write(ranges.to_vec(), max_iop_page_spans);
         assert_eq!(iops.as_slice(), expected_ranges);
     }
 }
