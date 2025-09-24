@@ -462,7 +462,9 @@ mod benches {
         }
 
         bencher.iter(|| {
+            let mut lookup_table = foldhash::HashMap::default();
             reconstruct_lookup_table_from_pages(
+                black_box(&mut lookup_table),
                 black_box(PageFileId(0)),
                 black_box(&entries),
             )

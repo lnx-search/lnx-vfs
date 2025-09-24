@@ -1,11 +1,11 @@
 pub use self::page_file::{CreatePageFileError, OpenPageFileError, PageFile};
 use crate::directory::FileId;
-use crate::layout::PageFileId;
 use crate::layout::file_metadata::Encryption;
-
+use crate::layout::{PageFileId, PageId};
 mod page_file;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
+mod utils;
 
 /// The default size of individual pages of data.
 pub const DISK_PAGE_SIZE: usize = 32 << 10;
@@ -17,6 +17,10 @@ pub const NUM_PAGES_PER_BLOCK: usize = 16_384;
 ///
 /// This value plays into the storage allocator design.
 pub const MAX_NUM_PAGES: usize = NUM_BLOCKS_PER_FILE * NUM_PAGES_PER_BLOCK;
+
+/// The maximum number of pages a single IOP can affect.
+pub const MAX_SINGLE_IOP_NUM_PAGES: usize = 8;
+const CONTEXT_BUFFER_SIZE: usize = 40 * MAX_SINGLE_IOP_NUM_PAGES;
 
 #[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
 /// The file metadata header used to identify the file and the type.
@@ -36,14 +40,14 @@ pub(super) struct MetadataHeader {
 /// This method is used on all files and is used to prevent replay attacks
 /// and a bad actor gaining information about the system by taking and swapping
 /// around data in the files.
-pub(super) fn page_associated_data(
+fn page_associated_data(
     file_id: FileId,
     page_file_id: PageFileId,
-    start_pos: u64,
+    page_id: PageId,
 ) -> [u8; 16] {
     let mut buffer = [0; 16];
     buffer[0..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
-    buffer[4..12].copy_from_slice(&start_pos.to_le_bytes());
+    buffer[4..12].copy_from_slice(&page_id.0.to_le_bytes());
     buffer[12..16].copy_from_slice(&page_file_id.0.to_le_bytes());
     buffer
 }

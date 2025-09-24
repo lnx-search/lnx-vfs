@@ -1,17 +1,20 @@
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use crate::buffer::DmaBuffer;
-use crate::directory::FileGroup;
+use crate::directory::{FileGroup, FileId};
 use crate::file::DynamicGuard;
 use crate::layout::file_metadata::Encryption;
-use crate::layout::{PageFileId, PageId, file_metadata};
-use crate::page_data::{DISK_PAGE_SIZE, MAX_NUM_PAGES};
+use crate::layout::page_metadata::PageMetadata;
+use crate::layout::{PageFileId, PageId, encrypt, file_metadata, integrity};
+use crate::page_data::{
+    CONTEXT_BUFFER_SIZE,
+    DISK_PAGE_SIZE,
+    MAX_NUM_PAGES,
+    MAX_SINGLE_IOP_NUM_PAGES,
+    page_associated_data,
+};
 use crate::{ctx, file};
-
-const SYNC_COALESCE_DURATION: Duration = Duration::from_millis(1);
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevented the system from opening a page file.
@@ -44,6 +47,35 @@ pub enum CreatePageFileError {
     HeaderEncode(#[from] file_metadata::EncodeError),
 }
 
+#[derive(Debug, thiserror::Error)]
+/// An error preventing the page file from writing the page data.
+pub enum SubmitWriterError {
+    #[error(transparent)]
+    /// An IO error occurred.
+    IO(#[from] io::Error),
+    #[error(transparent)]
+    /// The system was unable to encrypt the page data.
+    EncryptionError(#[from] encrypt::EncryptError),
+}
+
+#[derive(Debug, thiserror::Error)]
+/// An error preventing the page file from reading the page data.
+pub enum ReadPageError {
+    #[error(transparent)]
+    /// An IO error occurred.
+    IO(#[from] io::Error),
+    #[error(transparent)]
+    /// The system was unable to decrypt the page data.
+    DecryptionError(#[from] encrypt::DecryptError),
+    #[error("page integrity check failed")]
+    /// The system was unable to verify the integrity of the page.
+    VerificationError,
+    #[error("short read")]
+    /// A short read occurred and should be retried.
+    ShortRead,
+}
+
+#[derive(Clone)]
 /// The page file contains blocks of data called "pages".
 pub struct PageFile {
     id: PageFileId,
@@ -56,6 +88,10 @@ impl PageFile {
     /// Returns the ID of the page file.
     pub fn id(&self) -> PageFileId {
         self.id
+    }
+    /// Returns the file ID of the page file.
+    pub fn file_id(&self) -> FileId {
+        self.file.id()
     }
 
     /// Open an existing page file.
@@ -138,19 +174,31 @@ impl PageFile {
 
     /// Read a set of pages from the page file.
     ///
-    /// The read will begin at `page_id` and continue on for upto the length of the
-    /// provided buffer or until EOF, which ever comes first.
+    /// Reads _may_ be sparse providing the buffer is the long enough to read
+    /// all the data (including the missed pages.)
     ///
-    /// NOTE: This does _NOT_ decrypt the data of the pages if encryption at rest is enabled.
-    pub async fn submit_read_at(
+    /// This will avoid needlessly decrypting and verifying unused pages.
+    ///
+    /// Unlike `submit_write_at`, `read_at` will block (asynchronously) until teh read is complete.
+    pub async fn read_at(
         &self,
-        page_id: PageId,
-        buffer: &mut DmaBuffer,
-    ) -> io::Result<i2o2::ReplyReceiver> {
-        let offset = self.resolve_pos(page_id);
+        page_metadata_entries: &[PageMetadata],
+        mut buffer: DmaBuffer,
+    ) -> Result<DmaBuffer, ReadPageError> {
+        let num_contiguous_pages =
+            validate_read_metadata_entries(page_metadata_entries, buffer.len())?;
+        let buffer_len = num_contiguous_pages as usize * DISK_PAGE_SIZE;
 
+        // We know the metadata entries are sorted because of the loop check we just did
+        // and, we know there are at least 1 metadata entries in the set from our first check.
+        let first_page_id = page_metadata_entries.first().unwrap().id;
+        assert!(
+            first_page_id.0 < MAX_NUM_PAGES as u32,
+            "BUG: page ID is beyond the bounds of the page file",
+        );
+
+        let offset = self.resolve_pos(first_page_id);
         let buffer_ptr = buffer.as_mut_ptr();
-        let buffer_len = buffer.len();
         let guard = buffer.share_guard();
 
         let reply = unsafe {
@@ -159,45 +207,295 @@ impl PageFile {
                 .await?
         };
 
-        Ok(reply)
+        let result = file::wait_for_reply(reply).await?;
+        if result < buffer_len {
+            return Err(ReadPageError::ShortRead);
+        }
+
+        let context = super::utils::copy_sparse_metadata_context(page_metadata_entries);
+        // Used to avoid needless work verifying pages
+        let mask = super::utils::make_metadata_density_mask(page_metadata_entries);
+
+        let buffer = self
+            .decode_page_data(first_page_id, num_contiguous_pages, context, mask, buffer)
+            .await
+            .expect("spawn blocking task failed")?;
+
+        Ok(buffer)
     }
 
-    /// Write the buffer starting at the given page ID.
+    /// Write the buffer (potentially containing multiple pages) to the page file
+    /// and update the page metadata context.
     ///
-    /// WARNING: This can overwrite other pages.
-    ///
-    /// NOTE: This does _NOT_ encrypt the data of the pages if encryption at rest is enabled.
+    /// NOTE: All pages specified must be contiguous to one another, no sparse write
+    /// is allowed.
     pub async fn submit_write_at(
         &self,
-        page_id: PageId,
-        buffer: &mut DmaBuffer,
-        write_len: usize,
-    ) -> io::Result<i2o2::ReplyReceiver> {
+        page_metadata_entries: &mut [PageMetadata],
+        buffer: DmaBuffer,
+    ) -> Result<i2o2::ReplyReceiver, SubmitWriterError> {
+        validate_write_metadata_entries(page_metadata_entries, buffer.len())?;
+
+        let read_len = page_metadata_entries.len() * DISK_PAGE_SIZE;
+
+        // We know the metadata entries are sorted because of the loop check we just did
+        // and, we know there are at least 1 metadata entries in the set from our first check.
+        let first_page_id = page_metadata_entries.first().unwrap().id;
         assert!(
-            page_id.0 < MAX_NUM_PAGES as u32,
-            "page ID is beyond the bounds of the page file",
-        );
-        assert!(
-            write_len <= buffer.len(),
-            "write len must be less than or equal to buffer len"
+            first_page_id.0 < MAX_NUM_PAGES as u32,
+            "BUG: page ID is beyond the bounds of the page file",
         );
 
-        let offset = self.resolve_pos(page_id);
+        let (mut buffer, context_block) = self
+            .encode_page_data(first_page_id, page_metadata_entries.len(), buffer)
+            .await
+            .expect("spawn blocking task failed")?;
 
+        for (page_offset, metadata) in page_metadata_entries.iter_mut().enumerate() {
+            let ctx_start = page_offset * 40;
+            let ctx_end = ctx_start + 40;
+
+            let context = &context_block[ctx_start..ctx_end];
+            metadata.context.copy_from_slice(context);
+        }
+
+        let offset = self.resolve_pos(first_page_id);
         let buffer_ptr = buffer.as_mut_ptr();
-        let guard = buffer.share_guard();
 
         let reply = unsafe {
             self.file
-                .submit_write(buffer_ptr, write_len, offset, Some(guard as DynamicGuard))
+                .submit_write(
+                    buffer_ptr,
+                    read_len,
+                    offset,
+                    Some(Arc::new(buffer) as DynamicGuard),
+                )
                 .await?
         };
 
         Ok(reply)
     }
 
+    /// Encodes the provided page buffer data and either checksums or encrypts the buffers
+    /// returning the updates context data.
+    ///
+    /// This runs the encode task in a worker thread to prevent blocking as the
+    /// encode routine is slight too slow to be able to use without causing some issues
+    /// with the tokio scheduler.
+    fn encode_page_data(
+        &self,
+        first_page_id: PageId,
+        num_metadata_entries: usize,
+        mut buffer: DmaBuffer,
+    ) -> tokio::task::JoinHandle<
+        Result<(DmaBuffer, [u8; CONTEXT_BUFFER_SIZE]), encrypt::EncryptError>,
+    > {
+        let page_file_id = self.id();
+        let file_id = self.file_id();
+        let ctx = self.ctx.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let mut context = [0; CONTEXT_BUFFER_SIZE];
+
+            for page_offset in 0..num_metadata_entries {
+                let page_id = PageId(first_page_id.0 + page_offset as u32);
+
+                let ctx_start = page_offset * 40;
+                let ctx_end = ctx_start + 40;
+
+                let data_start = page_offset * DISK_PAGE_SIZE;
+                let data_end = data_start + DISK_PAGE_SIZE;
+
+                encode_page_data_inner(
+                    ctx.cipher(),
+                    page_file_id,
+                    file_id,
+                    page_id,
+                    &mut buffer[data_start..data_end],
+                    &mut context[ctx_start..ctx_end],
+                )?;
+            }
+
+            Ok((buffer, context))
+        })
+    }
+
+    /// Decodes the provided page buffer data and validates the integrity of the buffer
+    /// or decrypted the data (depending on the configured context.)
+    ///
+    /// This runs the decode task in a worker thread to prevent blocking as the
+    /// decode routine is slight too slow to be able to use without causing some issues
+    /// with the tokio scheduler.
+    fn decode_page_data(
+        &self,
+        first_page_id: PageId,
+        num_metadata_entries: u8,
+        context: [u8; CONTEXT_BUFFER_SIZE],
+        decode_bitmask: u8,
+        mut buffer: DmaBuffer,
+    ) -> tokio::task::JoinHandle<Result<DmaBuffer, ReadPageError>> {
+        let page_file_id = self.id();
+        let file_id = self.file_id();
+        let ctx = self.ctx.clone();
+
+        tokio::task::spawn_blocking(move || {
+            for page_offset in 0..num_metadata_entries {
+                if decode_bitmask & (1 << page_offset) == 0 {
+                    continue;
+                }
+
+                let page_id = PageId(first_page_id.0 + page_offset as u32);
+
+                let ctx_start = page_offset as usize * 40;
+                let ctx_end = ctx_start + 40;
+
+                let data_start = page_offset as usize * DISK_PAGE_SIZE;
+                let data_end = data_start + DISK_PAGE_SIZE;
+
+                decode_page_data_inner(
+                    ctx.cipher(),
+                    page_file_id,
+                    file_id,
+                    page_id,
+                    &mut buffer[data_start..data_end],
+                    &context[ctx_start..ctx_end],
+                )?;
+            }
+
+            Ok(buffer)
+        })
+    }
+
     fn resolve_pos(&self, page_id: PageId) -> u64 {
         let relative_position = page_id.0 as u64 * DISK_PAGE_SIZE as u64;
         relative_position + self.data_offset
     }
+}
+
+/// Encode the provided page data and write the context to the page metadata.
+///
+/// If encryption at rest is enabled, this will encrypt the buffer, otherwise an integrity
+/// checksum will be calculated.
+fn encode_page_data_inner(
+    cipher: Option<&encrypt::Cipher>,
+    page_file_id: PageFileId,
+    file_id: FileId,
+    page_id: PageId,
+    page_data: &mut [u8],
+    context: &mut [u8],
+) -> Result<(), encrypt::EncryptError> {
+    let associated_data = page_associated_data(file_id, page_file_id, page_id);
+
+    if let Some(cipher) = cipher {
+        encrypt::encrypt_in_place(cipher, &associated_data, page_data, context)?;
+    } else {
+        integrity::write_check_bytes(None, &associated_data, page_data, context);
+    }
+
+    Ok(())
+}
+
+/// Decode the provided page data using the context provided.
+///
+/// If encryption at rest is enabled, this will decrypt the buffer, otherwise an integrity
+/// checksum will be calculated and verified against the stored checksum in the context.
+fn decode_page_data_inner(
+    cipher: Option<&encrypt::Cipher>,
+    page_file_id: PageFileId,
+    file_id: FileId,
+    page_id: PageId,
+    page_data: &mut [u8],
+    context: &[u8],
+) -> Result<(), ReadPageError> {
+    let associated_data = page_associated_data(file_id, page_file_id, page_id);
+
+    if let Some(cipher) = cipher {
+        encrypt::decrypt_in_place(cipher, &associated_data, page_data, context)?;
+    } else {
+        let is_valid = integrity::verify(
+            Encryption::Disabled,
+            None,
+            &associated_data,
+            page_data,
+            context,
+        );
+        if !is_valid {
+            return Err(ReadPageError::VerificationError);
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_write_metadata_entries(
+    metadata: &[PageMetadata],
+    buffer_len: usize,
+) -> io::Result<()> {
+    if metadata.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "empty metadata entries",
+        ));
+    } else if metadata.len() > MAX_SINGLE_IOP_NUM_PAGES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "iop size too large",
+        ));
+    }
+
+    let expected_len = metadata.len() * DISK_PAGE_SIZE;
+    if buffer_len < expected_len {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "provided buffer too small",
+        ));
+    }
+
+    if !super::utils::metadata_is_contiguous(metadata) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "provided page range is not contiguous",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_read_metadata_entries(
+    metadata: &[PageMetadata],
+    buffer_len: usize,
+) -> io::Result<u8> {
+    if metadata.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "empty metadata entries",
+        ));
+    } else if !metadata.is_sorted_by_key(|p| p.id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "metadata entries not sorted by page ID",
+        ));
+    }
+
+    let first_page_id = metadata.first().unwrap();
+    let last_page_id = metadata.last().unwrap();
+    let num_pages = (last_page_id.id.0 - first_page_id.id.0) as usize;
+
+    if num_pages > MAX_SINGLE_IOP_NUM_PAGES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "iop size too large",
+        ));
+    }
+
+    let expected_len = num_pages * DISK_PAGE_SIZE;
+    if buffer_len < expected_len {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "provided buffer too small",
+        ));
+    }
+
+    assert!(num_pages <= 8);
+    Ok(num_pages as u8)
 }
