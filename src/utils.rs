@@ -2,6 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::{io, mem};
 
+use crate::buffer::ALLOC_PAGE_SIZE;
+use crate::page_data::DISK_PAGE_SIZE;
+
 /// A helper type for having a single value on the stack of a heap allocated
 /// value in an Arc.
 ///
@@ -32,6 +35,23 @@ impl<T> SingleOrShared<T> {
             },
         }
     }
+}
+
+/// Converts the number of disk pages to the equivalent number of memory alloc pages.
+pub(crate) const fn disk_to_alloc_pages(disk_pages: usize) -> usize {
+    const {
+        assert!(
+            DISK_PAGE_SIZE % ALLOC_PAGE_SIZE == 0,
+            "disk page size must be a multiple of the alloc page size"
+        );
+        assert!(
+            DISK_PAGE_SIZE >= ALLOC_PAGE_SIZE,
+            "disk page size must be greater than alloc page size"
+        );
+    };
+    let total_size = disk_pages * DISK_PAGE_SIZE;
+    let num_alloc_pages = total_size / ALLOC_PAGE_SIZE;
+    num_alloc_pages
 }
 
 pub(super) fn align_up(value: usize, align: usize) -> usize {
