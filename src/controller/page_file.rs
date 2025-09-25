@@ -15,15 +15,15 @@ use crate::page_data::{
     CreatePageFileError,
     DISK_PAGE_SIZE,
     MAX_NUM_PAGES,
+    MAX_SINGLE_IOP_NUM_PAGES,
     OpenPageFileError,
     PageFile,
     SubmitWriterError,
 };
 use crate::page_file_allocator::{PageFileAllocator, WriteAllocTx};
-use crate::{ctx, file, layout, page_data, utils};
+use crate::{ctx, file, utils};
 
 const PREP_ALLOC_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_WRITE_IOP_SIZE: u32 = 8;
 
 /// The page file controller manages creation and cleanup of
 /// the page data files.
@@ -68,9 +68,25 @@ impl PageFileController {
         })
     }
 
-    /// Prepare an allocation returning the [WriteAllocTx] with the reserved pages.
-    ///
-    /// Creates a new page file if one does not have capacity.
+    /// Creates a new [PageDataWriter] for writing a new group of pages of a given length.
+    pub async fn create_writer(
+        &self,
+        len: u64,
+    ) -> Result<PageDataWriter<'_>, CreatePageFileError> {
+        let num_pages = len.div_ceil(DISK_PAGE_SIZE as u64) as u32;
+        let alloc_txn = self.prep_alloc(num_pages).await?;
+        let page_file = self
+            .page_files
+            .read()
+            .get(&alloc_txn.page_file_id())
+            .expect("BUG: page file does not exist after allocator selected pages")
+            .clone();
+
+        Ok(PageDataWriter::new(&self.ctx, page_file, alloc_txn, len))
+    }
+
+    /// Attempts to get a [WriteAllocTx] from an existing page file allocator
+    /// otherwise a new page file is created and added to the allocator pool.
     async fn prep_alloc(
         &self,
         num_pages: u32,
@@ -173,7 +189,8 @@ impl<'controller> PageDataWriter<'controller> {
             start..end
         });
 
-        let write_iops = crate::coalesce::coalesce_write(page_iops, MAX_WRITE_IOP_SIZE);
+        let write_iops =
+            crate::coalesce::coalesce_write(page_iops, MAX_SINGLE_IOP_NUM_PAGES as u32);
 
         Self {
             ctx,
