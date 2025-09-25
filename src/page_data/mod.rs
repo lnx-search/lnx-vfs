@@ -1,12 +1,19 @@
-pub use self::page_file::{CreatePageFileError, OpenPageFileError, PageFile};
-use crate::directory::FileId;
-use crate::layout::file_metadata::Encryption;
-use crate::layout::{PageFileId, PageId};
 mod encode;
 mod page_file;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
 mod utils;
+
+pub use self::page_file::{
+    CreatePageFileError,
+    OpenPageFileError,
+    PageFile,
+    ReadPageError,
+    SubmitWriterError,
+};
+use crate::directory::FileId;
+use crate::layout::file_metadata::Encryption;
+use crate::layout::{PageFileId, PageId};
 
 /// The default size of individual pages of data.
 pub const DISK_PAGE_SIZE: usize = 32 << 10;

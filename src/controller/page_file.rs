@@ -6,7 +6,6 @@ use std::{cmp, io};
 
 use foldhash::HashMapExt;
 use parking_lot::RwLock;
-use smallvec::SmallVec;
 
 use crate::buffer::DmaBuffer;
 use crate::directory::FileGroup;
@@ -18,9 +17,10 @@ use crate::page_data::{
     MAX_NUM_PAGES,
     OpenPageFileError,
     PageFile,
+    SubmitWriterError,
 };
 use crate::page_file_allocator::{PageFileAllocator, WriteAllocTx};
-use crate::{ctx, layout, page_data, utils};
+use crate::{ctx, file, layout, page_data, utils};
 
 const PREP_ALLOC_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_WRITE_IOP_SIZE: u32 = 8;
@@ -146,6 +146,7 @@ impl PageFileController {
 /// page metadata entries, otherwise, the pending write will be aborted and the allocated pages
 /// put back into the allocation pool.
 pub struct PageDataWriter<'controller> {
+    ctx: &'controller ctx::FileContext,
     page_file: PageFile,
     alloc_tx: WriteAllocTx<'controller>,
     write_iops: smallvec::IntoIter<[Range<u32>; 8]>,
@@ -153,12 +154,15 @@ pub struct PageDataWriter<'controller> {
     expected_len: u64,
     bytes_written: u64,
 
-    inflight_iops: VecDeque<i2o2::ReplyReceiver>,
+    metadata_pages: Vec<PageMetadata>,
+
+    inflight_iops: VecDeque<InflightIop>,
     buffer_writer: Option<DmaBufWriter>,
 }
 
 impl<'controller> PageDataWriter<'controller> {
     fn new(
+        ctx: &'controller ctx::FileContext,
         page_file: PageFile,
         alloc_tx: WriteAllocTx<'controller>,
         expected_len: u64,
@@ -172,6 +176,7 @@ impl<'controller> PageDataWriter<'controller> {
         let write_iops = crate::coalesce::coalesce_write(page_iops, MAX_WRITE_IOP_SIZE);
 
         Self {
+            ctx,
             page_file,
             alloc_tx,
             write_iops: write_iops.into_iter(),
@@ -179,19 +184,21 @@ impl<'controller> PageDataWriter<'controller> {
             expected_len,
             bytes_written: 0,
 
+            metadata_pages: Vec::new(),
             inflight_iops: VecDeque::new(),
             buffer_writer: None,
         }
     }
 
     /// Write a buffer to the writer.
-    pub async fn write(&mut self, mut buf: &[u8]) -> io::Result<()> {
+    pub async fn write(&mut self, mut buf: &[u8]) -> Result<(), SubmitWriterError> {
         if self.bytes_written + buf.len() as u64 > self.expected_len {
             return Err(io::Error::new(
                 io::ErrorKind::QuotaExceeded,
                 "write could not be completed as it would go beyond the \
                 bounds of the defined page size",
-            ));
+            )
+            .into());
         }
 
         while !buf.is_empty() && self.buffer_writer.is_some() {
@@ -218,54 +225,124 @@ impl<'controller> PageDataWriter<'controller> {
 
     /// Complete the pending write operation.
     ///
-    /// The operation will error if
-    pub async fn finish(self) {}
+    /// The operation will error if there is still data expected to be written
+    /// or if a remaining IOP errors.
+    pub async fn finish(
+        mut self,
+    ) -> Result<(WriteAllocTx<'controller>, Vec<PageMetadata>), SubmitWriterError> {
+        if self.bytes_written < self.expected_len {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "not all expected data has be submitted to the writer",
+            )
+            .into());
+        }
+
+        self.flush_buffer().await?;
+
+        while let Some(iop) = self.inflight_iops.pop_front() {
+            let result = file::wait_for_reply(iop.reply).await?;
+            if result < iop.expected_len {
+                return Err(short_write_err().into());
+            }
+        }
+
+        Ok((self.alloc_tx, self.metadata_pages))
+    }
 
     /// Flush the full memory buffer and submit the buffer to be written to the page file.
-    async fn flush_buffer(&mut self) -> io::Result<()> {
+    async fn flush_buffer(&mut self) -> Result<(), SubmitWriterError> {
         let maybe_old_writer = self.replace_writer_with_next_iop();
 
         let Some(old_writer) = maybe_old_writer else {
             return Ok(());
         };
+
         let DmaBufWriter {
             start_page,
+            num_pages,
             buffer,
             offset,
         } = old_writer;
-        let buffer_len = buffer.len();
 
-        // let reply =  self.page_file
-        //     .submit_write_at(start_page, &mut buffer, buffer_len)
-        //     .await?;
+        assert!(
+            offset == buffer.len() || self.bytes_written == self.expected_len,
+            "BUG: system failed sanity check ensuring partial page write is only possible \
+            at the end of the group."
+        );
 
-        // self.inflight_iops.push_back(reply);
+        let expected_len = buffer.len();
+        let start = self.metadata_pages.len();
+        for page_offset in 0..num_pages {
+            let page_id = PageId(start_page.0 + page_offset);
+            let mut metadata = PageMetadata::unassigned(page_id);
+            let unaligned_bytes = offset % DISK_PAGE_SIZE;
+            if unaligned_bytes != 0 && page_offset == num_pages - 1 {
+                metadata.data_len = unaligned_bytes as u32;
+            } else {
+                metadata.data_len = DISK_PAGE_SIZE as u32;
+            }
+            self.metadata_pages.push(metadata);
+        }
+
+        let reply = self
+            .page_file
+            .submit_write_at(&mut self.metadata_pages[start..], buffer)
+            .await?;
+
+        self.inflight_iops.push_back(InflightIop {
+            reply,
+            expected_len,
+        });
 
         Ok(())
     }
 
+    fn process_completed_iops(&mut self) -> io::Result<()> {
+        while let Some(iop) = self.inflight_iops.pop_front() {
+            match file::try_get_reply(&iop.reply) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    self.inflight_iops.push_front(iop);
+                },
+                Err(e) => return Err(e),
+                Ok(result) if result < iop.expected_len => {
+                    return Err(short_write_err());
+                },
+                Ok(_) => {},
+            }
+        }
+        Ok(())
+    }
+
     fn replace_writer_with_next_iop(&mut self) -> Option<DmaBufWriter> {
-        // if let Some(next_iop) = self.write_iops.next() {
-        //     let dma_buffer = self.ctx.alloc_pages(utils::disk_to_alloc_pages(next_iop.len()));
-        //     let writer = DmaBufWriter::new(PageId(next_iop.start), dma_buffer);
-        //     self.buffer_writer.replace(writer)
-        // } else {
-        //     self.buffer_writer.take()
-        // }
-        todo!()
+        if let Some(next_iop) = self.write_iops.next() {
+            let dma_buffer = self
+                .ctx
+                .alloc_pages(utils::disk_to_alloc_pages(next_iop.len()));
+            let writer = DmaBufWriter::new(
+                PageId(next_iop.start),
+                next_iop.len() as u32,
+                dma_buffer,
+            );
+            self.buffer_writer.replace(writer)
+        } else {
+            self.buffer_writer.take()
+        }
     }
 }
 
 struct DmaBufWriter {
     start_page: PageId,
+    num_pages: u32,
     buffer: DmaBuffer,
     offset: usize,
 }
 
 impl DmaBufWriter {
-    fn new(start_page: PageId, buffer: DmaBuffer) -> Self {
+    fn new(start_page: PageId, num_pages: u32, buffer: DmaBuffer) -> Self {
         Self {
             start_page,
+            num_pages,
             buffer,
             offset: 0,
         }
@@ -282,4 +359,13 @@ impl DmaBufWriter {
     fn remaining_capacity(&self) -> usize {
         self.buffer.len() - self.offset
     }
+}
+
+struct InflightIop {
+    reply: i2o2::ReplyReceiver,
+    expected_len: usize,
+}
+
+fn short_write_err() -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, "short write occurred")
 }

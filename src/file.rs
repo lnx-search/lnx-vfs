@@ -5,6 +5,8 @@ use std::io::ErrorKind;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use i2o2::TryGetResultError;
+
 use super::directory::{FileId, RingFile};
 use crate::buffer::DmaBuffer;
 
@@ -265,6 +267,19 @@ pub async fn wait_for_reply(reply: i2o2::ReplyReceiver) -> io::Result<usize> {
         Err(io::Error::from_raw_os_error(-result))
     } else {
         Ok(result as usize)
+    }
+}
+
+/// Attempt to get the result from the reply without waiting.
+pub fn try_get_reply(reply: &i2o2::ReplyReceiver) -> io::Result<usize> {
+    match reply.try_get_result() {
+        Ok(result) if result < 0 => Err(io::Error::from_raw_os_error(-result)),
+        Ok(result) => Ok(result as usize),
+        Err(TryGetResultError::Cancelled) => Err(io::Error::new(
+            ErrorKind::BrokenPipe,
+            TryGetResultError::Cancelled,
+        )),
+        Err(TryGetResultError::Pending) => Err(io::Error::from(ErrorKind::WouldBlock)),
     }
 }
 
