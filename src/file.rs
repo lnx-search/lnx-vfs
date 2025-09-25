@@ -91,16 +91,13 @@ impl<M: FileMode> File<M> {
     ///
     /// You must ensure the pointers remain valid for as long as the scheduler
     /// requires, this means the pointer must be valid until the `guard` (if passed)
-    pub async unsafe fn submit_read(
+    pub unsafe fn submit_read(
         &self,
         buffer_ptr: *mut u8,
         len: usize,
         offset: u64,
         guard: Option<DynamicGuard>,
-    ) -> io::Result<i2o2::ReplyReceiver> {
-        #[cfg(test)]
-        fail::fail_point!("file::ro::submit_read", crate::utils::parse_io_error_return);
-
+    ) -> impl Future<Output = io::Result<i2o2::ReplyReceiver>> + Send + '_ {
         let op = i2o2::opcode::Read::new(
             i2o2::types::Fixed(self.file_ref.ring_id()),
             buffer_ptr,
@@ -108,11 +105,19 @@ impl<M: FileMode> File<M> {
             offset,
         );
 
-        unsafe {
-            self.handle
-                .submit_async(op, guard)
-                .await
-                .map_err(io::Error::other)
+        async {
+            #[cfg(test)]
+            fail::fail_point!(
+                "file::ro::submit_read",
+                crate::utils::parse_io_error_return
+            );
+
+            unsafe {
+                self.handle
+                    .submit_async(op, guard)
+                    .await
+                    .map_err(io::Error::other)
+            }
         }
     }
 
@@ -284,5 +289,5 @@ pub fn try_get_reply(reply: &i2o2::ReplyReceiver) -> io::Result<usize> {
 }
 
 mod sealed {
-    pub trait Sealed {}
+    pub trait Sealed: Send + Sync + 'static {}
 }

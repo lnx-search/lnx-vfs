@@ -18,12 +18,15 @@ use crate::page_data::{
     MAX_SINGLE_IOP_NUM_PAGES,
     OpenPageFileError,
     PageFile,
+    ReadPageError,
     SubmitWriterError,
 };
 use crate::page_file_allocator::{PageFileAllocator, WriteAllocTx};
 use crate::{ctx, file, utils};
 
 const PREP_ALLOC_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_READ_AMPLIFICATION: f32 = 1.3;
+const MAX_READ_CONCURRENCY: usize = 128;
 
 /// The page file controller manages creation and cleanup of
 /// the page data files.
@@ -83,6 +86,58 @@ impl PageFileController {
             .clone();
 
         Ok(PageDataWriter::new(&self.ctx, page_file, alloc_txn, len))
+    }
+
+    /// Read multiple pages of data from a given page file returning a
+    /// channel receiver to collect the results.
+    ///
+    /// IOPS can be of any size and will automatically be split and coalesced.
+    pub async fn read_many(
+        &self,
+        page_file_id: PageFileId,
+        page_metadata: &[PageMetadata],
+    ) -> io::Result<tokio::task::JoinSet<Result<DmaBuffer, ReadPageError>>> {
+        let page_file = self
+            .page_files
+            .read()
+            .get(&page_file_id)
+            .cloned()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("page file not found: {page_file_id:?}"),
+                )
+            })?;
+
+        let iops = page_metadata.iter().map(|page| {
+            let start = page.id.0;
+            let end = page.id.0 + 1;
+            start..end
+        });
+
+        let coalesced_iops = crate::coalesce::coalesce_read(
+            iops,
+            MAX_SINGLE_IOP_NUM_PAGES as u32,
+            Some(MAX_READ_AMPLIFICATION),
+        );
+
+        let limiter = Arc::new(tokio::sync::Semaphore::new(MAX_READ_CONCURRENCY));
+        let mut join_set = tokio::task::JoinSet::new();
+        for iop in coalesced_iops {
+            let limiter = limiter.clone();
+            let page_file = page_file.clone();
+
+            let buffer = self.ctx.alloc_pages(utils::disk_to_alloc_pages(iop.len()));
+            let metadata_slice = get_page_range_to_page_indices(page_metadata, iop);
+            let pages_slice = page_metadata[metadata_slice].to_vec();
+
+            join_set.spawn(async move {
+                let _permit = limiter.acquire().await;
+                page_file.read_at(&pages_slice, buffer).await
+            });
+        }
+
+        Ok(join_set)
     }
 
     /// Attempts to get a [WriteAllocTx] from an existing page file allocator
@@ -376,6 +431,30 @@ impl DmaBufWriter {
     fn remaining_capacity(&self) -> usize {
         self.buffer.len() - self.offset
     }
+}
+
+fn get_page_range_to_page_indices(
+    metadata: &[PageMetadata],
+    page_range: Range<u32>,
+) -> Range<usize> {
+    let mut start = None;
+    let mut end = None;
+
+    for (idx, page) in metadata.iter().enumerate() {
+        if start.is_none() && page_range.contains(&page.id.0) {
+            start = Some(idx);
+        }
+
+        if start.is_some() && !page_range.contains(&page.id.0) {
+            end = Some(idx);
+            break;
+        }
+    }
+
+    let start = start.unwrap();
+    let end = end.unwrap();
+
+    start..end
 }
 
 struct InflightIop {
