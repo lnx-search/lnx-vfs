@@ -97,6 +97,10 @@ impl PageFileController {
         page_file_id: PageFileId,
         page_metadata: &[PageMetadata],
     ) -> io::Result<tokio::task::JoinSet<Result<DmaBuffer, ReadPageError>>> {
+        if page_metadata.is_empty() {
+            return Ok(tokio::task::JoinSet::new());
+        }
+
         let page_file = self
             .page_files
             .read()
@@ -451,6 +455,10 @@ fn get_page_range_to_page_indices(
         }
     }
 
+    if start.is_some() && end.is_none() {
+        end = Some(metadata.len());
+    }
+
     let start = start.unwrap();
     let end = end.unwrap();
 
@@ -464,4 +472,121 @@ struct InflightIop {
 
 fn short_write_err() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "short write occurred")
+}
+
+#[cfg(all(test, not(feature = "test-miri")))]
+mod tests {
+    use super::*;
+    use crate::buffer::ALLOC_PAGE_SIZE;
+
+    #[rstest::rstest]
+    #[case::empty1(0, &[], 0, &[])]
+    #[case::empty2(1, &[], ALLOC_PAGE_SIZE, &[])]
+    #[case::write_single_page1(1, &[(b"Hello, world!".as_slice(), 13)], ALLOC_PAGE_SIZE - 13, b"Hello, world!")]
+    #[case::write_single_page2(
+        1,
+        &[
+            (b"Hello, world 1!".as_slice(), 15),
+            (b"Hello, world 2!".as_slice(), 15),
+            (b"Hello, world 3!".as_slice(), 15),
+        ],
+        ALLOC_PAGE_SIZE - 15 * 3,
+        b"Hello, world 1!Hello, world 2!Hello, world 3!",
+    )]
+    #[case::write_to_eof(
+        1,
+        &[
+            ([4u8; ALLOC_PAGE_SIZE].as_ref(), ALLOC_PAGE_SIZE),
+            (b"Hello, world!".as_slice(), 0),
+        ],
+        0,
+        &[4u8; ALLOC_PAGE_SIZE],
+    )]
+    #[case::many_pages(
+        3,
+        &[
+            ([4u8; ALLOC_PAGE_SIZE].as_ref(), ALLOC_PAGE_SIZE),
+            ([4u8; 4].as_ref(), 4),
+        ],
+        ALLOC_PAGE_SIZE * 2 - 4,
+        &[4u8; ALLOC_PAGE_SIZE + 4],
+    )]
+    fn test_dma_buf_writer(
+        #[case] num_pages: u32,
+        #[case] writes: &[(&[u8], usize)],
+        #[case] expected_remaining_capacity: usize,
+        #[case] expected_buffer: &[u8],
+    ) {
+        let buffer = DmaBuffer::alloc_sys(num_pages as usize);
+        let mut writer = DmaBufWriter::new(PageId(0), num_pages, buffer);
+        for &(mut write, expect_n) in writes {
+            let n = writer.write(&mut write);
+            assert_eq!(n, expect_n);
+        }
+        assert_eq!(writer.remaining_capacity(), expected_remaining_capacity);
+        assert_eq!(&writer.buffer[..writer.offset], expected_buffer);
+    }
+
+    #[rstest::rstest]
+    #[case::single_page(
+        &[
+            PageMetadata::unassigned(PageId(4)),
+        ],
+        4..5,  // Page IDs
+        0..1
+    )]
+    #[case::many_dense_pages(
+        &[
+            PageMetadata::unassigned(PageId(10)),
+            PageMetadata::unassigned(PageId(11)),
+            PageMetadata::unassigned(PageId(12)),
+            PageMetadata::unassigned(PageId(13)),
+        ],
+        10..13,  // Page IDs
+        0..3
+    )]
+    #[case::many_sparse_pages1(
+        &[
+            PageMetadata::unassigned(PageId(10)),
+            PageMetadata::unassigned(PageId(11)),
+            PageMetadata::unassigned(PageId(15)),
+            PageMetadata::unassigned(PageId(17)),
+            PageMetadata::unassigned(PageId(32)),
+        ],
+        10..16,  // Page IDs
+        0..3
+    )]
+    #[case::many_sparse_pages2(
+        &[
+            PageMetadata::unassigned(PageId(9)),
+            PageMetadata::unassigned(PageId(11)),
+            PageMetadata::unassigned(PageId(15)),
+            PageMetadata::unassigned(PageId(17)),
+            PageMetadata::unassigned(PageId(32)),
+        ],
+        11..18,  // Page IDs
+        1..4,
+    )]
+    #[case::many_sparse_pages_end_read(
+        &[
+            PageMetadata::unassigned(PageId(9)),
+            PageMetadata::unassigned(PageId(11)),
+            PageMetadata::unassigned(PageId(15)),
+            PageMetadata::unassigned(PageId(17)),
+            PageMetadata::unassigned(PageId(32)),
+        ],
+        32..33,  // Page IDs
+        4..5,
+    )]
+    #[should_panic(expected = "")]
+    #[case::empty_metadata_and_range(&[], 0..0, 0..0)]
+    #[trace]
+    fn test_get_page_range_to_page_indices(
+        #[case] metadata: &[PageMetadata],
+        #[case] input_range: Range<u32>,
+        #[case] expected_range: Range<usize>,
+    ) {
+        let actual_range = get_page_range_to_page_indices(metadata, input_range);
+        assert_eq!(actual_range, expected_range);
+    }
 }
