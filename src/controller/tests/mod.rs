@@ -9,6 +9,7 @@ use crate::{ctx, file};
 
 mod checkpoint;
 mod metadata;
+mod page_file;
 mod wal;
 
 fn make_log_entry(

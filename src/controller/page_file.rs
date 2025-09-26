@@ -9,6 +9,7 @@ use parking_lot::RwLock;
 
 use crate::buffer::DmaBuffer;
 use crate::directory::FileGroup;
+use crate::disk_allocator::InitState;
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageId};
 use crate::page_data::{
@@ -22,7 +23,7 @@ use crate::page_data::{
     SubmitWriterError,
 };
 use crate::page_file_allocator::{PageFileAllocator, WriteAllocTx};
-use crate::{ctx, file, utils};
+use crate::{ctx, disk_allocator, file, utils};
 
 const PREP_ALLOC_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_READ_AMPLIFICATION: f32 = 1.3;
@@ -69,6 +70,11 @@ impl PageFileController {
                 max_page_file_id.0 + 1,
             )),
         })
+    }
+
+    /// Returns the number of page files managed by the controller.
+    pub fn num_page_files(&self) -> usize {
+        self.page_files.read().len()
     }
 
     /// Creates a new [PageDataWriter] for writing a new group of pages of a given length.
@@ -204,9 +210,19 @@ impl PageFileController {
             PageFile::create(self.ctx.clone(), file, next_page_file_id).await?;
 
         {
+            tracing::debug!(page_file_id = ?next_page_file_id, "adding new page file to allocator");
             let mut page_files = self.page_files.write();
-            page_files.insert(next_page_file_id, page_file);
+            let maybe_existing = page_files.insert(next_page_file_id, page_file);
+            assert!(
+                maybe_existing.is_none(),
+                "BUG: Page file was overwritten which should never happen"
+            );
         }
+
+        self.allocator.insert_page_file(
+            next_page_file_id,
+            disk_allocator::PageAllocator::new(InitState::Free),
+        );
 
         drop(creation_guard);
 
@@ -251,7 +267,7 @@ impl<'controller> PageDataWriter<'controller> {
         let write_iops =
             crate::coalesce::coalesce_write(page_iops, MAX_SINGLE_IOP_NUM_PAGES as u32);
 
-        Self {
+        let mut slf = Self {
             ctx,
             page_file,
             alloc_tx,
@@ -263,7 +279,9 @@ impl<'controller> PageDataWriter<'controller> {
             metadata_pages: Vec::new(),
             inflight_iops: VecDeque::new(),
             buffer_writer: None,
-        }
+        };
+        slf.replace_writer_with_next_iop();
+        slf
     }
 
     /// Write a buffer to the writer.

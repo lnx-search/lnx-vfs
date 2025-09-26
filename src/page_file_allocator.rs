@@ -106,6 +106,18 @@ pub(super) struct WriteAllocTx<'controller> {
     is_commited: bool,
 }
 
+impl std::fmt::Debug for WriteAllocTx<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WriteAllocTx(page_file_id={:?}, commited={}, num_spans={})",
+            self.page_file_id,
+            self.is_commited,
+            self.spans.len(),
+        )
+    }
+}
+
 impl WriteAllocTx<'_> {
     #[inline]
     /// Returns the page file ID the allocation is assigned to.
