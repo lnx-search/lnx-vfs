@@ -81,6 +81,8 @@ pub fn coalesce_read(
         if actual_gap <= allowed_gap {
             iops[i].end = right_iop.end;
             iops.remove(i + 1);
+        } else {
+            i += 1;
         }
     }
 
@@ -152,6 +154,12 @@ mod tests {
         8,
         Some(1.5),
         &[],
+    )]
+    #[case::previous_bug1(
+        &[0..1, 4..5, 63000..63001],
+        8,
+        Some(1.3),
+        &[0..1, 4..5, 63000..63001],
     )]
     fn test_coalesce_read(
         #[case] ranges: &[Range<u32>],
