@@ -50,27 +50,32 @@ impl PageFileController {
     ) -> Result<Self, OpenPageFileError> {
         let directory = ctx.directory();
         let file_ids = directory.list_dir(FileGroup::Pages).await;
+        let allocator = metadata_controller.create_page_file_allocator();
 
-        let mut page_files = foldhash::HashMap::new();
+        let mut page_files = Vec::with_capacity(file_ids.len());
         let mut max_page_file_id = PageFileId(0);
         for file_id in file_ids {
             let file = directory.get_rw_file(FileGroup::Pages, file_id).await?;
             let page_file = PageFile::open(ctx.clone(), file).await?;
             let page_file_id = page_file.id();
             max_page_file_id = cmp::max(max_page_file_id, page_file_id);
-            page_files.insert(page_file_id, page_file);
+            page_files.push(page_file);
         }
 
-        let allocator = metadata_controller.create_page_file_allocator();
-
-        Ok(Self {
+        let slf = Self {
             ctx,
             allocator,
-            page_files: RwLock::new(page_files),
+            page_files: RwLock::new(foldhash::HashMap::with_capacity(page_files.len())),
             next_page_file_id: tokio::sync::Mutex::new(PageFileId(
                 max_page_file_id.0 + 1,
             )),
-        })
+        };
+
+        for page_file in page_files {
+            slf.add_new_page_file(page_file)
+        }
+
+        Ok(slf)
     }
 
     /// Returns the number of page files managed by the controller.
@@ -223,6 +228,9 @@ impl PageFileController {
         let next_page_file_id = *creation_guard;
         *creation_guard = PageFileId(next_page_file_id.0 + 1);
 
+        #[cfg(test)]
+        fail::fail_point!("page_file_controller::create_new_page_file", |_| Ok(()));
+
         let directory = self.ctx.directory();
         let file_id = directory.create_new_file(FileGroup::Pages).await?;
 
@@ -230,11 +238,20 @@ impl PageFileController {
 
         let page_file =
             PageFile::create(self.ctx.clone(), file, next_page_file_id).await?;
+        self.add_new_page_file(page_file);
+
+        drop(creation_guard);
+
+        Ok(())
+    }
+
+    fn add_new_page_file(&self, page_file: PageFile) {
+        let page_file_id = page_file.id();
 
         {
-            tracing::debug!(page_file_id = ?next_page_file_id, "adding new page file to allocator");
+            tracing::debug!(page_file_id = ?page_file_id, "adding new page file to allocator");
             let mut page_files = self.page_files.write();
-            let maybe_existing = page_files.insert(next_page_file_id, page_file);
+            let maybe_existing = page_files.insert(page_file_id, page_file);
             assert!(
                 maybe_existing.is_none(),
                 "BUG: Page file was overwritten which should never happen"
@@ -242,13 +259,9 @@ impl PageFileController {
         }
 
         self.allocator.insert_page_file(
-            next_page_file_id,
+            page_file_id,
             disk_allocator::PageAllocator::new(InitState::Free),
         );
-
-        drop(creation_guard);
-
-        Ok(())
     }
 }
 
@@ -304,6 +317,15 @@ impl<'controller> PageDataWriter<'controller> {
         };
         slf.replace_writer_with_next_iop();
         slf
+    }
+
+    /// The total number of pages allocated for this write.
+    pub fn num_pages_allocated(&self) -> usize {
+        self.alloc_tx
+            .spans()
+            .iter()
+            .map(|span| span.span_len as usize)
+            .sum()
     }
 
     /// Write a buffer to the writer.
@@ -461,7 +483,7 @@ impl std::fmt::Debug for ReadIop {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "ReadIop(mask={:0b}, num_pages={})",
+            "ReadIop(mask=0b{:<08b}, num_pages={})",
             self.mask,
             self.mask.count_ones()
         )
@@ -556,6 +578,30 @@ fn short_write_err() -> io::Error {
 mod tests {
     use super::*;
     use crate::buffer::ALLOC_PAGE_SIZE;
+
+    #[test]
+    fn test_read_iop_debug() {
+        let iop = ReadIop {
+            pages: vec![].into_iter(),
+            mask: 0b0100_0000,
+            offset: 0,
+            buffer: DmaBuffer::alloc_empty(),
+        };
+        assert_eq!(format!("{iop:?}"), "ReadIop(mask=0b01000000, num_pages=1)");
+    }
+
+    #[test]
+    fn test_read_iop_advance_next_bit() {
+        let mut iop = ReadIop {
+            pages: vec![].into_iter(),
+            mask: 0b0010_0000,
+            offset: 0,
+            buffer: DmaBuffer::alloc_empty(),
+        };
+
+        let offset = iop.advance_to_next_set_bit();
+        assert_eq!(offset, 5);
+    }
 
     #[rstest::rstest]
     #[case::empty1(0, &[], 0, &[])]

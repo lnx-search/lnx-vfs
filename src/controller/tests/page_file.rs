@@ -30,7 +30,7 @@ async fn test_open_page_file_controller(#[values(0, 1, 4)] num_existing_files: u
 #[case::one_page_full(DISK_PAGE_SIZE as u64, &[DISK_PAGE_SIZE as u32])]
 #[case::many_pages(60 << 10, &[DISK_PAGE_SIZE as u32, 28_672])]
 #[should_panic(expected = "number of pages exceeds maximum page file size")]
-#[case::panic_file_too_large(15 << 30, &[])]
+#[case::panic_file_too_large(18 << 30, &[])]
 #[tokio::test]
 async fn test_controller_write(
     #[case] data_len: u64,
@@ -64,6 +64,28 @@ async fn test_controller_write(
         assert_eq!(metadata.data_len, *expected_size);
         assert!(!metadata.context.iter().all(|c| *c == 0));
     }
+}
+
+#[tokio::test]
+async fn test_controller_write_uses_existing_page_file() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let ctx = ctx::FileContext::for_test(false).await;
+
+    create_blank_page_file(ctx.clone(), PageFileId(1)).await;
+
+    let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
+    let controller = PageFileController::open(ctx.clone(), &metadata_controller)
+        .await
+        .expect("open page file");
+    assert_eq!(controller.num_page_files(), 1);
+
+    let writer = controller
+        .create_writer(100)
+        .await
+        .expect("writer should be created");
+    assert_eq!(controller.num_page_files(), 1);
+    assert_eq!(writer.num_pages_allocated(), 1);
 }
 
 #[rstest::rstest]
@@ -179,7 +201,7 @@ async fn test_controller_write(
             context: [0; 40],
         },
     ],
-    &[0, 1, 2],
+    &[0,  2],
 )]
 #[tokio::test]
 async fn test_controller_read(
@@ -307,6 +329,8 @@ async fn test_controller_read_page_file_not_found_err() {
         .expect_err("finish should fail");
     assert_eq!(err.to_string(), "page file not found: PageFileId(0)");
 }
+
+async fn test_controller() {}
 
 async fn create_blank_page_file(
     ctx: Arc<ctx::FileContext>,
