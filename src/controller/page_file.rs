@@ -26,7 +26,12 @@ use crate::page_data::{
 use crate::page_file_allocator::{PageFileAllocator, WriteAllocTx};
 use crate::{ctx, disk_allocator, file, utils};
 
-const PREP_ALLOC_TIMEOUT: Duration = Duration::from_secs(5);
+const PREP_ALLOC_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_millis(200)
+} else {
+    Duration::from_secs(5)
+};
+
 const MAX_READ_AMPLIFICATION: f32 = 1.3;
 const MAX_READ_CONCURRENCY: usize = 128;
 
@@ -110,7 +115,7 @@ impl PageFileController {
         page_file_id: PageFileId,
         page_metadata: &[PageMetadata],
     ) -> io::Result<tokio::task::JoinSet<Result<ReadIop, ReadPageError>>> {
-        tracing::debug!("reading many pages");
+        tracing::trace!("reading many pages");
 
         let page_file = self
             .page_files
@@ -133,7 +138,6 @@ impl PageFileController {
             ));
         }
 
-        tracing::info!("got page file");
         let iops = page_metadata.iter().map(|page| {
             let start = page.id.0;
             let end = page.id.0 + 1;
@@ -141,18 +145,15 @@ impl PageFileController {
         });
 
         let iops = iops.collect::<Vec<_>>();
-        tracing::info!(iops = ?iops, "iopp[s");
         let coalesced_iops = crate::coalesce::coalesce_read(
             iops,
             MAX_SINGLE_IOP_NUM_PAGES as u32,
             Some(MAX_READ_AMPLIFICATION),
         );
-        tracing::info!(?coalesced_iops, "coalesced");
 
         let limiter = Arc::new(tokio::sync::Semaphore::new(MAX_READ_CONCURRENCY));
         let mut join_set = tokio::task::JoinSet::new();
         for iop in coalesced_iops {
-            tracing::debug!(iop = ?iop, "dispatching");
             let limiter = limiter.clone();
             let page_file = page_file.clone();
 
@@ -162,9 +163,7 @@ impl PageFileController {
 
             join_set.spawn(async move {
                 let _permit = limiter.acquire().await;
-                tracing::debug!("waiting!");
                 let (mask, buffer) = page_file.read_at(&pages_slice, buffer).await?;
-                tracing::debug!("done!");
                 Ok(ReadIop {
                     pages: pages_slice.into_iter(),
                     mask,
@@ -229,7 +228,11 @@ impl PageFileController {
         *creation_guard = PageFileId(next_page_file_id.0 + 1);
 
         #[cfg(test)]
-        fail::fail_point!("page_file_controller::create_new_page_file", |_| Ok(()));
+        fail::fail_point!("page_file_controller::create_new_page_file_delay", |time| {
+            let millis = time.and_then(|s| s.parse().ok()).unwrap_or(0);
+            std::thread::sleep(Duration::from_millis(millis));
+            Ok(())
+        });
 
         let directory = self.ctx.directory();
         let file_id = directory.create_new_file(FileGroup::Pages).await?;
@@ -279,11 +282,23 @@ pub struct PageDataWriter<'controller> {
 
     expected_len: u64,
     bytes_written: u64,
+    completed_final_flush: bool,
 
     metadata_pages: Vec<PageMetadata>,
 
     inflight_iops: VecDeque<InflightIop>,
     buffer_writer: Option<DmaBufWriter>,
+}
+
+impl std::fmt::Debug for PageDataWriter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PageDataWriter(page_file_id={:?}, expected_len={})",
+            self.page_file.id(),
+            self.expected_len
+        )
+    }
 }
 
 impl<'controller> PageDataWriter<'controller> {
@@ -310,6 +325,7 @@ impl<'controller> PageDataWriter<'controller> {
 
             expected_len,
             bytes_written: 0,
+            completed_final_flush: false,
 
             metadata_pages: Vec::new(),
             inflight_iops: VecDeque::new(),
@@ -330,6 +346,8 @@ impl<'controller> PageDataWriter<'controller> {
 
     /// Write a buffer to the writer.
     pub async fn write(&mut self, mut buf: &[u8]) -> Result<(), SubmitWriterError> {
+        tracing::trace!(n_bytes = buf.len(), "write");
+
         if self.bytes_written + buf.len() as u64 > self.expected_len {
             return Err(io::Error::new(
                 io::ErrorKind::QuotaExceeded,
@@ -344,7 +362,7 @@ impl<'controller> PageDataWriter<'controller> {
                 let n = buffer_writer.write(&mut buf);
                 self.bytes_written += n as u64;
 
-                if n == buf.len() {
+                if buf.is_empty() {
                     break;
                 }
             }
@@ -356,6 +374,10 @@ impl<'controller> PageDataWriter<'controller> {
             panic!(
                 "BUG: writer should have capacity yet it did not consume the full buffer"
             );
+        }
+
+        if self.bytes_written == self.expected_len {
+            self.flush_buffer().await?;
         }
 
         self.process_completed_iops()?;
@@ -370,6 +392,8 @@ impl<'controller> PageDataWriter<'controller> {
     pub async fn finish(
         mut self,
     ) -> Result<(WriteAllocTx<'controller>, Vec<PageMetadata>), SubmitWriterError> {
+        tracing::trace!("finishing writer");
+
         if self.bytes_written < self.expected_len {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -392,6 +416,10 @@ impl<'controller> PageDataWriter<'controller> {
 
     /// Flush the full memory buffer and submit the buffer to be written to the page file.
     async fn flush_buffer(&mut self) -> Result<(), SubmitWriterError> {
+        if self.completed_final_flush {
+            return Ok(());
+        }
+
         let maybe_old_writer = self.replace_writer_with_next_iop();
 
         let Some(old_writer) = maybe_old_writer else {
@@ -404,6 +432,8 @@ impl<'controller> PageDataWriter<'controller> {
             buffer,
             offset,
         } = old_writer;
+
+        tracing::trace!(n_bytes = offset, "flushing buffer");
 
         assert!(
             offset == buffer.len() || self.bytes_written == self.expected_len,
@@ -435,6 +465,10 @@ impl<'controller> PageDataWriter<'controller> {
             expected_len,
         });
 
+        if self.bytes_written == self.expected_len {
+            self.completed_final_flush = true;
+        }
+
         Ok(())
     }
 
@@ -443,6 +477,7 @@ impl<'controller> PageDataWriter<'controller> {
             match file::try_get_reply(&iop.reply) {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     self.inflight_iops.push_front(iop);
+                    break;
                 },
                 Err(e) => return Err(e),
                 Ok(result) if result < iop.expected_len => {

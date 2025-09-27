@@ -14,7 +14,7 @@ use crate::page_data::{
     MAX_SINGLE_IOP_NUM_PAGES,
     page_associated_data,
 };
-use crate::{ctx, file};
+use crate::{ctx, file, utils};
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevented the system from opening a page file.
@@ -132,6 +132,13 @@ impl PageFile {
         file: file::RWFile,
         id: PageFileId,
     ) -> Result<Self, CreatePageFileError> {
+        #[cfg(test)]
+        fail::fail_point!("page_file::create", |err| {
+            Err(utils::parse_io_error_return::<()>(err)
+                .map_err(CreatePageFileError::IO)
+                .unwrap_err())
+        });
+
         let mut buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
 
         let header_associated_data =

@@ -300,6 +300,10 @@ async fn test_controller_write_too_many_bytes_err() {
         .await
         .expect("writer should be created");
     assert_eq!(controller.num_page_files(), 1);
+    assert_eq!(
+        format!("{writer:?}"),
+        "PageDataWriter(page_file_id=PageFileId(1), expected_len=100)"
+    );
 
     let err = writer
         .write(&[0; 500])
@@ -330,7 +334,107 @@ async fn test_controller_read_page_file_not_found_err() {
     assert_eq!(err.to_string(), "page file not found: PageFileId(0)");
 }
 
-async fn test_controller() {}
+#[tokio::test]
+async fn test_controller_short_write_err() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let ctx = ctx::FileContext::for_test(false).await;
+    let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
+    let controller = PageFileController::open(ctx.clone(), &metadata_controller)
+        .await
+        .expect("open page file");
+    assert_eq!(controller.num_page_files(), 0);
+
+    let mut writer = controller
+        .create_writer(100)
+        .await
+        .expect("writer should be created");
+    assert_eq!(controller.num_page_files(), 1);
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg(
+        "i2o2::fail::try_get_result",
+        "1*return(pending)->1*return(50)",
+    )
+    .unwrap();
+
+    writer.write(&[1; 100]).await.expect("submit write");
+    let err = writer.finish().await.expect_err("finish should fail");
+
+    assert_eq!(err.to_string(), "short write occurred");
+    scenario.teardown();
+
+    let mut writer = controller
+        .create_writer(100)
+        .await
+        .expect("writer should be created");
+    assert_eq!(controller.num_page_files(), 1);
+
+    // Checks that when process_completed_iops is called after the write, that
+    // it handles the short write correctly.
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("i2o2::fail::try_get_result", "return(50)").unwrap();
+
+    let err = writer
+        .write(&[1; 100])
+        .await
+        .expect_err("write should fail");
+
+    assert_eq!(err.to_string(), "short write occurred");
+    scenario.teardown();
+}
+
+#[tokio::test]
+async fn test_controller_create_new_page_file_timeout_err() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let ctx = ctx::FileContext::for_test(false).await;
+    let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
+    let controller = PageFileController::open(ctx.clone(), &metadata_controller)
+        .await
+        .expect("open page file");
+    assert_eq!(controller.num_page_files(), 0);
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg(
+        "page_file_controller::create_new_page_file_delay",
+        "return(300)",
+    )
+    .unwrap();
+
+    let err = controller
+        .create_writer(100)
+        .await
+        .expect_err("writer should error");
+    assert_eq!(controller.num_page_files(), 0);
+    assert_eq!(err.to_string(), "timed out");
+
+    scenario.teardown();
+}
+
+#[tokio::test]
+async fn test_controller_create_new_page_file_err() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let ctx = ctx::FileContext::for_test(false).await;
+    let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
+    let controller = PageFileController::open(ctx.clone(), &metadata_controller)
+        .await
+        .expect("open page file");
+    assert_eq!(controller.num_page_files(), 0);
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("page_file::create", "return(-4)").unwrap();
+
+    let err = controller
+        .create_writer(100)
+        .await
+        .expect_err("writer should error");
+    assert_eq!(controller.num_page_files(), 0);
+    assert_eq!(err.to_string(), "timed out");
+
+    scenario.teardown();
+}
 
 async fn create_blank_page_file(
     ctx: Arc<ctx::FileContext>,
