@@ -1,28 +1,24 @@
-use crate::layout::page_metadata::PageMetadata;
 use super::storage::StorageController;
+use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::SubmitWriterError;
 
-/// A [StorageWriteTx] allows for performing multiple writes across multiple
+/// A [StorageWriteTxn] allows for performing multiple writes across multiple
 /// page group IDs as part of a single transaction.
-pub struct StorageWriteTx<'c> {
+pub struct StorageWriteTxn<'c> {
     transaction_id: u64,
     controller: &'c StorageController,
     ops: Vec<TxnOp<'c>>,
 }
 
-impl std::fmt::Debug for StorageWriteTx<'_> {
+impl std::fmt::Debug for StorageWriteTxn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "StorageWriteTx(tx_id={})",
-            self.transaction_id,
-        )
+        write!(f, "StorageWriteTx(tx_id={})", self.transaction_id,)
     }
 }
 
-impl<'c> StorageWriteTx<'c> {
-    /// Creates a new [StorageWriteTx].
+impl<'c> StorageWriteTxn<'c> {
+    /// Creates a new [StorageWriteTxn].
     pub fn new(transaction_id: u64, controller: &'c StorageController) -> Self {
         Self {
             transaction_id,
@@ -76,7 +72,10 @@ impl<'c> StorageWriteTx<'c> {
         old_page_group_id: PageGroupId,
         new_page_group_id: PageGroupId,
     ) {
-        self.ops.push(TxnOp::Reassign { old_page_group_id, new_page_group_id });
+        self.ops.push(TxnOp::Reassign {
+            old_page_group_id,
+            new_page_group_id,
+        });
     }
 
     /// Commit the current transaction and ensure all operations are durable.
@@ -97,5 +96,5 @@ enum TxnOp<'c> {
     },
     Delete {
         page_group_id: PageGroupId,
-    }
+    },
 }

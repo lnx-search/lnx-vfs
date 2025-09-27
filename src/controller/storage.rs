@@ -77,18 +77,18 @@ impl StorageController {
     }
 
     /// Create a new storage write transaction.
-    pub fn create_write_tx(&self) -> super::tx_write::StorageWriteTx<'_> {
+    pub fn create_write_txn(&self) -> super::txn_write::StorageWriteTxn<'_> {
         let transaction_id = self.transaction_id_counter.fetch_add(1, Ordering::Relaxed);
-        super::tx_write::StorageWriteTx::new(transaction_id, self)
+        super::txn_write::StorageWriteTxn::new(transaction_id, self)
     }
 
     /// Create a new reader for a given [PageGroupId].
-    pub fn create_reader(
+    pub fn create_read_txn(
         &self,
         group: PageGroupId,
-    ) -> Option<super::tx_read::StorageReader<'_>> {
+    ) -> Option<super::txn_read::StorageReader<'_>> {
         let lookup = self.metadata_controller.find_first_page(group)?;
-        Some(super::tx_read::StorageReader::new(group, lookup, self))
+        Some(super::txn_read::StorageReader::new(group, lookup, self))
     }
 
     /// Creates a new writer for a given length buffer.
