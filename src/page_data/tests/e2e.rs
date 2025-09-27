@@ -96,7 +96,7 @@ async fn test_reader_understands_writer(
         let num_alloc_pages = (total_delta * DISK_PAGE_SIZE) / ALLOC_PAGE_SIZE;
 
         let buffer = ctx.alloc_pages(num_alloc_pages);
-        let buffer = page_file.read_at(&block, buffer).await.unwrap();
+        let (_, buffer) = page_file.read_at(&block, buffer).await.unwrap();
 
         for validate_pos in validate_range {
             let start = validate_pos * DISK_PAGE_SIZE;

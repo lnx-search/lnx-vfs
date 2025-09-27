@@ -176,12 +176,15 @@ impl PageFile {
     ///
     /// This will avoid needlessly decrypting and verifying unused pages.
     ///
-    /// Unlike `submit_write_at`, `read_at` will block (asynchronously) until teh read is complete.
+    /// Unlike `submit_write_at`, `read_at` will block (asynchronously) until the read is complete.
+    ///
+    /// A mask is returned alongside the buffer to indicate what pages were populated in the event
+    /// that the read was sparse.
     pub async fn read_at(
         &self,
         page_metadata_entries: &[PageMetadata],
         mut buffer: DmaBuffer,
-    ) -> Result<DmaBuffer, ReadPageError> {
+    ) -> Result<(u8, DmaBuffer), ReadPageError> {
         let num_contiguous_pages =
             validate_read_metadata_entries(page_metadata_entries, buffer.len())?;
         let buffer_len = num_contiguous_pages as usize * DISK_PAGE_SIZE;
@@ -218,7 +221,7 @@ impl PageFile {
             .await
             .expect("spawn blocking task failed")?;
 
-        Ok(buffer)
+        Ok((mask, buffer))
     }
 
     /// Write the buffer (potentially containing multiple pages) to the page file

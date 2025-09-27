@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt::Formatter;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -94,18 +95,26 @@ impl PageFileController {
         Ok(PageDataWriter::new(&self.ctx, page_file, alloc_txn, len))
     }
 
+    #[tracing::instrument(skip(self, page_metadata), fields(num_pages = page_metadata.len()))]
     /// Read multiple pages of data from a given page file returning a
     /// channel receiver to collect the results.
     ///
-    /// IOPS can be of any size and will automatically be split and coalesced.
+    /// The provided set of pages to read must be sorted from the smallest page ID to largest.
     pub async fn read_many(
         &self,
         page_file_id: PageFileId,
         page_metadata: &[PageMetadata],
-    ) -> io::Result<tokio::task::JoinSet<Result<DmaBuffer, ReadPageError>>> {
+    ) -> io::Result<tokio::task::JoinSet<Result<ReadIop, ReadPageError>>> {
         if page_metadata.is_empty() {
             return Ok(tokio::task::JoinSet::new());
+        } else if !page_metadata.is_sorted_by_key(|page| page.id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "provided pages to read are not sorted",
+            ));
         }
+
+        tracing::debug!("reading many pages");
 
         let page_file = self
             .page_files
@@ -119,21 +128,26 @@ impl PageFileController {
                 )
             })?;
 
+        tracing::info!("got page file");
         let iops = page_metadata.iter().map(|page| {
             let start = page.id.0;
             let end = page.id.0 + 1;
             start..end
         });
 
+        let iops = iops.collect::<Vec<_>>();
+        tracing::info!(iops = ?iops, "iopp[s");
         let coalesced_iops = crate::coalesce::coalesce_read(
             iops,
             MAX_SINGLE_IOP_NUM_PAGES as u32,
             Some(MAX_READ_AMPLIFICATION),
         );
+        tracing::info!(?coalesced_iops, "coalesced");
 
         let limiter = Arc::new(tokio::sync::Semaphore::new(MAX_READ_CONCURRENCY));
         let mut join_set = tokio::task::JoinSet::new();
         for iop in coalesced_iops {
+            tracing::debug!(iop = ?iop, "dispatching");
             let limiter = limiter.clone();
             let page_file = page_file.clone();
 
@@ -143,7 +157,15 @@ impl PageFileController {
 
             join_set.spawn(async move {
                 let _permit = limiter.acquire().await;
-                page_file.read_at(&pages_slice, buffer).await
+                tracing::debug!("waiting!");
+                let (mask, buffer) = page_file.read_at(&pages_slice, buffer).await?;
+                tracing::debug!("done!");
+                Ok(ReadIop {
+                    pages: pages_slice.into_iter(),
+                    mask,
+                    offset: 0,
+                    buffer,
+                })
             });
         }
 
@@ -422,6 +444,42 @@ impl<'controller> PageDataWriter<'controller> {
         } else {
             self.buffer_writer.take()
         }
+    }
+}
+
+/// A completed read IOP spanning a range of pages.
+pub struct ReadIop {
+    pages: std::vec::IntoIter<PageMetadata>,
+    mask: u8,
+    offset: usize,
+    buffer: DmaBuffer,
+}
+
+impl std::fmt::Debug for ReadIop {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ReadIop(mask={:0b}, num_pages={})",
+            self.mask,
+            self.mask.count_ones()
+        )
+    }
+}
+
+impl ReadIop {
+    /// Gets the next page in the IOP and returns the slice of data for the page
+    /// along with the metadata of the page.
+    pub fn next_page(&mut self) -> Option<(PageMetadata, &[u8])> {
+        let page = self.pages.next()?;
+        let offset = self.advance_to_next_set_bit();
+        Some((page, &self.buffer[offset..][..page.data_len as usize]))
+    }
+
+    fn advance_to_next_set_bit(&mut self) -> usize {
+        while self.mask & (1 << self.offset) == 0 {
+            self.offset += 1;
+        }
+        self.offset
     }
 }
 

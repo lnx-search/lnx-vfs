@@ -128,7 +128,7 @@ async fn test_page_file_read_at() {
     raw_file.sync_all().unwrap();
 
     let buffer = ctx.alloc::<{ 32 << 10 }>();
-    let buffer = page_file
+    let (_, buffer) = page_file
         .read_at(&[page_metadata], buffer)
         .await
         .expect("read should be submitted successfully");
@@ -263,25 +263,6 @@ async fn test_page_file_write(
     let num_alloc_pages = (num_pages * DISK_PAGE_SIZE) / ALLOC_PAGE_SIZE;
     let mut buffer = ctx.alloc_pages(num_alloc_pages);
     buffer.fill(4);
-
-    // let mut context_buffer = vec![0; DISK_PAGE_SIZE * num_pages];
-    // for page_id in 0..num_pages {
-    //     let associated_data = page_associated_data(file.id(), PageFileId(1), PageId(page_id as u32));
-    //     let data_offset = page_id * DISK_PAGE_SIZE;
-    //     let ctx_offset = page_id * 40;
-    //
-    //     crate::page_data::encode::encode_page_data(
-    //         None,
-    //         &associated_data,
-    //         &mut buffer[data_offset..][..DISK_PAGE_SIZE],
-    //         &mut context_buffer[ctx_offset..][..40],
-    //     ).unwrap();
-    // }
-    //
-    // for metadata in metadata.iter_mut() {
-    //     let ctx_offset = metadata.id.0 as usize * 40;
-    //     metadata.context.copy_from_slice(&context_buffer[ctx_offset..][..40]);
-    // }
 
     let expected_len = buffer.len();
     let reply = page_file
