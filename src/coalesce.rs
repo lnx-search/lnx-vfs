@@ -7,6 +7,7 @@
 //! potentially corrupting data.
 //!
 
+use std::cmp;
 use std::ops::Range;
 
 use smallvec::SmallVec;
@@ -40,7 +41,8 @@ pub fn coalesce_read(
     let mut iops = SmallVec::<[Range<u32>; 8]>::new();
 
     // Perform a simple concat on ranges which are continuous to one another
-    let mut ranges = ranges.into_iter().peekable();
+    let mut ranges =
+        SplitLargeIops::new(ranges.into_iter(), max_iop_page_spans).peekable();
     while let Some(range) = ranges.next() {
         let mut span = range.clone();
 
@@ -101,6 +103,42 @@ pub fn coalesce_write(
     coalesce_read(ranges, max_iop_page_spans, Some(1.0))
 }
 
+struct SplitLargeIops<I> {
+    iter: I,
+    max_iop_size: usize,
+    temp_range: Range<u32>,
+}
+
+impl<I> SplitLargeIops<I> {
+    fn new(iter: I, max_iop_size: u32) -> Self {
+        Self {
+            iter,
+            max_iop_size: max_iop_size as usize,
+            temp_range: 0..0,
+        }
+    }
+}
+
+impl<I> Iterator for SplitLargeIops<I>
+where
+    I: Iterator<Item = Range<u32>>,
+{
+    type Item = Range<u32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.temp_range.is_empty() {
+            self.temp_range = self.iter.next()?;
+        }
+
+        let take_n = cmp::min(self.temp_range.len(), self.max_iop_size);
+        let start = self.temp_range.start;
+        let end = start + take_n as u32;
+        self.temp_range = end..self.temp_range.end;
+
+        Some(start..end)
+    }
+}
+
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests {
     use super::*;
@@ -122,7 +160,7 @@ mod tests {
         &[0..20, 20..25, 25..26, 30..35],
         6,
         None,
-        &[0..20, 20..26, 30..35],
+        &[0..6, 6..12, 12..18, 18..20, 20..26, 30..35],
     )]
     #[case::sparse_pages_eager_merge_with_factor(
         &[0..2, 6..8, 10..12, 16..20],
@@ -186,7 +224,7 @@ mod tests {
     #[case::contiguous_ranges_obey_limits(
         &[0..20, 20..25, 25..26, 30..35],
         6,
-        &[0..20, 20..26, 30..35],
+        &[0..6, 6..12, 12..18, 18..20, 20..26, 30..35],
     )]
     #[case::sparse_pages_not_merged(
         &[0..2, 6..8, 10..12, 16..20],

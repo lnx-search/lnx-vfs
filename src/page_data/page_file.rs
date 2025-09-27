@@ -366,7 +366,6 @@ impl PageFile {
 
     fn resolve_pos(&self, page_id: PageId) -> u64 {
         let relative_position = page_id.0 as u64 * DISK_PAGE_SIZE as u64;
-        dbg!(relative_position);
         relative_position + self.data_offset
     }
 }
@@ -383,7 +382,11 @@ fn validate_write_metadata_entries(
     } else if metadata.len() > MAX_SINGLE_IOP_NUM_PAGES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "iop size too large",
+            format!(
+                "iop size too large, expected: {} IOPS, got: {}",
+                MAX_SINGLE_IOP_NUM_PAGES,
+                metadata.len(),
+            ),
         ));
     }
 

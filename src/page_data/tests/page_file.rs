@@ -219,7 +219,7 @@ async fn test_page_file_read_at_decode_err(
     3,
 )]
 #[should_panic(
-    expected = "write should be submitted successfully: IO(Custom { kind: InvalidInput, error: \"iop size too large\" })"
+    expected = "write should be submitted successfully: IO(Custom { kind: InvalidInput, error: \"iop size too large, expected: 8 IOPS, got: 9\" })"
 )]
 #[case::too_big_iop_err(
     vec![

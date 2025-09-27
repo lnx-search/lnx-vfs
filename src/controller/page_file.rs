@@ -105,15 +105,6 @@ impl PageFileController {
         page_file_id: PageFileId,
         page_metadata: &[PageMetadata],
     ) -> io::Result<tokio::task::JoinSet<Result<ReadIop, ReadPageError>>> {
-        if page_metadata.is_empty() {
-            return Ok(tokio::task::JoinSet::new());
-        } else if !page_metadata.is_sorted_by_key(|page| page.id) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "provided pages to read are not sorted",
-            ));
-        }
-
         tracing::debug!("reading many pages");
 
         let page_file = self
@@ -127,6 +118,15 @@ impl PageFileController {
                     format!("page file not found: {page_file_id:?}"),
                 )
             })?;
+
+        if page_metadata.is_empty() {
+            return Ok(tokio::task::JoinSet::new());
+        } else if !page_metadata.is_sorted_by_key(|page| page.id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "provided pages to read are not sorted",
+            ));
+        }
 
         tracing::info!("got page file");
         let iops = page_metadata.iter().map(|page| {
@@ -335,6 +335,8 @@ impl<'controller> PageDataWriter<'controller> {
                 "BUG: writer should have capacity yet it did not consume the full buffer"
             );
         }
+
+        self.process_completed_iops()?;
 
         Ok(())
     }
