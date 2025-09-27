@@ -431,7 +431,7 @@ async fn test_controller_create_new_page_file_err() {
         .await
         .expect_err("writer should error");
     assert_eq!(controller.num_page_files(), 0);
-    assert_eq!(err.to_string(), "timed out");
+    assert_eq!(err.to_string(), "Interrupted system call (os error 4)");
 
     scenario.teardown();
 }
