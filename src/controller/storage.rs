@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::metadata::{MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
 use crate::checkpoint::WriteCheckpointError;
-use crate::controller::page_file::PageFileController;
+use crate::controller::page_file::{PageDataWriter, PageFileController};
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::layout::PageGroupId;
@@ -89,6 +89,14 @@ impl StorageController {
     ) -> Option<super::tx_read::StorageReader<'_>> {
         let lookup = self.metadata_controller.find_first_page(group)?;
         Some(super::tx_read::StorageReader::new(group, lookup, self))
+    }
+
+    /// Creates a new writer for a given length buffer.
+    pub fn create_writer(
+        &self,
+        len: u64,
+    ) -> impl Future<Output = Result<PageDataWriter<'_>, CreatePageFileError>> + '_ {
+        self.page_file_controller.create_writer(len)
     }
 }
 

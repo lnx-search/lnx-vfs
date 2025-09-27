@@ -344,6 +344,12 @@ impl<'controller> PageDataWriter<'controller> {
             .sum()
     }
 
+    #[inline]
+    /// Returns the ID of the page file this writer is attached to.
+    pub fn page_file_id(&self) -> PageFileId {
+        self.page_file.id()
+    }
+
     /// Write a buffer to the writer.
     pub async fn write(&mut self, mut buf: &[u8]) -> Result<(), SubmitWriterError> {
         tracing::trace!(n_bytes = buf.len(), "write");
@@ -389,7 +395,7 @@ impl<'controller> PageDataWriter<'controller> {
     ///
     /// The operation will error if there is still data expected to be written
     /// or if a remaining IOP errors.
-    pub async fn finish(
+    pub(super) async fn finish(
         mut self,
     ) -> Result<(WriteAllocTx<'controller>, Vec<PageMetadata>), SubmitWriterError> {
         tracing::trace!("finishing writer");
