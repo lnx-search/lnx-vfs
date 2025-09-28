@@ -5,14 +5,15 @@ use lz4_flex::frame::{BlockMode, BlockSize};
 use rkyv::rancor;
 use rkyv::util::AlignedVec;
 
-use super::file_metadata::Encryption;
-use super::{PageGroupId, encrypt, integrity};
 use super::encrypt::EncryptError;
+use super::file_metadata::Encryption;
 use super::page_metadata::PageMetadata;
+use super::{PageFileId, PageGroupId, encrypt, integrity};
 use crate::utils;
 
-const HEADER_SIZE: usize =
-    size_of::<u64>() + size_of::<u64>() + size_of::<[u8; 32]>() + size_of::<[u8; 40]>();
+/// The required header size of the log block buffer.
+pub const HEADER_SIZE: usize =
+    size_of::<u64>() + size_of::<u64>() + size_of::<[u8; 32]>();
 const BUFFER_ALIGN: usize = align_of::<Vec<LogOp>>();
 
 /// Try to decode a set of transaction operations from the provided buffer.
@@ -24,30 +25,18 @@ pub fn decode_log_block(
     associated_data: &[u8],
     buffer: &mut [u8],
     ops: &mut Vec<LogOp>,
-) -> Result<u64, DecodeLogBlockError> {
-    if buffer.len() < HEADER_SIZE {
+) -> Result<(), DecodeLogBlockError> {
+    if buffer.len() < 40 {
         return Err(DecodeLogBlockError::BufferTooSmall);
     }
 
-    let header_bytes = &mut buffer[..HEADER_SIZE];
-    let [header_slice, header_ctx] =
-        header_bytes.get_disjoint_mut([0..16, 16..56]).unwrap();
-    decrypt_or_integrity_check(cipher, associated_data, header_slice, header_ctx)?;
-
-    let transaction_id = u64::from_le_bytes(header_slice[0..8].try_into().unwrap());
-    let buffer_len =
-        u64::from_le_bytes(header_slice[8..16].try_into().unwrap()) as usize;
-
-    if buffer.len() < HEADER_SIZE + buffer_len {
-        return Err(DecodeLogBlockError::BufferTooSmall);
-    }
-
-    let slice = [56..HEADER_SIZE, HEADER_SIZE..HEADER_SIZE + buffer_len];
+    let slice = [0..40, 40..buffer.len()];
     let [data_ctx, data_slice] = buffer.get_disjoint_mut(slice).unwrap();
     decrypt_or_integrity_check(cipher, associated_data, data_slice, data_ctx)?;
 
-    let mut decrypted_buffer = &buffer[HEADER_SIZE..][..buffer_len];
-    let mut data_buffer = AlignedVec::<BUFFER_ALIGN>::with_capacity(buffer_len);
+    let mut decrypted_buffer = &buffer[HEADER_SIZE..];
+    let mut data_buffer =
+        AlignedVec::<BUFFER_ALIGN>::with_capacity(decrypted_buffer.len());
     let mut decoder = lz4_flex::frame::FrameDecoder::new(&mut decrypted_buffer);
     data_buffer
         .extend_from_reader(&mut decoder)
@@ -63,7 +52,30 @@ pub fn decode_log_block(
         ops.push(op);
     }
 
-    Ok(transaction_id)
+    Ok(())
+}
+
+/// Decode the header of the log block.
+pub fn decode_log_header(
+    cipher: Option<&encrypt::Cipher>,
+    associated_data: &[u8],
+    buffer: &mut [u8],
+) -> Result<(u64, usize), DecodeLogBlockError> {
+    if buffer.len() < HEADER_SIZE {
+        return Err(DecodeLogBlockError::BufferTooSmall);
+    }
+
+    let header_bytes = &mut buffer[..HEADER_SIZE];
+    let [header_slice, header_ctx] = header_bytes
+        .get_disjoint_mut([0..16, 16..HEADER_SIZE])
+        .unwrap();
+    decrypt_or_integrity_check(cipher, associated_data, header_slice, header_ctx)?;
+
+    let transaction_id = u64::from_le_bytes(header_slice[0..8].try_into().unwrap());
+    let buffer_len =
+        u64::from_le_bytes(header_slice[8..16].try_into().unwrap()) as usize;
+
+    Ok((transaction_id, buffer_len))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,22 +105,20 @@ pub fn encode_log_block(
     transaction_id: u64,
     ops: &Vec<LogOp>,
     mut buffer: &mut Vec<u8>,
-) -> Result<(), EncodeLogBlockError> {
+) -> Result<usize, EncodeLogBlockError> {
     use rkyv::api::high;
     use rkyv::ser::writer::IoWriter;
 
     assert!(buffer.is_empty(), "buffer must be empty");
 
     // Add the header bytes
-    buffer.resize(size_of::<LogEntryHeader>(), 0);
+    buffer.resize(HEADER_SIZE + 40, 0);
 
-    let frame_info = lz4_flex::frame::FrameInfo {
-        block_mode: BlockMode::Linked,
-        block_size: BlockSize::Max4MB,
-        content_checksum: false,
-        block_checksums: false,
-        ..Default::default()
-    };
+    let frame_info = lz4_flex::frame::FrameInfo::new()
+        .block_mode(BlockMode::Linked)
+        .block_size(BlockSize::Max1MB)
+        .content_checksum(false)
+        .block_checksums(false);
 
     let mut encoder = lz4_flex::frame::FrameEncoder::with_frame_info(frame_info, buffer);
     let mut writer = IoWriter::new(encoder);
@@ -131,12 +141,13 @@ pub fn encode_log_block(
     encrypt_or_integrity_encode(cipher, associated_data, header_slice, header_ctx)
         .map_err(EncodeLogBlockError::EncryptionFail)?;
 
-    let slice = [56..HEADER_SIZE, HEADER_SIZE..buffer.len()];
-    let [data_ctx, data_slice] = buffer.get_disjoint_mut(slice).unwrap();
+    let data_buffer = &mut buffer[HEADER_SIZE..];
+    let slice = [0..40, 40..data_buffer.len()];
+    let [data_ctx, data_slice] = data_buffer.get_disjoint_mut(slice).unwrap();
     encrypt_or_integrity_encode(cipher, associated_data, data_slice, data_ctx)
         .map_err(EncodeLogBlockError::EncryptionFail)?;
 
-    Ok(())
+    Ok(buffer.len())
 }
 
 fn encrypt_or_integrity_encode(
@@ -194,21 +205,6 @@ pub enum EncodeLogBlockError {
     EncryptionFail(EncryptError),
 }
 
-/// A single entry in the `PageOperationLog`.
-pub struct LogEntryHeader {
-    /// The transaction ID that groups multiple operations together
-    /// to form a single atomic transaction.
-    ///
-    /// The transaction ID can never be `u64::MAX`.
-    pub transaction_id: u64,
-    /// The length of the entry buffer in its compressed form.
-    pub buffer_len: u64,
-    /// Context for header verification and integrity checks.
-    pub header_context: [u8; 40],
-    /// The context bytes for encryption or integrity checks.
-    pub context: [u8; 40],
-}
-
 #[repr(u32)]
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[cfg_attr(test, derive(Eq, PartialEq))]
@@ -228,6 +224,12 @@ pub enum LogOp {
 #[cfg_attr(test, rkyv(derive(Debug), compare(PartialEq)))]
 /// An update to a targe page group.
 pub struct WriteOp {
+    /// The page file ID that the change was applied to.
+    pub page_file_id: PageFileId,
+    /// The page group that is assigned the altered pages.
+    ///
+    /// This must match the group IDs attached to the pages.
+    pub page_group_id: PageGroupId,
     /// The pages altered by the write operation.
     pub altered_pages: Vec<PageMetadata>,
 }

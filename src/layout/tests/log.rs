@@ -1,14 +1,23 @@
-use crate::layout::encrypt;
-use crate::layout::log::{LogOp, encode_log_block, decode_log_block, WriteOp, FreeOp, ReassignOp};
-use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageId, PageFileId, PageGroupId};
 use super::{cipher_1, cipher_2};
-
+use crate::layout::log::{
+    FreeOp,
+    HEADER_SIZE,
+    LogOp,
+    ReassignOp,
+    WriteOp,
+    decode_log_block,
+    decode_log_header,
+    encode_log_block,
+};
+use crate::layout::page_metadata::PageMetadata;
+use crate::layout::{PageFileId, PageGroupId, PageId, encrypt};
 
 #[rstest::rstest]
 #[case::empty_ops(vec![])]
 #[case::single_op_write_one_page(vec![
     LogOp::Write(WriteOp {
+        page_file_id: PageFileId(0),
+        page_group_id: PageGroupId(1),
         altered_pages: vec![
             PageMetadata {
                 id: PageId(1),
@@ -23,6 +32,8 @@ use super::{cipher_1, cipher_2};
 ])]
 #[case::single_op_write_many_page(vec![
     LogOp::Write(WriteOp {
+        page_file_id: PageFileId(0),
+        page_group_id: PageGroupId(1),
         altered_pages: vec![
             PageMetadata {
                 id: PageId(1),
@@ -67,6 +78,8 @@ use super::{cipher_1, cipher_2};
         page_group_id: PageGroupId(1),
     }),
     LogOp::Write(WriteOp {
+        page_file_id: PageFileId(0),
+        page_group_id: PageGroupId(1),
         altered_pages: vec![
             PageMetadata {
                 id: PageId(1),
@@ -98,19 +111,24 @@ fn test_log_encode_decode(
         transaction_id,
         &ops,
         &mut buffer,
-    ).expect("block should be encoded");
+    )
+    .expect("block should be encoded");
 
     assert!(!buffer.is_empty());
 
+    let (recovered_txn_id, buffer_len) =
+        decode_log_header(cipher.as_ref(), associated_data, &mut buffer[..HEADER_SIZE])
+            .expect("block should be decoded");
+    assert_eq!(buffer.len() - HEADER_SIZE, buffer_len);
+
     let mut recovered_ops = Vec::new();
-    let recovered_txn_id = decode_log_block(
+    decode_log_block(
         cipher.as_ref(),
         associated_data,
-        &mut buffer,
+        &mut buffer[HEADER_SIZE..],
         &mut recovered_ops,
-    ).expect("block should be decoded");
+    )
+    .expect("block should be decoded");
     assert_eq!(recovered_txn_id, transaction_id);
     assert_eq!(ops, recovered_ops);
 }
-
-
