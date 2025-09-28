@@ -45,9 +45,9 @@ async fn test_reader_single_read(
         .with_offset(offset)
         .build();
 
-    let mut buffer = vec![0; read_size];
+    let mut buffer = Vec::new();
     reader
-        .read_exact(&mut buffer)
+        .read_n(&mut buffer, read_size)
         .await
         .expect("read to buffer");
     assert_eq!(&buffer, &sample_buffer[..read_size]);
@@ -66,9 +66,9 @@ async fn test_reader_short_read_error() {
     fail::cfg("i2o2::fail::poll_reply_future", "return(12)").unwrap();
 
     // We use the fail point injection to simulate this, not an actual kernel call.
-    let mut buffer = vec![0; 512];
+    let mut buffer = Vec::new();
     let err = reader
-        .read_exact(&mut buffer)
+        .read_n(&mut buffer, 512)
         .await
         .expect_err("read exact should return error due to short read");
     assert_eq!(err.kind(), ErrorKind::BrokenPipe);
@@ -89,9 +89,9 @@ async fn test_reader_unexpected_eof() {
 
     let mut reader = StreamReaderBuilder::new(ctx.clone(), file).build();
 
-    let mut buffer = vec![0; 8 << 10];
+    let mut buffer = Vec::new();
     let err = reader
-        .read_exact(&mut buffer)
+        .read_n(&mut buffer, 8 << 10)
         .await
         .expect_err("read exact should return error due to unexpected EOF");
     assert_eq!(err.kind(), ErrorKind::UnexpectedEof);

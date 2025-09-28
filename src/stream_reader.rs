@@ -106,35 +106,19 @@ impl StreamReader {
         self.position
     }
 
-    /// Read bytes from the reader into the buffer or return [ErrorKind::UnexpectedEof]
-    /// if the buffer can not be filled entirely.
-    pub async fn read_exact(&mut self, buffer: &mut [u8]) -> io::Result<()> {
-        let n = self.read(buffer).await?;
-        if n != buffer.len() {
-            Err(io::Error::new(
-                ErrorKind::UnexpectedEof,
-                "could not fill buffer completely",
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
     /// Read N bytes from the reader and copy the data into the buffer.
     ///
     /// This returns the number of bytes read.
-    pub async fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+    pub async fn read_n(&mut self, output: &mut Vec<u8>, n: usize) -> io::Result<usize> {
         if !self.file_len_init {
             self.file_len = self.file.get_len().await?;
             self.file_len_init = true;
         }
 
-        let mut read_n = output.len();
-        let mut output_cursor = 0;
+        let mut read_n = n;
         loop {
-            let n = self.fill_using_last_read(&mut output[output_cursor..]);
+            let n = self.fill_using_last_read(output, read_n);
             read_n -= n;
-            output_cursor += n;
 
             if read_n == 0 {
                 self.position += output.len() as u64;
@@ -194,10 +178,10 @@ impl StreamReader {
         &self.read_buffer[self.read_buffer_cursor..self.read_buffer_init_end]
     }
 
-    fn fill_using_last_read(&mut self, output: &mut [u8]) -> usize {
+    fn fill_using_last_read(&mut self, output: &mut Vec<u8>, limit: usize) -> usize {
         let buffered_data = self.remaining_buffer();
-        let take_n = cmp::min(output.len(), buffered_data.len());
-        output[..take_n].copy_from_slice(&buffered_data[..take_n]);
+        let take_n = cmp::min(limit, buffered_data.len());
+        output.extend_from_slice(&buffered_data[..take_n]);
         self.read_buffer_cursor += take_n;
         take_n
     }
