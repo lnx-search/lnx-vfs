@@ -11,7 +11,7 @@ type AlignedBuffer = AlignedVec<{ align_of::<PageChangeCheckpoint>() }>;
 
 #[derive(Debug, Copy, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[cfg_attr(test, derive(Eq, PartialEq))]
-#[rkyv(derive(Debug))]
+#[cfg_attr(test, rkyv(derive(Debug), compare(PartialEq)))]
 /// Metadata about the page and the data stored within it when serialized on disk.
 pub struct PageMetadata {
     /// The block this page contains data for.

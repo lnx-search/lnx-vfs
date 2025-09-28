@@ -39,12 +39,14 @@ pub struct MetadataHeader {
 pub(super) fn op_log_associated_data(
     file_id: FileId,
     log_file_id: u64,
+    sequence_id: u32,
     start_pos: u64,
-) -> [u8; 20] {
-    let mut buffer = [0; 20];
+) -> [u8; 24] {
+    let mut buffer = [0; 24];
     buffer[0..4].copy_from_slice(&file_id.as_u32().to_le_bytes());
     buffer[4..12].copy_from_slice(&start_pos.to_le_bytes());
     buffer[12..20].copy_from_slice(&log_file_id.to_le_bytes());
+    buffer[20..24].copy_from_slice(&sequence_id.to_le_bytes());
     buffer
 }
 

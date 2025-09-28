@@ -6,7 +6,7 @@ extern crate test;
 
 use crate::ctx;
 use crate::directory::FileGroup;
-use crate::layout::log::{LogEntry, LogOp};
+use crate::layout::log::{LogEntryHeader, LogOp};
 use crate::layout::{PageFileId, PageId};
 use crate::page_op_log::writer::LogFileWriter;
 
@@ -48,7 +48,7 @@ fn run_log_writer_single_entry_flush<const N_ITERS: usize>(
     let file_id = rt.block_on(ctx.make_tmp_rw_file(FileGroup::Wal));
     let mut writer = LogFileWriter::new(ctx, file_id, 0, 0);
 
-    let entry = LogEntry {
+    let entry = LogEntryHeader {
         sequence_id: 0,
         transaction_id: 0,
         transaction_n_entries: 1,

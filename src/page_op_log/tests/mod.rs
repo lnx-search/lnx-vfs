@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::layout::log::{LogEntry, LogOp};
+use crate::layout::log::{LogEntryHeader, LogOp};
 use crate::layout::{PageFileId, PageGroupId, PageId, page_metadata};
 use crate::page_op_log::writer::LogFileWriter;
 use crate::{ctx, file};
@@ -22,7 +22,7 @@ async fn write_log_entries(
         .expect("Failed to create writer");
 
     for page_id in 0..num_entries {
-        let entry = LogEntry {
+        let entry = LogEntryHeader {
             transaction_id: fastrand::u64(..),
             transaction_n_entries: fastrand::u32(..),
             sequence_id: 0,

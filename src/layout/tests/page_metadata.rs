@@ -8,6 +8,7 @@ use crate::layout::page_metadata::{
     encode_page_metadata_changes,
 };
 use crate::layout::{PageGroupId, PageId, encrypt};
+use super::{cipher_1, cipher_2};
 
 const SAMPLE_PAGE_METADATA: PageMetadata = PageMetadata {
     id: PageId(1),
@@ -102,14 +103,4 @@ fn test_decode_err_most_errors(
 fn test_empty_page_check() {
     let metadata = PageMetadata::null();
     assert!(metadata.is_unassigned());
-}
-
-fn cipher_1() -> encrypt::Cipher {
-    let key = Key::from_slice(b"F8E4FeD0098cF3Bf7968E1AC7Bbfacee");
-    XChaCha20Poly1305::new(key)
-}
-
-fn cipher_2() -> encrypt::Cipher {
-    let key = Key::from_slice(b"8f4935bDBd0A771bA20fda47f44bf2bf");
-    XChaCha20Poly1305::new(key)
 }
