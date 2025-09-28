@@ -1,21 +1,22 @@
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::{io, mem};
+use std::{cmp, io, mem};
 
 use crate::buffer::DmaBuffer;
 use crate::directory::{FileGroup, FileId};
 use crate::file::DISK_ALIGN;
-use crate::layout::log::LogEntry;
+use crate::layout::log::{LogEntryHeader, LogOp};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{file_metadata, log};
 use crate::page_op_log::MetadataHeader;
 use crate::utils::{align_down, align_up};
 use crate::{ctx, file};
 
-const BUFFER_SIZE: usize = 128 << 10;
+const BUFFER_SIZE: usize = 512 << 10;
 const SEQUENCE_ID_START: u32 = 1;
 static ORDER_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
+const MAX_TEMP_BUFFER_SIZE: usize = 512 << 10;
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevent the writer from opening the log.
@@ -47,20 +48,19 @@ pub struct LogFileWriter {
 
     log_offset: u64,
     current_pos: u64,
-    block_absolute_pos: u64,
+    buffered_pos: u64,
 
-    /// The log block that is currently being filled with [LogEntry]s.
-    /// When this is filled it produces a 512 byte block which is then
-    /// written to the `block_buffer`.
-    wip_block: log::LogBlock,
+    temp_buffer: Vec<u8>,
+    temp_buffer_offset: usize,
+
     /// The in-memory buffer of log blocks before they are written to disk.
     /// This is used to optimise the number of IOPs submitted to the IO scheduler.
-    block_buffer: DmaBuffer,
+    buffer: DmaBuffer,
     /// The offset that points to the end of the end of the initialised buffer,
     /// aka the end of where log blocks have been written to.
-    block_offset: usize,
+    buffer_offset: usize,
     /// The position in the buffer that has been submitted for writing to disk.
-    block_buffer_write_pos: usize,
+    buffer_write_pos: usize,
 
     /// The unique monotonic ID assigned to each log entry.
     next_sequence_id: u32,
@@ -128,12 +128,14 @@ impl LogFileWriter {
 
             log_offset,
             current_pos: 0,
-            block_absolute_pos: log::LOG_BLOCK_SIZE as u64,
+            buffered_pos: 0,
 
-            wip_block: log::LogBlock::default(),
-            block_buffer: buffer,
-            block_offset: log::LOG_BLOCK_SIZE,
-            block_buffer_write_pos: 0,
+            temp_buffer: Vec::new(),
+            temp_buffer_offset: 0,
+
+            buffer,
+            buffer_offset: 0,
+            buffer_write_pos: 0,
 
             next_sequence_id: SEQUENCE_ID_START,
 
@@ -155,11 +157,8 @@ impl LogFileWriter {
 
     #[inline]
     /// Returns the position of the writer cursor.
-    ///
-    /// NOTE: This is not strictly tied to the file cursor, instead it is
-    ///       the absolute position of the next block as if it is about to be written.
     pub fn position(&self) -> u64 {
-        self.log_offset + self.block_absolute_pos
+        self.buffered_pos
     }
 
     /// Returns ID of the file being written to by the writer.
@@ -181,8 +180,8 @@ impl LogFileWriter {
     /// to persist the data safely.
     pub async fn write_log(
         &mut self,
-        entry: LogEntry,
-        metadata: Option<PageMetadata>,
+        transaction_id: u64,
+        ops: &Vec<LogOp>,
     ) -> io::Result<()> {
         #[cfg(test)]
         fail::fail_point!("wal::write_log", |_| Err(io::Error::other(
@@ -190,7 +189,7 @@ impl LogFileWriter {
         )));
 
         self.ensure_file_writeable()?;
-        let result = self.write_log_inner(entry, metadata).await;
+        let result = self.write_log_inner(transaction_id, ops).await;
         if result.is_err() {
             tracing::error!(result = ?result, "write call failed, locking out log writer");
             self.locked_out = true;
@@ -219,34 +218,45 @@ impl LogFileWriter {
 
     pub(self) async fn write_log_inner(
         &mut self,
-        mut entry: LogEntry,
-        metadata: Option<PageMetadata>,
+        transaction_id: u64,
+        ops: &Vec<LogOp>,
     ) -> io::Result<()> {
-        self.assign_writer_context(&mut entry);
+        let sequence_id = self.next_sequence_id();
 
         // Used as a sanity check that the behaviour is consistent with what other parts
         // other the system expects.
         #[cfg(debug_assertions)]
-        sanity_check_log_values(&entry, metadata.as_ref());
+        sanity_check_log_values(transaction_id, ops);
 
-        let (entry, metadata) = match self.wip_block.push_entry(entry, metadata) {
-            Ok(()) => return Ok(()),
-            Err(pair) => pair,
-        };
+        let associated_data = super::op_log_associated_data(
+            self.file.id(),
+            self.log_file_id,
+            sequence_id,
+            self.position(),
+        );
 
-        self.flush_log_block_to_mem()?;
+        log::encode_log_block(
+            self.ctx.cipher(),
+            &associated_data,
+            transaction_id,
+            ops,
+            &mut self.temp_buffer,
+        ).map_err(|err| io::Error::new(ErrorKind::Other, err))?;
 
-        // When the block is full, we can reset it as the alignment will be maintained.
-        self.wip_block.reset();
-        self.block_offset += log::LOG_BLOCK_SIZE;
-        self.block_absolute_pos += log::LOG_BLOCK_SIZE as u64;
-
-        let result = self.wip_block.push_entry(entry, metadata);
-        assert!(result.is_ok(), "block should never be full after reset");
-
-        if self.block_offset >= self.block_buffer.len() {
-            tracing::debug!("memory buffer capacity reached, flushing...");
+        let mut bytes_copied = self.copy_tmp_buffer_into_write_buffer();
+        while bytes_copied < self.temp_buffer.len() {
             self.write_buffer().await?;
+            bytes_copied += self.copy_tmp_buffer_into_write_buffer();
+        }
+
+        if self.buffer_offset >= self.buffer.len() {
+            self.write_buffer().await?;
+        }
+
+        self.temp_buffer.clear();
+        self.temp_buffer_offset = 0;
+        if self.temp_buffer.capacity() >= MAX_TEMP_BUFFER_SIZE {
+            self.temp_buffer.shrink_to(MAX_TEMP_BUFFER_SIZE);
         }
 
         Ok(())
@@ -254,7 +264,6 @@ impl LogFileWriter {
 
     pub(self) async fn sync_inner(&mut self) -> io::Result<()> {
         // Flush any intermediate buffers.
-        self.flush_log_block_to_mem()?;
         self.write_buffer().await?;
 
         if let Some(iop) = self.inflight_iop.take() {
@@ -262,25 +271,7 @@ impl LogFileWriter {
             complete_iop(iop).await?;
         }
 
-        Ok(())
-    }
-
-    fn flush_log_block_to_mem(&mut self) -> io::Result<()> {
-        let start_position = self.position() - log::LOG_BLOCK_SIZE as u64;
-        let buffer_start = self.block_offset - log::LOG_BLOCK_SIZE;
-        let buffer = &mut self.block_buffer[buffer_start..][..log::LOG_BLOCK_SIZE];
-        let associated_data = super::op_log_associated_data(
-            self.file.id(),
-            self.log_file_id,
-            start_position,
-        );
-        log::encode_log_block(
-            self.ctx.cipher(),
-            &associated_data,
-            &self.wip_block,
-            buffer,
-        )
-        .map_err(io::Error::other)?;
+        // TODO: self.file.fdatasync().await?;
 
         Ok(())
     }
@@ -288,9 +279,9 @@ impl LogFileWriter {
     /// Submit the current memory buffer to the IO scheduler for writing
     /// and wait on the last submitted iop if applicable.
     async fn write_buffer(&mut self) -> io::Result<()> {
-        let delta_len = self.block_offset - self.block_buffer_write_pos;
+        let delta_len = self.buffer_offset - self.buffer_write_pos;
         let aligned_len = align_up(delta_len, DISK_ALIGN);
-        let buffer = &self.block_buffer[self.block_buffer_write_pos..][..aligned_len];
+        let buffer = &self.buffer[self.buffer_write_pos..][..aligned_len];
         let write_offset = self.log_offset + self.current_pos;
 
         let buffer_ptr = buffer.as_ptr();
@@ -305,7 +296,7 @@ impl LogFileWriter {
         // We advance the write pos cursor while still maintaining alignment.
         // We can do this because future writes will replay the unaligned chunk
         // of the buffer until it is long enough to be aligned.
-        self.block_buffer_write_pos += align_down(delta_len, DISK_ALIGN);
+        self.buffer_write_pos += align_down(delta_len, DISK_ALIGN);
 
         // Advance the file cursor, for the same reason as the block buffer pos
         // we only advance the cursor by aligned steps.
@@ -317,11 +308,11 @@ impl LogFileWriter {
         // just after calling this method is when the buffer is full, in which case we create
         // a new buffer from the arena anyway. When dealing with a partial buffer it is
         // during a fsync which will immediately wait for the IOP to complete.
-        let guard = if self.block_offset >= self.block_buffer.len() {
+        let guard = if self.buffer_offset >= self.buffer.len() {
             let buffer = self.take_memory_buffer();
             Arc::new(buffer) as file::DynamicGuard
         } else {
-            self.block_buffer.share_guard() as file::DynamicGuard
+            self.buffer.share_guard() as file::DynamicGuard
         };
 
         // SAFETY: our op is safe to send across the thread boundaries and the buffer
@@ -348,9 +339,10 @@ impl LogFileWriter {
         Ok(())
     }
 
-    fn assign_writer_context(&mut self, entry: &mut LogEntry) {
-        entry.sequence_id = self.next_sequence_id;
+    fn next_sequence_id(&mut self) -> u32 {
+        let sequence_id = self.next_sequence_id;
         self.next_sequence_id += 1;
+        sequence_id
     }
 
     fn ensure_file_writeable(&mut self) -> io::Result<()> {
@@ -364,17 +356,22 @@ impl LogFileWriter {
         }
     }
 
+    fn copy_tmp_buffer_into_write_buffer(&mut self) -> usize {
+        let capacity = self.buffer.len() - self.buffer_offset;
+        let remaining_temp = &self.temp_buffer[self.temp_buffer_offset..];
+        let take_n = cmp::min(capacity, remaining_temp.len());
+        self.buffer[self.buffer_offset..][..take_n]
+            .copy_from_slice(&remaining_temp[..take_n]);
+        self.buffer_offset += take_n;
+        self.temp_buffer_offset += take_n;
+        take_n
+    }
+
     fn take_memory_buffer(&mut self) -> DmaBuffer {
         let new_buffer = self.ctx.alloc::<BUFFER_SIZE>();
-        let block_buffer = mem::replace(&mut self.block_buffer, new_buffer);
-        self.block_buffer_write_pos = 0;
-        self.block_offset = log::LOG_BLOCK_SIZE;
-
-        // An absolute hack that we should destroy. This "fixes" the fact that the buffer
-        // leaves a 512B empty tail... Which should really be fixed on the buffer side
-        // but writing the memory correctly and then doing all the writing is... painful.
-        self.block_absolute_pos += log::LOG_BLOCK_SIZE as u64;
-
+        let block_buffer = mem::replace(&mut self.buffer, new_buffer);
+        self.buffer_write_pos = 0;
+        self.buffer_offset = 0;
         block_buffer
     }
 }
@@ -402,13 +399,19 @@ struct InflightIop {
 }
 
 #[cfg(debug_assertions)]
-fn sanity_check_log_values(entry: &LogEntry, metadata: Option<&PageMetadata>) {
-    assert_ne!(entry.transaction_n_entries, 0);
-    assert_ne!(entry.transaction_id, u64::MAX);
+fn sanity_check_log_values(transaction_id: u64, ops: &[LogOp]) {
+    assert_ne!(transaction_id, u64::MAX);
 
-    if let Some(metadata) = metadata {
-        assert_eq!(entry.page_id, metadata.id);
-        assert!(metadata.next_page_id > metadata.id);
+    for op in ops {
+        match op {
+            LogOp::Write(op) => {
+                for metadata in op.altered_pages.iter() {
+                    assert!(metadata.next_page_id > metadata.id);
+                }
+            },
+            LogOp::Free(_) => {},
+            LogOp::Reassign(_) => {},
+        }
     }
 }
 
@@ -426,7 +429,7 @@ mod tests {
 
         let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
-        let entry = LogEntry {
+        let entry = LogEntryHeader {
             sequence_id: 0,
             transaction_id: 0,
             transaction_n_entries: 1,
