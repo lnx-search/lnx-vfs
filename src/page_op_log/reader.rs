@@ -4,6 +4,7 @@ use std::sync::Arc;
 use super::MetadataHeader;
 use crate::directory::{FileGroup, FileId};
 use crate::layout::file_metadata::Encryption;
+use crate::layout::log::LogOp;
 use crate::layout::{file_metadata, log};
 use crate::stream_reader::{StreamReader, StreamReaderBuilder};
 use crate::{ctx, file};
@@ -41,13 +42,31 @@ pub enum LogOpenReadError {
     EncryptionStatusMismatch,
 }
 
+macro_rules! handle_io_result {
+    ($res:expr) => {{
+        match $res {
+            Ok(n) if n < log::HEADER_SIZE => {
+                tracing::debug!("wal log reader has reached eof");
+                return Ok(None);
+            },
+            Ok(_) => {},
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                tracing::debug!("wal log reader has reached eof");
+                return Ok(None);
+            },
+            Err(err) => return Err(err.into()),
+        }
+    }};
+}
+
 /// The [LogFileReader] decodes
 pub struct LogFileReader {
     ctx: Arc<ctx::FileContext>,
     log_file_id: u64,
     order_key: u64,
+    expected_sequence_id: u32,
     reader: StreamReader,
-    scratch_space: Box<[u8; log::LOG_BLOCK_SIZE]>,
+    temp_buffer: Vec<u8>,
 }
 
 impl std::fmt::Debug for LogFileReader {
@@ -121,7 +140,8 @@ impl LogFileReader {
             log_file_id,
             order_key,
             reader,
-            scratch_space: Box::new([0; log::LOG_BLOCK_SIZE]),
+            expected_sequence_id: 0,
+            temp_buffer: Vec::new(),
         }
     }
 
@@ -145,40 +165,50 @@ impl LogFileReader {
     /// of writes near the end of the file.
     ///
     /// Returns `Ok(None)` once at EOF.
-    pub async fn next_block(&mut self) -> Result<Option<log::LogBlock>, LogDecodeError> {
+    pub async fn next_transaction(
+        &mut self,
+        ops: &mut Vec<LogOp>,
+    ) -> Result<Option<u64>, LogDecodeError> {
         let position = self.reader.position();
-        let result = self.reader.read_exact(&mut self.scratch_space[..]).await;
 
-        match result {
-            Ok(()) => {},
-            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                tracing::debug!("wal log reader has reached eof");
-                return Ok(None);
-            },
-            Err(err) => return Err(err.into()),
-        }
+        let result = self
+            .reader
+            .read_n(&mut self.temp_buffer, log::HEADER_SIZE)
+            .await;
+        handle_io_result!(result);
 
-        // TODO: This could be improved and removed if the writer stopped adding zeroed blocks
-        //       to the end of files.
-        if self.scratch_space.iter().take(40).all(|b| *b == 0) {
-            return Ok(Some(log::LogBlock::default()));
-        }
-
+        self.expected_sequence_id += 1;
         let associated_data = super::op_log_associated_data(
             self.reader.file_id(),
             self.log_file_id,
+            self.expected_sequence_id,
             position,
         );
 
-        let block = log::decode_log_block(
+        let (transaction_id, buffer_len) = log::decode_log_header(
             self.ctx.cipher(),
             &associated_data,
-            &mut self.scratch_space[..],
+            &mut self.temp_buffer,
         )
         .map_err(LogDecodeError::Decode)?;
 
-        tracing::trace!(num_entries = block.num_entries(), "wal log recovered block");
+        self.temp_buffer.clear();
 
-        Ok(Some(block))
+        let result = self.reader.read_n(&mut self.temp_buffer, buffer_len).await;
+        handle_io_result!(result);
+
+        let ops_start_len = ops.len();
+        log::decode_log_block(
+            self.ctx.cipher(),
+            &associated_data,
+            &mut self.temp_buffer,
+            ops,
+        )
+        .map_err(LogDecodeError::Decode)?;
+        let num_ops = ops.len() - ops_start_len;
+
+        tracing::trace!(num_ops = num_ops, "wal log recovered transaction");
+
+        Ok(Some(transaction_id))
     }
 }

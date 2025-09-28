@@ -1,9 +1,10 @@
 use chacha20poly1305::{Key, KeyInit, XChaCha20Poly1305};
+
 use crate::layout::encrypt;
 
 mod file_metadata;
-mod page_metadata;
 mod log;
+mod page_metadata;
 
 fn cipher_1() -> encrypt::Cipher {
     let key = Key::from_slice(b"F8E4FeD0098cF3Bf7968E1AC7Bbfacee");

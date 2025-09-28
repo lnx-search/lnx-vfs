@@ -9,8 +9,7 @@ use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
 use crate::directory::FileGroup;
-use crate::layout::log::LogEntry;
-use crate::layout::page_metadata::PageMetadata;
+use crate::layout::log::LogOp;
 use crate::{ctx, file, page_op_log};
 
 const SYNC_COALESCE_DURATION: Duration = Duration::from_millis(5);
@@ -70,6 +69,7 @@ pub struct WalController {
     /// Enqueued operations from other tasks that are waiting for the writer
     /// lock. This allows the system to coalesce writes.
     enqueued_operations: Mutex<EnqueuedOperations>,
+    transaction_id_counter: AtomicU64,
 
     // controller metrics - see their getters for docs.
     total_write_operations: AtomicU64,
@@ -93,6 +93,7 @@ impl WalController {
             active_writer: tokio::sync::Mutex::new(writer),
             checkpoint_op_stamp: AtomicU64::new(0),
             enqueued_operations: Mutex::new(EnqueuedOperations::default()),
+            transaction_id_counter: AtomicU64::new(1),
             total_write_operations: AtomicU64::new(0),
             total_coalesced_write_operations: AtomicU64::new(0),
             total_coalesced_failures: AtomicU64::new(0),
@@ -100,10 +101,10 @@ impl WalController {
     }
 
     /// Write a set of updates to the WAL.
-    pub async fn write_updates(
-        &self,
-        updates: Vec<(LogEntry, Option<PageMetadata>)>,
-    ) -> Result<(), WalError> {
+    ///
+    /// Returns the assigned transaction ID.
+    pub async fn write_updates(&self, updates: Vec<LogOp>) -> Result<u64, WalError> {
+        let transaction_id = self.transaction_id_counter.fetch_add(1, Ordering::Relaxed);
         self.total_write_operations.fetch_add(1, Ordering::Relaxed);
 
         let (op_id, mut waiter) = {
@@ -119,7 +120,7 @@ impl WalController {
             result = &mut waiter => {
                 self.total_coalesced_write_operations.fetch_add(1, Ordering::Relaxed);
                 return match result {
-                    Ok(_) => Ok(()),
+                    Ok(_) => Ok(transaction_id),
                     Err(_) => {
                         self.total_coalesced_failures.fetch_add(1, Ordering::Relaxed);
                         Err(WalError::Io(interrupted_prior_error()))
@@ -132,7 +133,7 @@ impl WalController {
             Ok(()) => {
                 self.total_coalesced_write_operations
                     .fetch_add(1, Ordering::Relaxed);
-                return Ok(());
+                return Ok(transaction_id);
             },
             Err(oneshot::error::TryRecvError::Closed) => {
                 self.total_coalesced_write_operations
@@ -161,9 +162,7 @@ impl WalController {
                 replies_to_complete.push(op.tx);
             }
 
-            for (entry, metadata) in op.updates {
-                writer.write_log(entry, metadata).await?;
-            }
+            writer.write_log(transaction_id, &op.updates).await?;
         }
 
         writer.sync().await?;
@@ -185,7 +184,7 @@ impl WalController {
             "BUG: WAL exhausted enqueued ops but its own op did not appear"
         );
 
-        Ok(())
+        Ok(transaction_id)
     }
 
     #[cfg(test)]
@@ -373,10 +372,7 @@ struct EnqueuedOperations {
 }
 
 impl EnqueuedOperations {
-    fn push(
-        &mut self,
-        updates: Vec<(LogEntry, Option<PageMetadata>)>,
-    ) -> (u64, oneshot::Receiver<()>) {
+    fn push(&mut self, updates: Vec<LogOp>) -> (u64, oneshot::Receiver<()>) {
         let id = self.id;
         self.id += 1;
         let (tx, rx) = oneshot::channel();
@@ -392,7 +388,7 @@ impl EnqueuedOperations {
 struct EnqueuedOperation {
     id: u64,
     tx: oneshot::Sender<()>,
-    updates: Vec<(LogEntry, Option<PageMetadata>)>,
+    updates: Vec<LogOp>,
 }
 
 fn interrupted_prior_error() -> io::Error {

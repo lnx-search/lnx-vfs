@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::controller::wal::{WalConfig, WalController, WalError};
 use crate::directory::FileGroup;
-use crate::layout::log::{LogEntry, LogOp};
+use crate::layout::log::LogOp;
 use crate::layout::{PageFileId, PageId};
 use crate::{ctx, page_op_log};
 
@@ -18,7 +18,7 @@ async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usi
 
     let mut entries = Vec::with_capacity(num_entries);
     for id in 0..num_entries {
-        let entry = LogEntry {
+        let entry = LogEntryHeader {
             transaction_id: 1,
             transaction_n_entries: 1,
             sequence_id: 1,
@@ -46,7 +46,7 @@ async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usi
         .expect("reader should be able to open WAL file");
 
     let mut retrieved_num_entries = 0;
-    while let Some(block) = reader.next_block().await.unwrap() {
+    while let Some(block) = reader.next_transaction().await.unwrap() {
         retrieved_num_entries += block.num_entries();
     }
     assert_eq!(retrieved_num_entries, num_entries);
@@ -66,7 +66,7 @@ async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_entries: usi
 
     let mut entries = Vec::with_capacity(num_entries);
     for id in 0..num_entries {
-        let entry = LogEntry {
+        let entry = LogEntryHeader {
             transaction_id: id as u64,
             transaction_n_entries: 1,
             sequence_id: 1,
@@ -99,7 +99,7 @@ async fn test_controller_rotate_writers() {
         .await
         .expect("Failed to create WalController");
 
-    let entry = LogEntry {
+    let entry = LogEntryHeader {
         transaction_id: 0,
         transaction_n_entries: 1,
         sequence_id: 1,
@@ -185,7 +185,7 @@ async fn test_wal_file_rotation_due_to_size() {
         .await
         .expect("Failed to create WalController");
 
-    let entry = LogEntry {
+    let entry = LogEntryHeader {
         transaction_id: 0,
         transaction_n_entries: 1,
         sequence_id: 1,
@@ -220,7 +220,7 @@ async fn test_wal_file_rotate_due_to_error() {
     let scenario = fail::FailScenario::setup();
     fail::cfg("file::rw::submit_write", "return(-4)").unwrap();
 
-    let entry = LogEntry {
+    let entry = LogEntryHeader {
         transaction_id: 0,
         transaction_n_entries: 1,
         sequence_id: 1,
@@ -256,7 +256,7 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
         .await
         .expect("Failed to create WalController");
 
-    let entry = LogEntry {
+    let entry = LogEntryHeader {
         transaction_id: 0,
         transaction_n_entries: 1,
         sequence_id: 1,
@@ -304,7 +304,7 @@ async fn test_flaky_write_coalesce_updates() {
         .map(Arc::new)
         .expect("Failed to create WalController");
 
-    let entry = LogEntry {
+    let entry = LogEntryHeader {
         transaction_id: 0,
         transaction_n_entries: 1,
         sequence_id: 1,

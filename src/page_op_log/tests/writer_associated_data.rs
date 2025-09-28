@@ -3,14 +3,13 @@ use rstest::rstest;
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
-use crate::layout::log::{LogEntry, LogOp};
-use crate::layout::{PageFileId, PageId, log};
+use crate::layout::log;
 use crate::page_op_log::op_log_associated_data;
 use crate::page_op_log::writer::LogFileWriter;
 
 #[rstest]
 #[tokio::test]
-async fn test_single_block_correct_associated_data_tagging(
+async fn test_single_transaction_correct_associated_data_tagging(
     #[values(0, 4096)] log_offset: u64,
 ) {
     let _ = tracing_subscriber::fmt::try_init();
@@ -20,15 +19,7 @@ async fn test_single_block_correct_associated_data_tagging(
 
     let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset);
 
-    let entry = LogEntry {
-        sequence_id: 1,
-        transaction_id: 6,
-        transaction_n_entries: 7,
-        page_id: PageId(5),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
-    writer.write_log(entry, None).await.unwrap();
+    writer.write_log(1, &Vec::new()).await.unwrap();
     writer.sync().await.unwrap();
 
     dbg!(writer.position());
@@ -41,15 +32,17 @@ async fn test_single_block_correct_associated_data_tagging(
     let mut content = std::fs::read(&path).expect("read log file");
     assert_eq!(content.len(), DISK_ALIGN + log_offset as usize);
 
-    let buffer = &mut content[log_offset as usize..][..log::LOG_BLOCK_SIZE];
-    let expected_associated_data = op_log_associated_data(file.id(), 1, log_offset);
-    log::decode_log_block(ctx.cipher(), &expected_associated_data, buffer)
+    let buffer = &mut content[log_offset as usize..];
+    let expected_associated_data = op_log_associated_data(file.id(), 1, 1, log_offset);
+    let mut ops = Vec::new();
+    log::decode_log_block(ctx.cipher(), &expected_associated_data, buffer, &mut ops)
         .expect("block should be decodable");
+    assert!(ops.is_empty());
 }
 
 #[rstest]
 #[tokio::test]
-async fn test_multi_block_correct_associated_data_tagging(
+async fn test_multi_transaction_correct_associated_data_tagging(
     #[values(0, 4096)] log_offset: u64,
 ) {
     let _ = tracing_subscriber::fmt::try_init();
@@ -59,16 +52,10 @@ async fn test_multi_block_correct_associated_data_tagging(
 
     let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset);
 
-    for page_id in 0..15 {
-        let entry = LogEntry {
-            sequence_id: 1,
-            transaction_id: 6,
-            transaction_n_entries: 7,
-            page_id: PageId(page_id),
-            page_file_id: PageFileId(1),
-            op: LogOp::Free,
-        };
-        writer.write_log(entry, None).await.unwrap();
+    let mut positions = Vec::new();
+    for transaction_id in 0..15 {
+        positions.push(writer.position());
+        writer.write_log(transaction_id, &Vec::new()).await.unwrap();
     }
     writer.sync().await.unwrap();
 
@@ -79,15 +66,13 @@ async fn test_multi_block_correct_associated_data_tagging(
     let mut content = std::fs::read(&path).expect("read log file");
     assert_eq!(content.len(), DISK_ALIGN + log_offset as usize);
 
-    let buffer = &mut content[log_offset as usize..][..log::LOG_BLOCK_SIZE];
-    let expected_associated_data = op_log_associated_data(file.id(), 1, log_offset);
-    log::decode_log_block(ctx.cipher(), &expected_associated_data, buffer)
-        .expect("block should be decodable");
-
-    let buffer =
-        &mut content[log_offset as usize + log::LOG_BLOCK_SIZE..][..log::LOG_BLOCK_SIZE];
-    let expected_associated_data =
-        op_log_associated_data(file.id(), 1, log_offset + log::LOG_BLOCK_SIZE as u64);
-    log::decode_log_block(ctx.cipher(), &expected_associated_data, buffer)
-        .expect("block should be decodable");
+    for (txn_id, &pos) in positions.iter().enumerate() {
+        let buffer = &mut content[pos as usize..];
+        let expected_associated_data =
+            op_log_associated_data(file.id(), 1, txn_id as u32, pos);
+        let mut ops = Vec::new();
+        log::decode_log_block(ctx.cipher(), &expected_associated_data, buffer, &mut ops)
+            .expect("block should be decodable");
+        assert!(ops.is_empty());
+    }
 }

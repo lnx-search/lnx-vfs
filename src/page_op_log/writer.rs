@@ -6,8 +6,7 @@ use std::{cmp, io, mem};
 use crate::buffer::DmaBuffer;
 use crate::directory::{FileGroup, FileId};
 use crate::file::DISK_ALIGN;
-use crate::layout::log::{LogEntryHeader, LogOp};
-use crate::layout::page_metadata::PageMetadata;
+use crate::layout::log::LogOp;
 use crate::layout::{file_metadata, log};
 use crate::page_op_log::MetadataHeader;
 use crate::utils::{align_down, align_up};
@@ -16,7 +15,7 @@ use crate::{ctx, file};
 const BUFFER_SIZE: usize = 512 << 10;
 const SEQUENCE_ID_START: u32 = 1;
 static ORDER_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
-const MAX_TEMP_BUFFER_SIZE: usize = 512 << 10;
+const MAX_TEMP_BUFFER_SIZE: usize = 2 << 20;
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevent the writer from opening the log.
@@ -158,7 +157,7 @@ impl LogFileWriter {
     #[inline]
     /// Returns the position of the writer cursor.
     pub fn position(&self) -> u64 {
-        self.buffered_pos
+        self.buffered_pos + self.log_offset
     }
 
     /// Returns ID of the file being written to by the writer.
@@ -241,7 +240,8 @@ impl LogFileWriter {
             transaction_id,
             ops,
             &mut self.temp_buffer,
-        ).map_err(|err| io::Error::new(ErrorKind::Other, err))?;
+        )
+        .map_err(|err| io::Error::new(ErrorKind::Other, err))?;
 
         let mut bytes_copied = self.copy_tmp_buffer_into_write_buffer();
         while bytes_copied < self.temp_buffer.len() {
@@ -252,6 +252,9 @@ impl LogFileWriter {
         if self.buffer_offset >= self.buffer.len() {
             self.write_buffer().await?;
         }
+
+        // Advance writer position.
+        self.buffered_pos += bytes_copied as u64;
 
         self.temp_buffer.clear();
         self.temp_buffer_offset = 0;
@@ -279,6 +282,10 @@ impl LogFileWriter {
     /// Submit the current memory buffer to the IO scheduler for writing
     /// and wait on the last submitted iop if applicable.
     async fn write_buffer(&mut self) -> io::Result<()> {
+        if self.buffer_offset == 0 {
+            return Ok(());
+        }
+
         let delta_len = self.buffer_offset - self.buffer_write_pos;
         let aligned_len = align_up(delta_len, DISK_ALIGN);
         let buffer = &self.buffer[self.buffer_write_pos..][..aligned_len];
@@ -419,8 +426,6 @@ fn sanity_check_log_values(transaction_id: u64, ops: &[LogOp]) {
 mod tests {
     use super::*;
     use crate::directory::FileGroup;
-    use crate::layout::log::LogOp;
-    use crate::layout::{PageFileId, PageId};
 
     #[tokio::test]
     async fn test_writer_sequence_id() {
@@ -429,31 +434,12 @@ mod tests {
 
         let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
-        let entry = LogEntryHeader {
-            sequence_id: 0,
-            transaction_id: 0,
-            transaction_n_entries: 1,
-            page_id: PageId(5),
-            page_file_id: PageFileId(1),
-            op: LogOp::Free,
-        };
-
-        writer.write_log(entry, None).await.expect("write log");
+        writer.write_log(1, &Vec::new()).await.expect("write log");
         assert_eq!(writer.next_sequence_id, 2);
-
-        let entries = writer.wip_block.entries();
-        assert_eq!(entries.len(), 1);
-        let entry = entries[0].log;
-        assert_eq!(entry.sequence_id, 1);
 
         writer.sync().await.expect("sync log");
 
-        writer.write_log(entry, None).await.expect("write log");
+        writer.write_log(2, &Vec::new()).await.expect("write log");
         assert_eq!(writer.next_sequence_id, 3);
-
-        let entries = writer.wip_block.entries();
-        assert_eq!(entries.len(), 2);
-        let entry = entries[1].log;
-        assert_eq!(entry.sequence_id, 2);
     }
 }

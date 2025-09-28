@@ -4,12 +4,10 @@ use std::io::ErrorKind;
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
-use crate::layout::log::{LogEntry, LogOp};
+use crate::layout::log::{FreeOp, LogOp, ReassignOp, WriteOp};
 use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageFileId, PageId, log};
-use crate::page_op_log::op_log_associated_data;
+use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_op_log::writer::LogFileWriter;
-use crate::utils::align_up;
 
 #[tokio::test]
 async fn test_auto_flush() {
@@ -21,17 +19,24 @@ async fn test_auto_flush() {
 
     let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
-    let entry = LogEntry {
-        sequence_id: 0,
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        page_id: PageId(1),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
+    let mut ops = Vec::new();
+    for _ in 0..1_000 {
+        ops.push(LogOp::Write(WriteOp {
+            page_file_id: PageFileId(0),
+            page_group_id: PageGroupId(1),
+            altered_pages: vec![],
+        }));
+        ops.push(LogOp::Free(FreeOp {
+            page_group_id: PageGroupId(1),
+        }));
+        ops.push(LogOp::Reassign(ReassignOp {
+            old_page_group_id: PageGroupId(1),
+            new_page_group_id: PageGroupId(2),
+        }));
+    }
 
-    for _ in 0..5_000 {
-        writer.write_log(entry, None).await.expect("write entry");
+    for txn_id in 0..2_000 {
+        writer.write_log(txn_id, &ops).await.expect("write entry");
     }
 
     // Inflight IOP might take a little bit.
@@ -58,15 +63,10 @@ async fn test_all_entries_flush(
     let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     for id in 0..number_of_entries {
-        let entry = LogEntry {
-            sequence_id: 0,
-            transaction_id: 0,
-            transaction_n_entries: 1,
-            page_id: PageId(1),
-            page_file_id: PageFileId(id as u32),
-            op: LogOp::Free,
-        };
-        writer.write_log(entry, None).await.expect("write log");
+        writer
+            .write_log(id as u64, &Vec::new())
+            .await
+            .expect("write log");
     }
 
     let sequence_id = writer.current_sequence_id();
@@ -98,22 +98,13 @@ async fn test_entries_and_metadata(
     let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     for id in 0..number_of_entries {
-        let entry = LogEntry {
-            sequence_id: 0,
-            transaction_id: 0,
-            transaction_n_entries: 1,
-            page_id: PageId(id as u32),
-            page_file_id: PageFileId(id as u32),
-            op: LogOp::Free,
-        };
-
         let metadata = PageMetadata {
             id: PageId(id as u32),
             ..PageMetadata::null()
         };
 
         writer
-            .write_log(entry, Some(metadata))
+            .write_log(id as u64, &Vec::new())
             .await
             .expect("write log");
     }
@@ -143,16 +134,8 @@ async fn test_no_close_on_write_error_but_lockout() {
     let error = writer.sync().await.expect_err("write should error");
     assert_eq!(error.kind(), ErrorKind::Other);
 
-    let entry = LogEntry {
-        sequence_id: 0,
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        page_id: PageId(1),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
     let err = writer
-        .write_log(entry, None)
+        .write_log(1, &Vec::new())
         .await
         .expect_err("write should return lockout");
     assert_eq!(err.kind(), ErrorKind::ReadOnlyFilesystem);
@@ -193,15 +176,7 @@ async fn test_storage_full() {
 
     let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
-    let entry = LogEntry {
-        sequence_id: 0,
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        page_id: PageId(1),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
-    writer.write_log(entry, None).await.unwrap();
+    writer.write_log(1, &Vec::new()).await.unwrap();
     let error = writer
         .sync()
         .await
@@ -211,73 +186,6 @@ async fn test_storage_full() {
     assert!(writer.is_locked_out());
 
     scenario.teardown();
-}
-
-#[rstest::rstest]
-#[trace]
-#[tokio::test]
-async fn test_readable_results_fuzz(
-    #[values(false, true)] encryption: bool,
-    #[values(352352352, 934572, 1526491)] rng_seed: u64,
-    #[values(1, 4, 16, 423)] num_entries: u32,
-) {
-    fastrand::seed(rng_seed);
-
-    let ctx = ctx::FileContext::for_test(encryption).await;
-    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
-
-    let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, 0);
-
-    // Write initial pages that should go through as normal.
-    for page_id in 0..num_entries {
-        let entry = LogEntry {
-            sequence_id: 0,
-            transaction_id: 0,
-            transaction_n_entries: 1,
-            page_id: PageId(page_id),
-            page_file_id: PageFileId(1),
-            op: LogOp::Free,
-        };
-        writer.write_log(entry, None).await.unwrap();
-    }
-    writer.sync().await.unwrap();
-
-    let entry = LogEntry {
-        sequence_id: 0,
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        page_id: PageId(num_entries),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
-    writer.write_log(entry, None).await.unwrap();
-    writer.sync().await.unwrap();
-
-    let expected_block_position = writer.position() - log::LOG_BLOCK_SIZE as u64;
-
-    let path = ctx
-        .directory()
-        .resolve_file_path(FileGroup::Wal, file.id())
-        .await;
-    let mut buffer = std::fs::read(path).unwrap();
-    assert_eq!(
-        buffer.len(),
-        align_up(writer.position() as usize, DISK_ALIGN)
-    );
-
-    let block_buffer =
-        &mut buffer[expected_block_position as usize..][..log::LOG_BLOCK_SIZE];
-
-    let block = log::decode_log_block(
-        ctx.cipher(),
-        &op_log_associated_data(file.id(), 1, expected_block_position),
-        block_buffer,
-    )
-    .expect("block should be decodable from expected byte position");
-    assert_eq!(
-        block.entries().last().map(|pair| pair.log.page_id),
-        Some(PageId(num_entries))
-    );
 }
 
 #[rstest::rstest]
@@ -296,17 +204,8 @@ async fn test_log_offset(#[case] log_offset: u64) {
 }
 
 async fn fill_buffer(writer: &mut LogFileWriter) -> io::Result<()> {
-    let entry = LogEntry {
-        sequence_id: 0,
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        page_id: PageId(1),
-        page_file_id: PageFileId(1),
-        op: LogOp::Free,
-    };
-
-    for _ in 0..8_000 {
-        writer.write_log(entry, None).await?;
+    for id in 0..8_000 {
+        writer.write_log(id as u64, &Vec::new()).await?;
     }
 
     Ok(())
