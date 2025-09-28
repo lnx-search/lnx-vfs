@@ -51,7 +51,7 @@ impl MetadataController {
     pub async fn open(
         ctx: Arc<ctx::FileContext>,
     ) -> Result<Self, OpenMetadataControllerError> {
-        let mut checkpointed_state =
+        let checkpointed_state =
             super::checkpoint::read_checkpoints(ctx.clone()).await?;
 
         tracing::info!(
@@ -59,30 +59,25 @@ impl MetadataController {
             "checkpoints read",
         );
 
-        let controller = Self::empty(ctx.clone());
+        let slf = Self::empty(ctx.clone());
         for (page_file_id, page_table) in checkpointed_state.page_tables {
-            controller.insert_page_table(page_file_id, page_table);
+            slf.insert_page_table(page_file_id, page_table);
         }
 
-        super::checkpoint::recover_wal_updates(
-            ctx.clone(),
-            &mut checkpointed_state.lookup_table,
-            &controller,
-        )
-        .await?;
-
-        tracing::info!(
-            num_page_groups = checkpointed_state.lookup_table.len(),
-            "recovered state from WAL & checkpoints"
-        );
-
-        let lookup_table_guard = controller.lookup_table.pin();
+        let lookup_table_guard = slf.lookup_table.pin();
         for (page_group_id, lookup_entry) in checkpointed_state.lookup_table {
             lookup_table_guard.insert(page_group_id, lookup_entry);
         }
         drop(lookup_table_guard);
 
-        Ok(controller)
+        super::checkpoint::recover_wal_updates(ctx.clone(), &slf).await?;
+
+        tracing::info!(
+            num_page_groups = slf.num_page_groups(),
+            "recovered state from WAL & checkpoints"
+        );
+
+        Ok(slf)
     }
 
     /// Create a new empty [MetadataController].
@@ -104,7 +99,7 @@ impl MetadataController {
     pub fn insert_page_table(&self, page_file_id: PageFileId, page_table: PageTable) {
         let tables = self.page_tables.pin();
         if tables.contains_key(&page_file_id) {
-            panic!("page table already exists");
+            panic!("BUG: page table already exists");
         }
         tables.insert(page_file_id, page_table);
     }
@@ -119,6 +114,12 @@ impl MetadataController {
     pub fn contains_page_table(&self, page_file_id: PageFileId) -> bool {
         let tables = self.page_tables.pin();
         tables.contains_key(&page_file_id)
+    }
+
+    /// Returns whether a given page group exists.
+    pub fn contains_page_group(&self, page_group_id: PageGroupId) -> bool {
+        let lookup = self.lookup_table.pin();
+        lookup.contains_key(&page_group_id)
     }
 
     /// Crates a [page_file_allocator::PageFileAllocator] for each existing page file
@@ -147,17 +148,25 @@ impl MetadataController {
     /// it is stored at and the page ID of the first page.
     ///
     /// Returns `None` if the group does not exist.
-    pub fn find_first_page(&self, group: PageGroupId) -> Option<LookupEntry> {
+    fn find_first_page(&self, group: PageGroupId) -> Option<LookupEntry> {
         self.lookup_table.pin().get(&group).copied()
+    }
+
+    /// Remove the group lookup entry, returning the existing entry if
+    /// applicable.
+    ///
+    /// Returns `None` if the group does not exist.
+    fn remove_group_lookup(&self, group: PageGroupId) -> Option<LookupEntry> {
+        self.lookup_table.pin().remove(&group).copied()
     }
 
     /// Insert the given page group into the controller and associate it with
     /// the given page table (via the page file ID) and the first page containing
     /// the start of the group data.
-    pub fn insert_page_group(&self, group: PageGroupId, entry: LookupEntry) {
+    fn insert_page_group(&self, group: PageGroupId, entry: LookupEntry) {
         if !self.contains_page_table(entry.page_file_id) {
             panic!(
-                "page table does not exist for page file: {:?}",
+                "BUG: page table does not exist for page file: {:?}",
                 entry.page_file_id
             );
         }
@@ -174,39 +183,127 @@ impl MetadataController {
         }
     }
 
-    /// Collects the pages of a given page group within a given page file.
-    ///
-    /// The `start_page` is the start of the page group data and holds the link
-    /// to the next allocated page.
+    /// Collects the pages of a given page group.
     ///
     /// The `data_range` is the range of bytes that need to be read from the group,
     /// the controller put all pages required to complete the read in the `results`
     /// output vector.
     ///
-    /// Panics if the provided [PageFileId] does not exist.
+    /// Returns `true` if the page group exists, otherwise `false` is returned.
     pub fn collect_pages(
         &self,
-        page_file_id: PageFileId,
-        start_page: PageId,
+        page_group_id: PageGroupId,
         data_range: Range<usize>,
         results: &mut Vec<PageMetadata>,
-    ) {
+    ) -> bool {
+        let lookup = match self.find_first_page(page_group_id) {
+            None => return false,
+            Some(lookup) => lookup,
+        };
+
         let tables = self.page_tables.pin();
         let page_table = tables
-            .get(&page_file_id)
-            .expect("page file ID should exist as provided by user");
+            .get(&lookup.page_file_id)
+            .expect("BUG: page file ID should exist");
 
-        page_table.collect_pages(start_page, data_range, results);
+        page_table.collect_pages(lookup.first_page_id, data_range, results);
+
+        true
     }
 
-    /// Write [PageMetadata] entries to a target page file.
-    pub fn write_pages(&self, page_file_id: PageFileId, pages: &[PageMetadata]) {
+    /// Assign a set of pages to a target [PageGroupId] in a given page file.
+    ///
+    /// If a group already has assigned pages, they will be unassigned.
+    pub fn assign_pages_to_group(
+        &self,
+        page_file_id: PageFileId,
+        group: PageGroupId,
+        pages: &[PageMetadata],
+    ) {
+        // Debug assert because this should never get called in normal production use
+        // with the page IDs being out of order, just because other things would break before.
+        debug_assert!(
+            pages.is_sorted_by_key(|p| p.id),
+            "BUG: page metadata entries must be sorted by ID"
+        );
+
+        let first_page_id = pages.first().map(|p| p.id).unwrap_or(PageId::TERMINATOR);
+
+        let tables = self.page_tables.pin();
+
+        let new_page_table = tables
+            .get(&page_file_id)
+            .expect("BUG: page file ID should exist");
+
+        // Ordering is important here, if, for some reason there is a panic, we need to
+        // make sure the memory state stays in a semi-valid configuration (even if it means
+        // we leak some disk space.)
+        if let Some(existing_lookup) = self.find_first_page(group) {
+            let old_page_table = tables
+                .get(&existing_lookup.page_file_id)
+                .expect("BUG: page file ID should exist");
+
+            new_page_table.write_pages(pages);
+            self.insert_page_group(
+                group,
+                LookupEntry {
+                    page_file_id,
+                    first_page_id,
+                },
+            );
+            old_page_table.unassign_pages_in_chain(existing_lookup.first_page_id);
+        } else {
+            new_page_table.write_pages(pages);
+            self.insert_page_group(
+                group,
+                LookupEntry {
+                    page_file_id,
+                    first_page_id,
+                },
+            );
+        }
+    }
+
+    /// Unassign any pages assigned to the target [PageGroupId].
+    pub fn unassign_pages_in_group(&self, group: PageGroupId) {
+        let lookup = match self.remove_group_lookup(group) {
+            None => return,
+            Some(lookup) => lookup,
+        };
+
         let tables = self.page_tables.pin();
         let page_table = tables
-            .get(&page_file_id)
-            .expect("page file ID should exist as provided by user");
+            .get(&lookup.page_file_id)
+            .expect("BUG: page file ID should exist");
+        page_table.unassign_pages_in_chain(lookup.first_page_id);
+    }
 
-        page_table.write_pages(pages);
+    /// Reassign any pages that are currently linked to the `old_group`
+    /// to a `new_group`.
+    ///
+    /// Returns `false` if the `old_group` does not exist.
+    pub fn reassign_pages(
+        &self,
+        old_group: PageGroupId,
+        new_group: PageGroupId,
+    ) -> bool {
+        let lookup_table = self.lookup_table.pin();
+
+        let lookup = match lookup_table.get(&old_group).copied() {
+            None => return false,
+            Some(lookup) => lookup,
+        };
+
+        let tables = self.page_tables.pin();
+        let page_table = tables
+            .get(&lookup.page_file_id)
+            .expect("BUG: page file ID should exist");
+        page_table.reassign_pages_in_chain(lookup.first_page_id, new_group);
+
+        lookup_table.insert(new_group, lookup);
+        lookup_table.remove(&old_group);
+
+        true
     }
 
     #[tracing::instrument(skip(self))]
@@ -283,7 +380,6 @@ impl MetadataController {
 pub struct LookupEntry {
     pub page_file_id: PageFileId,
     pub first_page_id: PageId,
-    pub revision: u32,
 }
 
 struct PageBlock {
@@ -313,10 +409,22 @@ impl Default for PageBlock {
 }
 
 impl PageBlock {
+    #[inline]
     fn write_page(&mut self, index: usize, metadata: PageMetadata) {
-        let new_page_unassigned = metadata.is_unassigned();
+        self.mutate_page(
+            index,
+            #[inline(always)]
+            |page| *page = metadata,
+        );
+    }
+
+    fn mutate_page<F>(&mut self, index: usize, mut mutator: F)
+    where
+        F: FnMut(&mut PageMetadata),
+    {
         let old_page_unassigned = self.metadata[index].is_unassigned();
-        self.metadata[index] = metadata;
+        mutator(&mut self.metadata[index]);
+        let new_page_unassigned = self.metadata[index].is_unassigned();
 
         if old_page_unassigned && !new_page_unassigned {
             self.num_allocated_pages += 1;
@@ -411,6 +519,29 @@ impl PageTable {
     }
 
     pub(super) fn unassign_pages_in_chain(&self, first_page_id: PageId) {
+        self.mutate_pages_in_chain(
+            first_page_id,
+            #[inline(always)]
+            |page| *page = PageMetadata::unassigned(page.id),
+        )
+    }
+
+    pub(super) fn reassign_pages_in_chain(
+        &self,
+        first_page_id: PageId,
+        new_group_id: PageGroupId,
+    ) {
+        self.mutate_pages_in_chain(
+            first_page_id,
+            #[inline(always)]
+            |page| page.group = new_group_id,
+        )
+    }
+
+    fn mutate_pages_in_chain<F>(&self, first_page_id: PageId, mut mutator: F)
+    where
+        F: FnMut(&mut PageMetadata),
+    {
         if first_page_id.is_terminator() {
             return;
         }
@@ -424,7 +555,7 @@ impl PageTable {
             let page_metadata = &block_shard.metadata[page_idx];
             let next_page_id = page_metadata.next_page_id;
 
-            block_shard.write_page(page_idx, PageMetadata::unassigned(current_page_id));
+            block_shard.mutate_page(page_idx, &mut mutator);
 
             if next_page_id.is_terminator() {
                 break;
@@ -448,7 +579,7 @@ impl PageTable {
             None => return,
             Some(first_page) => first_page,
         };
-        assert!(!first_page.is_null(), "provided page cannot be null");
+        assert!(!first_page.is_null(), "BUG: provided page cannot be null");
 
         let mut block_idx = (first_page.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
         let mut page_idx = (first_page.id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
@@ -457,7 +588,7 @@ impl PageTable {
         block_shard.write_page(page_idx, *first_page);
 
         for metadata in to_update.iter().skip(1) {
-            assert!(!first_page.is_null(), "provided page cannot be null");
+            assert!(!first_page.is_null(), "BUG: provided page cannot be null");
 
             let old_block_idx = block_idx;
             block_idx = (metadata.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;

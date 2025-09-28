@@ -87,8 +87,9 @@ impl StorageController {
         &self,
         group: PageGroupId,
     ) -> Option<super::txn_read::StorageReader<'_>> {
-        let lookup = self.metadata_controller.find_first_page(group)?;
-        Some(super::txn_read::StorageReader::new(group, lookup, self))
+        // let lookup = self.metadata_controller.find_first_page(group)?;
+        // Some(super::txn_read::StorageReader::new(group, lookup, self))
+        todo!()
     }
 
     /// Creates a new writer for a given length buffer.

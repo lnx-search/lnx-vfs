@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::directory::FileGroup;
-use crate::layout::log::{LogEntry, LogOp};
+use crate::layout::log::LogOp;
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_op_log::LogFileWriter;
@@ -19,8 +19,8 @@ fn make_log_entry(
     transaction_n_entries: u32,
     page_file_id: PageFileId,
     next_page_id: PageId,
-) -> (LogEntry, PageGroupId, PageId) {
-    let entry = LogEntry {
+) -> (LogEntryHeader, PageGroupId, PageId) {
+    let entry = LogEntryHeader {
         transaction_id,
         transaction_n_entries,
         sequence_id: 0,
@@ -47,7 +47,7 @@ async fn create_wal_file(ctx: &ctx::FileContext) -> file::RWFile {
 async fn write_log_entries(
     ctx: Arc<ctx::FileContext>,
     file: file::RWFile,
-    entries: &[(LogEntry, PageGroupId, PageId)],
+    entries: &[(LogEntryHeader, PageGroupId, PageId)],
     revision: u32,
 ) {
     let mut writer = LogFileWriter::create(ctx, file)

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::checkpoint::read_checkpoint;
 use crate::controller::checkpoint::{
     checkpoint_page_table,
@@ -8,13 +6,11 @@ use crate::controller::checkpoint::{
 };
 use crate::controller::metadata::{LookupEntry, MetadataController, PageTable};
 use crate::controller::tests::{create_wal_file, make_log_entry, write_log_entries};
+use crate::ctx;
 use crate::directory::FileGroup;
-use crate::layout::log::{LogEntry, LogOp};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::NUM_PAGES_PER_BLOCK;
-use crate::page_op_log::LogFileWriter;
-use crate::{ctx, file};
 
 #[rstest::rstest]
 #[case::empty_table(&[])]

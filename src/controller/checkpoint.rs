@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::mem;
 use std::sync::Arc;
 
 use foldhash::HashMapExt;
@@ -12,7 +11,7 @@ use crate::checkpoint::{
     write_checkpoint,
 };
 use crate::directory::{FileGroup, FileId};
-use crate::layout::log::{EntryPair, LogOp};
+use crate::layout::log::LogOp;
 use crate::layout::page_metadata::{PageChangeCheckpoint, PageMetadata};
 use crate::layout::{PageFileId, PageGroupId};
 use crate::page_data::NUM_PAGES_PER_BLOCK;
@@ -165,7 +164,6 @@ pub enum RecoverWalError {
 /// ensuring torn writes should not be possible in any situation.
 pub(super) async fn recover_wal_updates(
     ctx: Arc<ctx::FileContext>,
-    lookup_table: &mut foldhash::HashMap<PageGroupId, LookupEntry>,
     controller: &MetadataController,
 ) -> Result<(), RecoverWalError> {
     let directory = ctx.directory();
@@ -181,44 +179,15 @@ pub(super) async fn recover_wal_updates(
     // to ensure events are replayed correctly.
     readers.sort_by_key(|reader| reader.order_key());
 
-    let mut page_metadata_entries = foldhash::HashMap::new();
-    let mut num_entries_recovered = 0;
-    let mut num_transactions_aborted = 0;
+    let mut num_transactions_recovered = 0;
     for reader in readers {
-        page_metadata_entries.clear();
+        let num_transactions = recover_wal_file(reader, controller).await?;
 
-        recover_wal_file(
-            reader,
-            &mut page_metadata_entries,
-            &mut num_entries_recovered,
-            &mut num_transactions_aborted,
-        )
-        .await?;
-
-        for (page_file_id, metadata_entries) in page_metadata_entries.iter() {
-            tracing::debug!(
-                page_file_id = ?page_file_id,
-                num_metadata_entries = metadata_entries.len(),
-                "recovered metadata entries for page file",
-            );
-
-            if !controller.contains_page_table(*page_file_id) {
-                controller.create_blank_page_table(*page_file_id);
-            }
-
-            reconstruct_lookup_table_from_pages(
-                lookup_table,
-                *page_file_id,
-                metadata_entries,
-            );
-
-            controller.write_pages(*page_file_id, metadata_entries);
-        }
+        num_transactions_recovered += num_transactions;
     }
 
     tracing::info!(
-        num_transactions_aborted = num_transactions_aborted,
-        num_entries_recovered = num_entries_recovered,
+        num_transactions_recovered = num_transactions_recovered,
         "recovered WAL file changes"
     );
 
@@ -228,20 +197,18 @@ pub(super) async fn recover_wal_updates(
 #[tracing::instrument(skip_all, fields(file_id = ?reader.file_id()))]
 async fn recover_wal_file(
     mut reader: page_op_log::LogFileReader,
-    page_metadata_entries: &mut foldhash::HashMap<PageFileId, Vec<PageMetadata>>,
-    num_entries_recovered: &mut usize,
-    num_transactions_aborted: &mut usize,
-) -> Result<(), RecoverWalError> {
-    use std::collections::hash_map::Entry;
-
+    controller: &MetadataController,
+) -> Result<usize, RecoverWalError> {
     tracing::info!("reading WAL file");
 
-    let mut current_transaction_id = u64::MAX;
-    let mut required_transaction_size = 0;
-    let mut transaction_state = Vec::with_capacity(100);
+    let mut transaction_ops = Vec::with_capacity(100);
+    let mut num_transactions_recovered = 0;
+    let mut last_transaction_id = 0;
     loop {
-        let block = match reader.next_block().await {
-            Ok(Some(block)) => block,
+        transaction_ops.clear();
+
+        let transaction_id = match reader.next_transaction(&mut transaction_ops).await {
+            Ok(Some(txn_id)) => txn_id,
             Ok(None) => break,
             Err(err) => {
                 // NOTE: This does not mean something is wrong, this is a normal branch to hit
@@ -251,53 +218,36 @@ async fn recover_wal_file(
                 break;
             },
         };
+        num_transactions_recovered += 1;
 
-        for entry in block.entries() {
-            let EntryPair { log, metadata } = entry;
+        assert!(
+            last_transaction_id < transaction_id,
+            "BUG: last transaction ID was not smaller than next transaction ID, \
+            this means the writer has lost track of the order of operations within the WAL."
+        );
+        last_transaction_id = transaction_id;
 
-            if current_transaction_id != log.transaction_id {
-                *num_transactions_aborted += !transaction_state.is_empty() as usize;
-                current_transaction_id = log.transaction_id;
-                required_transaction_size = log.transaction_n_entries as usize;
-                transaction_state.clear();
-            }
-
-            match log.op {
-                LogOp::Free => {
-                    transaction_state.push(PageMetadata::unassigned(log.page_id))
-                },
-                LogOp::UpdateTableMetadata | LogOp::Write => {
-                    let metadata = **metadata.as_ref().expect(
-                        "metadata entry must always be present with write or update op",
+        for op in transaction_ops.drain(..) {
+            match op {
+                LogOp::Write(op) => {
+                    controller.assign_pages_to_group(
+                        op.page_file_id,
+                        op.page_group_id,
+                        &op.altered_pages,
                     );
-                    transaction_state.push(metadata);
                 },
-            }
-
-            if transaction_state.len() == required_transaction_size {
-                *num_entries_recovered += transaction_state.len();
-
-                match page_metadata_entries.entry(log.page_file_id) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(mem::take(&mut transaction_state));
-                    },
-                    Entry::Occupied(mut entry) => {
-                        entry.get_mut().extend_from_slice(&transaction_state);
-                        transaction_state.clear();
-                    },
-                }
-            } else if transaction_state.len() > required_transaction_size {
-                panic!(
-                    "BUG: undefined system state! system expected {required_transaction_size} \
-                        operation in a transaction but got {}, this means the system \
-                        cannot be certain if the state updates it would apply are correct.",
-                    transaction_state.len(),
-                );
+                LogOp::Free(op) => {
+                    controller.unassign_pages_in_group(op.page_group_id);
+                },
+                LogOp::Reassign(op) => {
+                    controller
+                        .reassign_pages(op.old_page_group_id, op.new_page_group_id);
+                },
             }
         }
     }
 
-    Ok(())
+    Ok(num_transactions_recovered)
 }
 
 /// Reconstructs the lookup table for page groups.
@@ -320,7 +270,6 @@ fn reconstruct_lookup_table_from_pages(
         let lookup_entry = LookupEntry {
             page_file_id,
             first_page_id: page.id,
-            revision: page.revision,
         };
 
         match lookup_table.entry(page.group) {
@@ -330,12 +279,9 @@ fn reconstruct_lookup_table_from_pages(
             Entry::Occupied(mut entry) => {
                 let existing_page = entry.get();
 
-                // - If the new page has a newer revision, use that.
-                // - If the page revisions match, but we have a lower page ID we assign that.
-                if page.revision > existing_page.revision
-                    || (page.revision == existing_page.revision
-                        && page.id < existing_page.first_page_id)
-                {
+                // In a checkpointed state, there should only be one set of pages
+                // assigned to a group at any time.
+                if page.id < existing_page.first_page_id {
                     entry.insert(lookup_entry);
                 }
             },
@@ -408,7 +354,6 @@ mod tests {
                     LookupEntry {
                         page_file_id: PageFileId(1),
                         first_page_id: PageId(3),
-                        revision: 0
                     }
                 ),
                 (
@@ -416,7 +361,6 @@ mod tests {
                     LookupEntry {
                         page_file_id: PageFileId(1),
                         first_page_id: PageId(5),
-                        revision: 2
                     }
                 ),
                 (
@@ -424,7 +368,6 @@ mod tests {
                     LookupEntry {
                         page_file_id: PageFileId(1),
                         first_page_id: PageId(1),
-                        revision: 0
                     }
                 ),
             ],

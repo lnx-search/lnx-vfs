@@ -132,7 +132,7 @@ async fn test_controller_write_pages(#[case] entries: &[PageMetadata]) {
     let ctx = ctx::FileContext::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
-    controller.write_pages(PageFileId(1), entries);
+    controller.assign_pages_to_group(PageFileId(1), entries);
     // NOTE: The page table has separate tests to check it was actually written.
     //       This is a sanity check.
 }
@@ -144,7 +144,7 @@ async fn test_controller_set_empty() {
 
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
-    controller.write_pages(
+    controller.assign_pages_to_group(
         PageFileId(1),
         &[PageMetadata {
             group: PageGroupId(1),
@@ -160,7 +160,8 @@ async fn test_controller_set_empty() {
     controller.collect_pages(PageFileId(1), PageId(4), 0..50, &mut pages);
     assert_eq!(pages.len(), 1);
 
-    controller.write_pages(PageFileId(1), &[PageMetadata::unassigned(PageId(4))]);
+    controller
+        .assign_pages_to_group(PageFileId(1), &[PageMetadata::unassigned(PageId(4))]);
 
     let mut pages = Vec::new();
     controller.collect_pages(PageFileId(1), PageId(4), 0..50, &mut pages);
@@ -171,7 +172,7 @@ async fn test_controller_set_empty() {
 async fn test_controller_write_pages_panics_unknown_page_file() {
     let ctx = ctx::FileContext::for_test(false).await;
     let controller = MetadataController::empty(ctx);
-    controller.write_pages(PageFileId(1), &[]);
+    controller.assign_pages_to_group(PageFileId(1), &[]);
 }
 
 #[rstest::rstest]
@@ -475,7 +476,7 @@ async fn test_controller_collect_pages(
     let ctx = ctx::FileContext::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
-    controller.write_pages(PageFileId(1), entries);
+    controller.assign_pages_to_group(PageFileId(1), entries);
 
     let mut pages = Vec::new();
     controller.collect_pages(PageFileId(1), start_page_id, data_range, &mut pages);
@@ -520,7 +521,7 @@ async fn test_controller_checkpoint() {
     assert_eq!(num_checkpointed_files, 0);
     assert_eq!(controller.num_files_to_cleanup(), 0);
 
-    controller.write_pages(
+    controller.assign_pages_to_group(
         PageFileId(1),
         &[PageMetadata {
             group: PageGroupId(1),
@@ -531,7 +532,7 @@ async fn test_controller_checkpoint() {
             context: [0; 40],
         }],
     );
-    controller.write_pages(
+    controller.assign_pages_to_group(
         PageFileId(2),
         &[
             PageMetadata {
@@ -570,7 +571,7 @@ async fn test_controller_incremental_checkpoint() {
     controller.create_blank_page_table(PageFileId(1));
 
     for id in 0..2 {
-        controller.write_pages(
+        controller.assign_pages_to_group(
             PageFileId(id),
             &[PageMetadata {
                 group: PageGroupId(1),
@@ -609,7 +610,7 @@ async fn test_controller_gc_old_checkpoint_files() {
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(0));
 
-    controller.write_pages(
+    controller.assign_pages_to_group(
         PageFileId(0),
         &[PageMetadata {
             group: PageGroupId(1),
@@ -627,7 +628,7 @@ async fn test_controller_gc_old_checkpoint_files() {
     assert_eq!(num_checkpointed_files, 1);
     assert_eq!(controller.num_files_to_cleanup(), 0);
 
-    controller.write_pages(
+    controller.assign_pages_to_group(
         PageFileId(0),
         &[PageMetadata {
             group: PageGroupId(1),
@@ -701,7 +702,7 @@ async fn test_controller_recover_from_checkpoints() {
             context: [0; 40],
         },
     ];
-    controller.write_pages(PageFileId(2), all_pages);
+    controller.assign_pages_to_group(PageFileId(2), all_pages);
 
     let num_checkpointed_files = controller.checkpoint().await.unwrap();
     assert_eq!(num_checkpointed_files, 1);
@@ -845,7 +846,7 @@ async fn test_controller_recovery_checkpoint_fuzz(
             pages.push(metadata);
         }
 
-        controller.write_pages(page_file_id, &pages);
+        controller.assign_pages_to_group(page_file_id, &pages);
     }
 
     let num_checkpointed_files = controller
@@ -855,7 +856,7 @@ async fn test_controller_recovery_checkpoint_fuzz(
     assert_eq!(num_checkpointed_files, num_page_tables);
 
     // Write one page and checkpoint again in order to check remove file fail point.
-    controller.write_pages(
+    controller.assign_pages_to_group(
         PageFileId(0),
         &[PageMetadata {
             group: PageGroupId(1),
@@ -940,7 +941,7 @@ async fn test_controller_create_page_file_allocator() {
             context: [0; 40],
         },
     ];
-    controller.write_pages(PageFileId(0), entries);
+    controller.assign_pages_to_group(PageFileId(0), entries);
 
     let page_file_allocator = controller.create_page_file_allocator();
     assert_eq!(page_file_allocator.num_page_files(), 1);
