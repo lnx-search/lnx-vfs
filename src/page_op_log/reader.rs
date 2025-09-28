@@ -43,9 +43,9 @@ pub enum LogOpenReadError {
 }
 
 macro_rules! handle_io_result {
-    ($res:expr) => {{
+    ($res:expr, $expect_n:expr) => {{
         match $res {
-            Ok(n) if n < log::HEADER_SIZE => {
+            Ok(n) if n < $expect_n => {
                 tracing::debug!("wal log reader has reached eof");
                 return Ok(None);
             },
@@ -171,11 +171,12 @@ impl LogFileReader {
     ) -> Result<Option<u64>, LogDecodeError> {
         let position = self.reader.position();
 
+        self.temp_buffer.clear();
         let result = self
             .reader
             .read_n(&mut self.temp_buffer, log::HEADER_SIZE)
             .await;
-        handle_io_result!(result);
+        handle_io_result!(result, log::HEADER_SIZE);
 
         self.expected_sequence_id += 1;
         let associated_data = super::op_log_associated_data(
@@ -195,7 +196,7 @@ impl LogFileReader {
         self.temp_buffer.clear();
 
         let result = self.reader.read_n(&mut self.temp_buffer, buffer_len).await;
-        handle_io_result!(result);
+        handle_io_result!(result, buffer_len);
 
         let ops_start_len = ops.len();
         log::decode_log_block(
