@@ -90,12 +90,12 @@ async fn test_reader_unexpected_eof() {
     let mut reader = StreamReaderBuilder::new(ctx.clone(), file).build();
 
     let mut buffer = Vec::new();
-    let err = reader
+    let n = reader
         .read_n(&mut buffer, 8 << 10)
         .await
-        .expect_err("read exact should return error due to unexpected EOF");
-    assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
-    assert_eq!(err.to_string(), "could not fill buffer completely");
+        .expect("short read should be allowed");
+    assert_eq!(n, 4 << 10);
+    assert_eq!(n, buffer.len());
 }
 
 async fn write_all_at(

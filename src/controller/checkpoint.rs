@@ -254,13 +254,17 @@ async fn recover_wal_file(
 ///
 /// This assumes that page sequences are written from the smallest ID to the largest ID
 /// in order to maintain ordering of data.
+///
+/// It _also_ assumes that pages assigned to groups are performed from the smallest allocated
+/// ID to the largest ID.
+///
+/// Reconstruction of the lookup table is done by doing a first-write-wins strategy on the
+/// hashmap.
 fn reconstruct_lookup_table_from_pages(
     lookup_table: &mut foldhash::HashMap<PageGroupId, LookupEntry>,
     page_file_id: PageFileId,
     pages: &[PageMetadata],
 ) {
-    use std::collections::hash_map::Entry;
-
     for page in pages {
         // There should not be any empty pages, but just in case.
         if page.is_unassigned() {
@@ -272,20 +276,7 @@ fn reconstruct_lookup_table_from_pages(
             first_page_id: page.id,
         };
 
-        match lookup_table.entry(page.group) {
-            Entry::Vacant(entry) => {
-                entry.insert(lookup_entry);
-            },
-            Entry::Occupied(mut entry) => {
-                let existing_page = entry.get();
-
-                // In a checkpointed state, there should only be one set of pages
-                // assigned to a group at any time.
-                if page.id < existing_page.first_page_id {
-                    entry.insert(lookup_entry);
-                }
-            },
-        }
+        lookup_table.entry(page.group).or_insert(lookup_entry);
     }
 }
 
@@ -353,14 +344,14 @@ mod tests {
                     PageGroupId(1),
                     LookupEntry {
                         page_file_id: PageFileId(1),
-                        first_page_id: PageId(3),
+                        first_page_id: PageId(4),
                     }
                 ),
                 (
                     PageGroupId(3),
                     LookupEntry {
                         page_file_id: PageFileId(1),
-                        first_page_id: PageId(5),
+                        first_page_id: PageId(2),
                     }
                 ),
                 (

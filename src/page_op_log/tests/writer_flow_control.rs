@@ -1,16 +1,20 @@
 use std::io;
 use std::io::ErrorKind;
 
-use crate::ctx;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
 use crate::layout::log::{FreeOp, LogOp, ReassignOp, WriteOp};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_op_log::writer::LogFileWriter;
+use crate::{ctx, utils};
 
+#[rstest::rstest]
+#[case(2_000, 512 << 10)]
+#[case(1_050, 512 << 10)]
+#[case(500, 0)]
 #[tokio::test]
-async fn test_auto_flush() {
+async fn test_auto_flush(#[case] num_transactions: u64, #[case] expected_size: u64) {
     let ctx = ctx::FileContext::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
@@ -20,7 +24,7 @@ async fn test_auto_flush() {
     let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     let mut ops = Vec::new();
-    for _ in 0..1_000 {
+    for _ in 0..4 {
         ops.push(LogOp::Write(WriteOp {
             page_file_id: PageFileId(0),
             page_group_id: PageGroupId(1),
@@ -35,16 +39,16 @@ async fn test_auto_flush() {
         }));
     }
 
-    for txn_id in 0..2_000 {
+    for txn_id in 0..num_transactions {
         writer.write_log(txn_id, &ops).await.expect("write entry");
     }
 
     // Inflight IOP might take a little bit.
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     let file = writer.into_file();
     let post_write_len = file.get_len().await.unwrap();
-    assert_eq!(post_write_len, 128 << 10); // Flush single mem buffer.
+    assert_eq!(post_write_len, expected_size); // Flush single mem buffer.
 }
 
 #[rstest::rstest]
@@ -79,7 +83,10 @@ async fn test_all_entries_flush(
 
     let file = writer.into_file();
     let post_flush_len = file.get_len().await.unwrap();
-    assert_eq!(post_flush_len, DISK_ALIGN as u64);
+    assert_eq!(
+        post_flush_len,
+        utils::align_up(number_of_entries * 512, DISK_ALIGN) as u64,
+    );
 }
 
 #[rstest::rstest]
@@ -98,11 +105,6 @@ async fn test_entries_and_metadata(
     let mut writer = LogFileWriter::new(ctx, file, 1, 0);
 
     for id in 0..number_of_entries {
-        let metadata = PageMetadata {
-            id: PageId(id as u32),
-            ..PageMetadata::null()
-        };
-
         writer
             .write_log(id as u64, &Vec::new())
             .await
@@ -119,7 +121,10 @@ async fn test_entries_and_metadata(
 
     let file = writer.into_file();
     let post_flush_len = file.get_len().await.unwrap();
-    assert_eq!(post_flush_len, DISK_ALIGN as u64);
+    assert_eq!(
+        post_flush_len,
+        utils::align_up(number_of_entries * 512, DISK_ALIGN) as u64,
+    );
 }
 
 #[tokio::test]
@@ -131,6 +136,16 @@ async fn test_no_close_on_write_error_but_lockout() {
     fail::cfg("file::rw::submit_write", "return").unwrap();
 
     let mut writer = LogFileWriter::new(ctx, file, 1, 0);
+    writer
+        .sync()
+        .await
+        .expect("sync should not error as no data was written");
+
+    writer
+        .write_log(1, &Vec::new())
+        .await
+        .expect("write log should succeed");
+
     let error = writer.sync().await.expect_err("write should error");
     assert_eq!(error.kind(), ErrorKind::Other);
 

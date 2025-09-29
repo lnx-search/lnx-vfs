@@ -1,7 +1,7 @@
 use std::io;
 
 use crate::directory::FileGroup;
-use crate::layout::log::{LogOp, WriteOp};
+use crate::layout::log::{FreeOp, LogOp, WriteOp};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId, file_metadata, log};
 use crate::page_op_log::reader::LogFileReader;
@@ -16,6 +16,8 @@ async fn test_log_reader(
     #[values(0, 4096)] offset: u64,
     #[values(0, 5, 18)] num_blocks: usize,
 ) {
+    let _ = tracing_subscriber::fmt::try_init();
+
     let ctx = ctx::FileContext::for_test(encryption).await;
     let mut file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
@@ -24,10 +26,9 @@ async fn test_log_reader(
     let mut reader = LogFileReader::new(ctx, file.into(), 1, 5, offset);
     assert_eq!(reader.order_key(), 5);
 
+    let mut num_transactions = 0;
     let mut ops = Vec::new();
     loop {
-        ops.clear();
-
         let transaction_id = reader
             .next_transaction(&mut ops)
             .await
@@ -36,14 +37,17 @@ async fn test_log_reader(
         if transaction_id.is_none() {
             break;
         }
+
+        num_transactions += 1;
     }
+    assert_eq!(num_transactions, num_blocks);
     assert_eq!(ops.len(), num_blocks);
 }
 
 async fn make_sample_file(
     ctx: &ctx::FileContext,
     file: &mut file::RWFile,
-    num_blocks: usize,
+    num_transactions: usize,
     offset: u64,
 ) {
     use std::io::{Seek, Write};
@@ -61,24 +65,15 @@ async fn make_sample_file(
     raw_file.seek(io::SeekFrom::Start(offset)).unwrap();
 
     let mut buffer = Vec::new();
-    for block_id in 0..num_blocks {
-        let mut ops = Vec::new();
-        for page_id in 0..fastrand::usize(0..500) {
-            let mut metadata = PageMetadata::null();
-            metadata.id = PageId(page_id as u32);
-            metadata.group = PageGroupId(1);
-
-            ops.push(LogOp::Write(WriteOp {
-                page_file_id: PageFileId(0),
-                page_group_id: PageGroupId(1),
-                altered_pages: vec![metadata],
-            }));
-        }
+    for transaction_id in 0..num_transactions {
+        let ops = vec![LogOp::Free(FreeOp {
+            page_group_id: PageGroupId(1),
+        })];
 
         let associate_data = op_log_associated_data(
             file.id(),
             1,
-            block_id as u32,
+            1 + transaction_id as u32,
             offset + buffer.len() as u64,
         );
 
@@ -86,7 +81,7 @@ async fn make_sample_file(
         log::encode_log_block(
             ctx.cipher(),
             &associate_data,
-            block_id as u64,
+            transaction_id as u64,
             &ops,
             &mut tmp_buffer,
         )

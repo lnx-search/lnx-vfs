@@ -115,21 +115,22 @@ impl StreamReader {
             self.file_len_init = true;
         }
 
+        let mut bytes_read = 0;
         let mut read_n = n;
         loop {
             let n = self.fill_using_last_read(output, read_n);
+            bytes_read += n;
             read_n -= n;
 
             if read_n == 0 {
-                self.position += output.len() as u64;
-                return Ok(output.len());
+                self.position += bytes_read as u64;
+                return Ok(bytes_read);
             }
 
             // EOF
             if self.file_cursor >= self.file_len {
-                let n = output.len() - read_n;
-                self.position += n as u64;
-                return Ok(n);
+                self.position += bytes_read as u64;
+                return Ok(bytes_read);
             }
 
             self.fill_buffer().await?;

@@ -16,7 +16,7 @@ type AlignedBuffer = AlignedVec<{ align_of::<PageChangeCheckpoint>() }>;
 pub struct PageMetadata {
     /// The block this page contains data for.
     pub(crate) group: PageGroupId,
-    /// Used to determine if a page is newer than another when assigned the same group ID.
+    /// UNUSED
     pub(crate) revision: u32,
     /// The [PageId] of  next that is part of the group.
     ///

@@ -20,19 +20,18 @@ async fn write_log_entries(
         .await
         .expect("Failed to create writer");
 
-    let mut ops = Vec::new();
     for page_id in 0..num_entries {
         let mut metadata = page_metadata::PageMetadata::null();
         metadata.id = PageId(page_id as u32);
         metadata.group = PageGroupId(1);
 
-        ops.push(LogOp::Write(WriteOp {
+        let ops = vec![LogOp::Write(WriteOp {
             page_file_id: PageFileId(0),
             page_group_id: PageGroupId(1),
             altered_pages: vec![metadata],
-        }));
+        })];
+        writer.write_log(page_id as u64, &ops).await.unwrap();
     }
-    writer.write_log(1, &ops).await.unwrap();
     writer.sync().await.expect("failed to sync writer");
     drop(writer);
 }

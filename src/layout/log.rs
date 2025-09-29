@@ -4,11 +4,12 @@
 use lz4_flex::frame::{BlockMode, BlockSize};
 use rkyv::rancor;
 use rkyv::util::AlignedVec;
-use crate::utils;
+
 use super::encrypt::EncryptError;
 use super::file_metadata::Encryption;
 use super::page_metadata::PageMetadata;
 use super::{PageFileId, PageGroupId, encrypt, integrity};
+use crate::utils;
 
 /// The required header size of the log block buffer.
 pub const HEADER_SIZE: usize =
@@ -136,7 +137,8 @@ pub fn encode_log_block(
     buffer[0..8].copy_from_slice(&transaction_id.to_le_bytes());
     buffer[8..16].copy_from_slice(&buffer_len.to_le_bytes());
 
-    let [header_slice, header_ctx] = buffer.get_disjoint_mut([0..16, 16..HEADER_SIZE]).unwrap();
+    let [header_slice, header_ctx] =
+        buffer.get_disjoint_mut([0..16, 16..HEADER_SIZE]).unwrap();
     encrypt_or_integrity_encode(cipher, associated_data, header_slice, header_ctx)
         .map_err(EncodeLogBlockError::EncryptionFail)?;
 

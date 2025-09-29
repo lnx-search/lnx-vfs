@@ -241,7 +241,7 @@ impl LogFileWriter {
             ops,
             &mut self.temp_buffer,
         )
-        .map_err(|err| io::Error::new(ErrorKind::Other, err))?;
+        .map_err(io::Error::other)?;
 
         let mut bytes_copied = self.copy_tmp_buffer_into_write_buffer();
         while bytes_copied < self.temp_buffer.len() {

@@ -158,7 +158,7 @@ impl LogFileReader {
         self.order_key
     }
 
-    #[tracing::instrument("wal::read_block", skip(self))]
+    #[tracing::instrument("wal::read_block", skip(self, ops))]
     /// Retrieve the next log block in the file.
     ///
     /// It is possible for the reader to return empty [log::LogBlock] due to padding

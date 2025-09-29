@@ -1,7 +1,7 @@
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
-use crate::layout::log::{LogOp, WriteOp};
+use crate::layout::log::{HEADER_SIZE, LogOp, WriteOp};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId, file_metadata, log};
 use crate::page_op_log::writer::LogFileWriter;
@@ -35,8 +35,9 @@ async fn test_single_transaction_write_layout(#[values(0, 4096)] log_offset: usi
 
     let associated_data = op_log_associated_data(file.id(), 1, 1, log_offset as u64);
 
+    let buffer = &mut content[log_offset..];
     let (transaction_id, buffer_len) =
-        log::decode_log_header(None, &associated_data, &mut content[log_offset..])
+        log::decode_log_header(None, &associated_data, buffer)
             .expect("decode log header");
     assert_eq!(transaction_id, 999);
 
@@ -44,7 +45,7 @@ async fn test_single_transaction_write_layout(#[values(0, 4096)] log_offset: usi
     log::decode_log_block(
         None,
         &associated_data,
-        &mut content[log_offset + buffer_len..],
+        &mut buffer[HEADER_SIZE..][..buffer_len],
         &mut ops,
     )
     .expect("block should be decodable");
