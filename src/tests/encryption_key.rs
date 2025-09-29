@@ -39,3 +39,12 @@ fn test_rencode_encryption_keys() {
     let keys2 = decode_encryption_keys("example2", &buffer).expect("decode keys failed");
     assert_eq!(keys1.authentication_key, keys2.authentication_key);
 }
+
+#[test]
+fn test_encryption_keys_debug_does_not_leak_info() {
+    let buffer =
+        generate_encryption_keys("example1").expect("encryption key generation failed");
+
+    let keys = decode_encryption_keys("example1", &buffer).expect("decode keys failed");
+    assert_eq!(format!("{keys:?}"), "EncryptionKeys");
+}
