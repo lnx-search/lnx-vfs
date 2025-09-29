@@ -7,8 +7,9 @@ mod dir_basic;
 mod dir_fault_injection;
 mod encryption_key;
 mod file_basic;
-mod stream_reader;
+mod file_fault_injection;
 mod page_file_allocator;
+mod stream_reader;
 
 /// A utility for getting the files in a directory and string paths.
 fn list_files(base_path: &Path) -> io::Result<Vec<String>> {

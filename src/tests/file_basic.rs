@@ -1,6 +1,8 @@
 use super::tempdir;
 use crate::buffer::DmaBuffer;
 use crate::directory::{FileGroup, SystemDirectory};
+use crate::file;
+use crate::file::DISK_ALIGN;
 
 #[rstest::rstest]
 #[tokio::test]
@@ -18,6 +20,10 @@ async fn test_file_read(tempdir: tempfile::TempDir) {
         .get_ro_file(FileGroup::Pages, file_id)
         .await
         .expect("get ro file");
+    assert_eq!(
+        format!("{ro_file:?}"),
+        "File(mode=lnx_vfs::file::RO, id=FileId(1000))"
+    );
 
     let mut buffer = DmaBuffer::alloc_sys(1);
     let n = ro_file
@@ -41,6 +47,10 @@ async fn test_file_write(tempdir: tempfile::TempDir) {
         .get_rw_file(FileGroup::Pages, file_id)
         .await
         .expect("get rw file");
+    assert_eq!(
+        format!("{rw_file:?}"),
+        "File(mode=lnx_vfs::file::RW, id=FileId(1000))"
+    );
 
     let mut buffer = DmaBuffer::alloc_sys(1);
     buffer[..13].copy_from_slice(b"Hello, world!");
