@@ -4,17 +4,17 @@
 use lz4_flex::frame::{BlockMode, BlockSize};
 use rkyv::rancor;
 use rkyv::util::AlignedVec;
-
+use crate::utils;
 use super::encrypt::EncryptError;
 use super::file_metadata::Encryption;
 use super::page_metadata::PageMetadata;
 use super::{PageFileId, PageGroupId, encrypt, integrity};
-use crate::utils;
 
 /// The required header size of the log block buffer.
 pub const HEADER_SIZE: usize =
-    size_of::<u64>() + size_of::<u64>() + size_of::<[u8; 32]>();
+    size_of::<u64>() + size_of::<u64>() + size_of::<[u8; 40]>();
 const BUFFER_ALIGN: usize = align_of::<Vec<LogOp>>();
+const DISK_ALIGN: usize = 512;
 
 /// Try to decode a set of transaction operations from the provided buffer.
 ///
@@ -34,7 +34,7 @@ pub fn decode_log_block(
     let [data_ctx, data_slice] = buffer.get_disjoint_mut(slice).unwrap();
     decrypt_or_integrity_check(cipher, associated_data, data_slice, data_ctx)?;
 
-    let mut decrypted_buffer = &buffer[HEADER_SIZE..];
+    let mut decrypted_buffer: &[u8] = data_slice;
     let mut data_buffer =
         AlignedVec::<BUFFER_ALIGN>::with_capacity(decrypted_buffer.len());
     let mut decoder = lz4_flex::frame::FrameDecoder::new(&mut decrypted_buffer);
@@ -127,17 +127,16 @@ pub fn encode_log_block(
     encoder = writer.into_inner();
     buffer = encoder.finish().map_err(EncodeLogBlockError::Compression)?;
 
-    let buffer_len = buffer.len();
-    if buffer_len % 512 != 0 {
-        let aligned_len = utils::align_up(buffer_len, 512);
+    if buffer.len() % 512 != 0 {
+        let aligned_len = utils::align_up(buffer.len(), 512);
         buffer.resize(aligned_len, 0);
     }
-    let buffer_len = buffer_len as u64;
 
+    let buffer_len = buffer.len() - HEADER_SIZE;
     buffer[0..8].copy_from_slice(&transaction_id.to_le_bytes());
     buffer[8..16].copy_from_slice(&buffer_len.to_le_bytes());
 
-    let [header_slice, header_ctx] = buffer.get_disjoint_mut([0..16, 16..56]).unwrap();
+    let [header_slice, header_ctx] = buffer.get_disjoint_mut([0..16, 16..HEADER_SIZE]).unwrap();
     encrypt_or_integrity_encode(cipher, associated_data, header_slice, header_ctx)
         .map_err(EncodeLogBlockError::EncryptionFail)?;
 

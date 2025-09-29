@@ -132,3 +132,87 @@ fn test_log_encode_decode(
     assert_eq!(recovered_txn_id, transaction_id);
     assert_eq!(ops, recovered_ops);
 }
+
+
+#[rstest::rstest]
+#[case::no_encryption_no_assoc(None, b"", None, b"")]
+#[case::no_encryption_assoc_match(None, b"hello", None, b"hello")]
+#[should_panic(expected = "block should be decoded: VerificationFail")]
+#[case::no_encryption_assoc_match_fail(None, b"hello", None, b"world")]
+#[case::encryption_no_assoc(Some(cipher_1()), b"", Some(cipher_1()), b"")]
+#[case::encryption_assoc(Some(cipher_1()), b"hello", Some(cipher_1()), b"hello")]
+#[should_panic(expected = "block should be decoded: DecryptionFail")]
+#[case::encryption_assoc_match_fail(Some(cipher_1()), b"hello", Some(cipher_1()), b"world")]
+#[should_panic(expected = "block should be decoded: DecryptionFail")]
+#[case::encryption_cipher_match_fail(Some(cipher_1()), b"hello", Some(cipher_2()), b"hello")]
+#[should_panic(expected = "block should be decoded: DecryptionFail")]
+#[case::encryption_cipher_and_assoc_match_fail(Some(cipher_1()), b"hello", Some(cipher_2()), b"world")]
+fn test_decode_errors(
+    #[case] encode_cipher: Option<encrypt::Cipher>,
+    #[case] encode_associated_data: &[u8],
+    #[case] decode_cipher: Option<encrypt::Cipher>,
+    #[case] decode_associated_data: &[u8],
+) {
+    let ops = vec![
+        LogOp::Free(FreeOp { page_group_id: PageGroupId(0) }),
+        LogOp::Free(FreeOp { page_group_id: PageGroupId(1) }),
+        LogOp::Free(FreeOp { page_group_id: PageGroupId(2) }),
+    ];
+
+    let mut buffer = Vec::new();
+    encode_log_block(
+        encode_cipher.as_ref(),
+        encode_associated_data,
+        1234,
+        &ops,
+        &mut buffer,
+    )
+    .expect("block should be encoded");
+
+    let mut recovered_ops = Vec::new();
+    decode_log_block(
+        decode_cipher.as_ref(),
+        decode_associated_data,
+        &mut buffer[HEADER_SIZE..],
+        &mut recovered_ops,
+    )
+    .expect("block should be decoded");
+    assert_eq!(ops, recovered_ops);
+}
+
+#[rstest::rstest]
+#[case(None, "buffer verification failed")]
+#[case(Some(cipher_1()), "buffer decryption failed")]
+fn test_decode_err_on_corrupted_data(
+    #[case] cipher: Option<encrypt::Cipher>,
+    #[case] expected_err_msg: &str,
+) {
+    let ops = vec![
+        LogOp::Free(FreeOp { page_group_id: PageGroupId(0) }),
+        LogOp::Free(FreeOp { page_group_id: PageGroupId(1) }),
+        LogOp::Free(FreeOp { page_group_id: PageGroupId(2) }),
+    ];
+
+    let mut buffer = Vec::new();
+    encode_log_block(
+        cipher.as_ref(),
+        b"test",
+        1234,
+        &ops,
+        &mut buffer,
+    )
+    .expect("block should be encoded");
+
+
+    buffer[70..110].fill(5);
+
+    let mut recovered_ops = Vec::new();
+    let err = decode_log_block(
+        cipher.as_ref(),
+        b"test",
+        &mut buffer[HEADER_SIZE..],
+        &mut recovered_ops,
+    )
+    .expect_err("block should be decoded");
+    assert_eq!(err.to_string(), expected_err_msg);
+}
