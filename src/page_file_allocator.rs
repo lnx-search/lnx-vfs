@@ -110,7 +110,7 @@ impl std::fmt::Debug for WriteAllocTx<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "WriteAllocTx(page_file_id={:?}, commited={}, num_spans={})",
+            "WriteAllocTx(page_file_id={:?}, committed={}, num_spans={})",
             self.page_file_id,
             self.is_commited,
             self.spans.len(),
