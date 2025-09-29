@@ -1,6 +1,6 @@
 use crate::disk_allocator::{AllocSpan, InitState, PageAllocator};
 use crate::layout::PageFileId;
-use crate::page_data::NUM_PAGES_PER_BLOCK;
+use crate::page_data::{MAX_NUM_PAGES, NUM_PAGES_PER_BLOCK};
 use crate::page_file_allocator::PageFileAllocator;
 
 #[test]
@@ -159,4 +159,40 @@ fn test_double_page_file_insert_panic() {
     controller.insert_page_file(PageFileId(1), allocator);
     let allocator = PageAllocator::new(InitState::Allocated);
     controller.insert_page_file(PageFileId(1), allocator);
+}
+
+#[test]
+fn test_num_pages_count() {
+    let allocator = PageFileAllocator::default();
+    assert_eq!(allocator.num_page_files(), 0);
+
+    allocator.insert_page_file(PageFileId(1), PageAllocator::new(InitState::Free));
+    assert_eq!(allocator.num_page_files(), 1);
+
+    allocator.remove_page_file(PageFileId(1));
+    assert_eq!(allocator.num_page_files(), 0);
+}
+
+#[test]
+fn test_capacity_count() {
+    let allocator = PageFileAllocator::default();
+    assert_eq!(allocator.capacity(), 0);
+
+    allocator.insert_page_file(PageFileId(1), PageAllocator::new(InitState::Free));
+    assert_eq!(allocator.capacity(), MAX_NUM_PAGES);
+
+    allocator.remove_page_file(PageFileId(1));
+    assert_eq!(allocator.capacity(), 0);
+}
+
+#[test]
+fn test_write_alloc_tx_debug_format() {
+    let allocator = PageFileAllocator::default();
+    allocator.insert_page_file(PageFileId(1), PageAllocator::new(InitState::Free));
+
+    let mut txn = allocator.get_alloc_tx(4).unwrap();
+    assert_eq!(format!("{txn:?}"), "WriteAllocTx(page_file_id=PageFileId(1), committed=false, num_spans=1)");
+
+    txn.commit();
+    assert_eq!(format!("{txn:?}"), "WriteAllocTx(page_file_id=PageFileId(1), committed=true, num_spans=1)");
 }
