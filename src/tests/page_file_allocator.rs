@@ -191,8 +191,14 @@ fn test_write_alloc_tx_debug_format() {
     allocator.insert_page_file(PageFileId(1), PageAllocator::new(InitState::Free));
 
     let mut txn = allocator.get_alloc_tx(4).unwrap();
-    assert_eq!(format!("{txn:?}"), "WriteAllocTx(page_file_id=PageFileId(1), committed=false, num_spans=1)");
+    assert_eq!(
+        format!("{txn:?}"),
+        "WriteAllocTx(page_file_id=PageFileId(1), committed=false, num_spans=1)"
+    );
 
     txn.commit();
-    assert_eq!(format!("{txn:?}"), "WriteAllocTx(page_file_id=PageFileId(1), committed=true, num_spans=1)");
+    assert_eq!(
+        format!("{txn:?}"),
+        "WriteAllocTx(page_file_id=PageFileId(1), committed=true, num_spans=1)"
+    );
 }
