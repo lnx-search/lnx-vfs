@@ -136,3 +136,14 @@ async fn test_header_encryption_missmatch() {
         .expect_err("reader should fail");
     assert!(matches!(err, ReadCheckpointError::EncryptionStatusMismatch));
 }
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_missing_header() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Metadata).await;
+    let err = crate::checkpoint::read_checkpoint(&ctx, &file.into())
+        .await
+        .expect_err("reader should fail");
+    assert!(matches!(err, ReadCheckpointError::MissingHeader));
+}
