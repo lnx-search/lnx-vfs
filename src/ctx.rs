@@ -208,4 +208,19 @@ mod tests {
         assert_eq!(buffer.len(), 200 * ALLOC_PAGE_SIZE);
         assert_eq!(buffer.kind(), BufferKind::System);
     }
+
+    #[tokio::test]
+    async fn test_config_system_opt() {
+        let ctx = FileContext::for_test(false).await;
+        assert!(ctx.config_opt::<()>().is_none());
+        ctx.set_config(());
+        assert!(ctx.config_opt::<()>().is_some());
+    }
+
+    #[should_panic(expected = "config not initialized")]
+    #[tokio::test]
+    async fn test_config_system_config_panics() {
+        let ctx = FileContext::for_test(false).await;
+        ctx.config::<()>();
+    }
 }
