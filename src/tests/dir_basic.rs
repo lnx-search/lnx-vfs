@@ -333,3 +333,15 @@ async fn test_atomic_file(tempdir: tempfile::TempDir) {
     let files = super::list_files(&path).unwrap();
     assert_eq!(files, &["0000001000-1000.dat.lnx"]);
 }
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_directory_fmt_debug(tempdir: tempfile::TempDir) {
+    let directory = SystemDirectory::open(tempdir.path())
+        .await
+        .expect("directory should be created");
+    assert_eq!(
+        format!("{directory:?}"),
+        format!("SystemDirectory(path={})", tempdir.path().display())
+    );
+}

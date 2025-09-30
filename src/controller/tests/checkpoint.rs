@@ -4,10 +4,11 @@ use crate::controller::checkpoint::{
     read_checkpoints,
     recover_wal_updates,
 };
-use crate::controller::metadata::{LookupEntry, MetadataController, PageTable};
+use crate::controller::metadata::{MetadataController, PageTable};
 use crate::controller::tests::{create_wal_file, write_log_ops};
 use crate::ctx;
 use crate::directory::FileGroup;
+use crate::layout::log::{FreeOp, LogOp, ReassignOp, WriteOp};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::NUM_PAGES_PER_BLOCK;
@@ -219,68 +220,61 @@ async fn test_wal_replay_single_wal() {
     let wal_file = create_wal_file(&ctx).await;
 
     let entries = &[
-        // Normal transaction that was completed.
-        make_log_entry(PageGroupId(0), PageId(0), 0, 2, PageFileId(1), PageId(1)),
-        make_log_entry(
-            PageGroupId(0),
-            PageId(1),
-            0,
-            2,
-            PageFileId(1),
-            PageId::TERMINATOR,
-        ),
-        // Aborted transaction
-        make_log_entry(PageGroupId(1), PageId(1), 1, 2, PageFileId(1), PageId(4)),
-        // Transaction that is applied to a different page file.
-        make_log_entry(
-            PageGroupId(2),
-            PageId(5),
-            2,
+        (
             1,
-            PageFileId(3),
-            PageId::TERMINATOR,
+            vec![LogOp::Write(WriteOp {
+                page_group_id: PageGroupId(1),
+                page_file_id: PageFileId(1),
+                altered_pages: vec![
+                    PageMetadata {
+                        group: PageGroupId(1),
+                        revision: 0,
+                        next_page_id: PageId(2),
+                        id: PageId(1),
+                        data_len: 0,
+                        context: [0; 40],
+                    },
+                    PageMetadata {
+                        group: PageGroupId(1),
+                        revision: 0,
+                        next_page_id: PageId::TERMINATOR,
+                        id: PageId(2),
+                        data_len: 0,
+                        context: [0; 40],
+                    },
+                ],
+            })],
+        ),
+        (
+            2,
+            vec![LogOp::Write(WriteOp {
+                page_group_id: PageGroupId(2),
+                page_file_id: PageFileId(1),
+                altered_pages: vec![PageMetadata {
+                    group: PageGroupId(2),
+                    revision: 0,
+                    next_page_id: PageId::TERMINATOR,
+                    id: PageId(3),
+                    data_len: 0,
+                    context: [0; 40],
+                }],
+            })],
         ),
     ];
 
-    write_log_ops(ctx.clone(), wal_file.clone(), entries, 0).await;
+    write_log_ops(ctx.clone(), wal_file.clone(), entries).await;
 
-    let mut lookup_table = foldhash::HashMap::default();
     let controller = MetadataController::empty(ctx.clone());
-    recover_wal_updates(ctx.clone(), &mut lookup_table, &controller)
+    recover_wal_updates(ctx.clone(), &controller)
         .await
         .expect("wal file should be recovered");
 
-    let mut recovered_entries = lookup_table.into_iter().collect::<Vec<_>>();
-    recovered_entries.sort_by_key(|entry| entry.0);
-
-    assert_eq!(
-        recovered_entries,
-        &[
-            (
-                PageGroupId(0),
-                LookupEntry {
-                    page_file_id: PageFileId(1),
-                    first_page_id: PageId(0),
-                    revision: 0,
-                }
-            ),
-            (
-                PageGroupId(2),
-                LookupEntry {
-                    page_file_id: PageFileId(3),
-                    first_page_id: PageId(5),
-                    revision: 0,
-                }
-            ),
-        ]
-    );
-
     let mut pages = Vec::new();
-    controller.collect_pages(PageFileId(1), PageId(0), 0..60_000, &mut pages);
+    controller.collect_pages(PageGroupId(1), 0..60_000, &mut pages);
     assert_eq!(pages.len(), 2);
 
     let mut pages = Vec::new();
-    controller.collect_pages(PageFileId(3), PageId(5), 0..50, &mut pages);
+    controller.collect_pages(PageGroupId(2), 0..50, &mut pages);
     assert_eq!(pages.len(), 1);
 }
 
@@ -294,90 +288,84 @@ async fn test_wal_replay_multi_wal_ordering() {
     let wal_file2 = create_wal_file(&ctx).await;
 
     let entries_wal2 = &[
-        // Normal transaction that was completed.
-        make_log_entry(PageGroupId(0), PageId(0), 0, 2, PageFileId(1), PageId(1)),
-        make_log_entry(
-            PageGroupId(0),
-            PageId(1),
-            0,
-            2,
-            PageFileId(1),
-            PageId::TERMINATOR,
-        ),
-        // Transaction that is applied to a different page file.
-        make_log_entry(
-            PageGroupId(2),
-            PageId(5),
-            2,
+        (
             1,
-            PageFileId(3),
-            PageId::TERMINATOR,
+            vec![LogOp::Write(WriteOp {
+                page_group_id: PageGroupId(1),
+                page_file_id: PageFileId(1),
+                altered_pages: vec![
+                    PageMetadata {
+                        group: PageGroupId(1),
+                        revision: 0,
+                        next_page_id: PageId(2),
+                        id: PageId(1),
+                        data_len: 0,
+                        context: [0; 40],
+                    },
+                    PageMetadata {
+                        group: PageGroupId(1),
+                        revision: 0,
+                        next_page_id: PageId::TERMINATOR,
+                        id: PageId(2),
+                        data_len: 0,
+                        context: [0; 40],
+                    },
+                ],
+            })],
+        ),
+        (
+            2,
+            vec![LogOp::Write(WriteOp {
+                page_group_id: PageGroupId(2),
+                page_file_id: PageFileId(1),
+                altered_pages: vec![PageMetadata {
+                    group: PageGroupId(2),
+                    revision: 0,
+                    next_page_id: PageId::TERMINATOR,
+                    id: PageId(3),
+                    data_len: 0,
+                    context: [0; 40],
+                }],
+            })],
         ),
     ];
 
     let entries_wal1 = &[
-        // Normal transaction that was completed.
-        make_log_entry(PageGroupId(4), PageId(3), 0, 3, PageFileId(1), PageId(4)),
-        make_log_entry(PageGroupId(4), PageId(4), 0, 3, PageFileId(1), PageId(6)),
-        make_log_entry(
-            PageGroupId(4),
-            PageId(6),
-            0,
+        (
             3,
-            PageFileId(1),
-            PageId::TERMINATOR,
+            vec![LogOp::Free(FreeOp {
+                page_group_id: PageGroupId(2),
+            })],
         ),
-        // Transaction that overwrites a previous entry in the WAL.
-        make_log_entry(
-            PageGroupId(2),
-            PageId(9),
-            2,
-            1,
-            PageFileId(4),
-            PageId::TERMINATOR,
+        (
+            4,
+            vec![LogOp::Reassign(ReassignOp {
+                old_page_group_id: PageGroupId(1),
+                new_page_group_id: PageGroupId(4),
+            })],
         ),
     ];
 
     // We specifically write to wal2 first, so their timestamps have
     // wal2 being "older" than "wal1" when it comes to recovery.
-    // This tests the behaviour as WAL entries are recycled, note that the revision
-    // should still be respected.
-    write_log_ops(ctx.clone(), wal_file2.clone(), entries_wal2, 0).await;
-    write_log_ops(ctx.clone(), wal_file1.clone(), entries_wal1, 1).await;
+    // This tests the behaviour as WAL entries are recycled.
+    write_log_ops(ctx.clone(), wal_file2.clone(), entries_wal2).await;
+    write_log_ops(ctx.clone(), wal_file1.clone(), entries_wal1).await;
 
-    let mut lookup_table = foldhash::HashMap::default();
     let controller = MetadataController::empty(ctx.clone());
-    recover_wal_updates(ctx.clone(), &mut lookup_table, &controller)
+    recover_wal_updates(ctx.clone(), &controller)
         .await
         .expect("wal file should be recovered");
 
-    let mut recovered_entries = lookup_table.into_iter().collect::<Vec<_>>();
-    recovered_entries.sort_by_key(|entry| entry.0);
+    let mut pages = Vec::new();
+    let exists = controller.collect_pages(PageGroupId(1), 0..60_000, &mut pages);
+    assert!(!exists);
 
-    assert_eq!(
-        recovered_entries,
-        &[
-            (
-                PageGroupId(0),
-                LookupEntry {
-                    page_file_id: PageFileId(1),
-                    first_page_id: PageId(0),
-                }
-            ),
-            (
-                PageGroupId(2),
-                LookupEntry {
-                    page_file_id: PageFileId(4),
-                    first_page_id: PageId(9),
-                }
-            ),
-            (
-                PageGroupId(4),
-                LookupEntry {
-                    page_file_id: PageFileId(1),
-                    first_page_id: PageId(3),
-                }
-            ),
-        ]
-    );
+    let mut pages = Vec::new();
+    let exists = controller.collect_pages(PageGroupId(2), 0..60_000, &mut pages);
+    assert!(!exists);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageGroupId(4), 0..60_000, &mut pages);
+    assert_eq!(pages.len(), 2);
 }
