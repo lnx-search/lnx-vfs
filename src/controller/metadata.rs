@@ -61,6 +61,7 @@ impl MetadataController {
 
         let slf = Self::empty(ctx.clone());
         for (page_file_id, page_table) in checkpointed_state.page_tables {
+            dbg!(page_file_id);
             slf.insert_page_table(page_file_id, page_table);
         }
 
@@ -610,6 +611,10 @@ impl PageTable {
         data_range: Range<usize>,
         results: &mut Vec<PageMetadata>,
     ) {
+        if start_page.is_terminator() {
+            return;
+        }
+
         assert!(
             start_page.0 < MAX_NUM_PAGES as u32,
             "page ID is beyond the bounds of the page table"

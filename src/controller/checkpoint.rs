@@ -182,7 +182,6 @@ pub(super) async fn recover_wal_updates(
     let mut num_transactions_recovered = 0;
     for reader in readers {
         let num_transactions = recover_wal_file(reader, controller).await?;
-
         num_transactions_recovered += num_transactions;
     }
 
@@ -230,6 +229,13 @@ async fn recover_wal_file(
         for op in transaction_ops.drain(..) {
             match op {
                 LogOp::Write(op) => {
+                    // When recovering, we might have a brand-new page file that hasn't
+                    // had any data written to it from a checkpoint yet, so we should
+                    // recreate it.
+                    if !controller.contains_page_table(op.page_file_id) {
+                        controller.create_blank_page_table(op.page_file_id);
+                    }
+
                     controller.assign_pages_to_group(
                         op.page_file_id,
                         op.page_group_id,

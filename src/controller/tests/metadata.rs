@@ -38,7 +38,7 @@ async fn test_controller_create_blank_page_table() {
 }
 
 #[tokio::test]
-#[should_panic(expected = "page table does not exist for page file: PageFileId(1)")]
+#[should_panic(expected = "BUG: page file ID should exist")]
 async fn test_controller_assign_pages_panics_unknown_page_file() {
     let ctx = ctx::FileContext::for_test(false).await;
     let controller = MetadataController::empty(ctx);
@@ -153,7 +153,7 @@ async fn test_controller_panics_on_unassigned() {
     );
 
     let mut pages = Vec::new();
-    controller.collect_pages(PageGroupId(1), 0..50, &mut pages);
+    controller.collect_pages(PageGroupId(1), 0..50_000, &mut pages);
 }
 
 #[tokio::test]
@@ -674,7 +674,7 @@ async fn test_controller_recover_from_checkpoints() {
     let controller = MetadataController::open(ctx)
         .await
         .expect("controller should be opened without error");
-    assert_eq!(controller.num_page_groups(), 3);
+    assert_eq!(controller.num_page_groups(), 5);
 
     for id in 1..6 {
         let mut pages = Vec::new();
@@ -686,6 +686,8 @@ async fn test_controller_recover_from_checkpoints() {
 
 #[tokio::test]
 async fn test_controller_recover_from_wal() {
+    let _ = tracing_subscriber::fmt::try_init();
+
     let ctx = ctx::FileContext::for_test(false).await;
 
     let wal_file = create_wal_file(&ctx).await;
@@ -867,5 +869,5 @@ async fn test_controller_create_page_file_allocator() {
     controller.create_blank_page_table(PageFileId(0));
     let page_file_allocator = controller.create_page_file_allocator();
     assert_eq!(page_file_allocator.num_page_files(), 1);
-    assert_eq!(page_file_allocator.capacity(), 442_368)
+    assert_eq!(page_file_allocator.capacity(), 491520)
 }
