@@ -151,6 +151,8 @@ async fn test_controller_panics_on_unassigned() {
             context: [0; 40],
         }],
     );
+    assert!(controller.contains_page_table(PageFileId(1)));
+    assert!(controller.contains_page_group(PageGroupId(1)));
 
     let mut pages = Vec::new();
     controller.collect_pages(PageGroupId(1), 0..50_000, &mut pages);

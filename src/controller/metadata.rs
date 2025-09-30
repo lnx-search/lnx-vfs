@@ -164,13 +164,14 @@ impl MetadataController {
     /// Insert the given page group into the controller and associate it with
     /// the given page table (via the page file ID) and the first page containing
     /// the start of the group data.
+    ///
+    /// WARNING: This assumes the given page file ID exists.
     fn insert_page_group(&self, group: PageGroupId, entry: LookupEntry) {
-        if !self.contains_page_table(entry.page_file_id) {
-            panic!(
-                "BUG: page table does not exist for page file: {:?}",
-                entry.page_file_id
-            );
-        }
+        debug_assert!(
+            self.contains_page_table(entry.page_file_id),
+            "BUG: page table does not exist for page file: {:?}",
+            entry.page_file_id
+        );
 
         let lookup = self.lookup_table.pin();
         if let Some(old_lookup) = lookup.insert(group, entry) {
