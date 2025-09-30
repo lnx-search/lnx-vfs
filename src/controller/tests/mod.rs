@@ -1,36 +1,15 @@
 use std::sync::Arc;
 
 use crate::directory::FileGroup;
-use crate::layout::log::LogOp;
-use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageFileId, PageGroupId, PageId};
+use crate::layout::PageGroupId;
+use crate::layout::log::{FreeOp, LogOp};
 use crate::page_op_log::LogFileWriter;
 use crate::{ctx, file};
 
-mod checkpoint;
+// mod checkpoint;
 mod metadata;
 mod page_file;
 mod wal;
-
-fn make_log_entry(
-    page_group_id: PageGroupId,
-    page_id: PageId,
-    transaction_id: u64,
-    transaction_n_entries: u32,
-    page_file_id: PageFileId,
-    next_page_id: PageId,
-) -> (LogEntryHeader, PageGroupId, PageId) {
-    let entry = LogEntryHeader {
-        transaction_id,
-        transaction_n_entries,
-        sequence_id: 0,
-        page_file_id,
-        page_id,
-        op: LogOp::Write,
-    };
-
-    (entry, page_group_id, next_page_id)
-}
 
 async fn create_wal_file(ctx: &ctx::FileContext) -> file::RWFile {
     let file_id = ctx
@@ -44,28 +23,31 @@ async fn create_wal_file(ctx: &ctx::FileContext) -> file::RWFile {
         .unwrap()
 }
 
-async fn write_log_entries(
+async fn write_log_ops(
     ctx: Arc<ctx::FileContext>,
     file: file::RWFile,
-    entries: &[(LogEntryHeader, PageGroupId, PageId)],
-    revision: u32,
+    ops: &[(u64, Vec<LogOp>)],
 ) {
     let mut writer = LogFileWriter::create(ctx, file)
         .await
         .expect("Failed to create writer");
 
-    for (entry, group, next_page_id) in entries {
-        let mut metadata = PageMetadata::null();
-        metadata.id = entry.page_id;
-        metadata.next_page_id = *next_page_id;
-        metadata.group = *group;
-        metadata.revision = revision;
-
+    for (transaction_id, ops) in ops {
         writer
-            .write_log(*entry, Some(metadata))
+            .write_log(*transaction_id, ops)
             .await
             .expect("failed to write log");
     }
     writer.sync().await.expect("failed to sync writer");
     drop(writer);
+}
+
+fn create_sample_ops(num_ops: usize) -> Vec<LogOp> {
+    let mut ops = Vec::with_capacity(num_ops);
+    for id in 0..num_ops {
+        ops.push(LogOp::Free(FreeOp {
+            page_group_id: PageGroupId(id as u64),
+        }));
+    }
+    ops
 }

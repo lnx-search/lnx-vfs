@@ -1,36 +1,26 @@
 use std::sync::Arc;
 
+use crate::controller::tests::create_sample_ops;
 use crate::controller::wal::{WalConfig, WalController, WalError};
 use crate::directory::FileGroup;
-use crate::layout::log::LogOp;
-use crate::layout::{PageFileId, PageId};
 use crate::{ctx, page_op_log};
 
 #[rstest::rstest]
 #[trace]
 #[tokio::test]
-async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usize) {
+async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_ops: usize) {
+    let _ = tracing_subscriber::fmt::try_init();
+
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
         .expect("Failed to create WalController");
 
-    let mut entries = Vec::with_capacity(num_entries);
-    for id in 0..num_entries {
-        let entry = LogEntryHeader {
-            transaction_id: 1,
-            transaction_n_entries: 1,
-            sequence_id: 1,
-            page_file_id: PageFileId(1),
-            page_id: PageId(id as u32),
-            op: LogOp::Write,
-        };
-        entries.push((entry, None));
-    }
+    let ops = create_sample_ops(num_ops);
 
     controller
-        .write_updates(entries)
+        .write_updates(ops)
         .await
         .expect("controller should write entries");
 
@@ -45,17 +35,21 @@ async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_entries: usi
         .await
         .expect("reader should be able to open WAL file");
 
-    let mut retrieved_num_entries = 0;
-    while let Some(block) = reader.next_transaction().await.unwrap() {
-        retrieved_num_entries += block.num_entries();
+    let mut retrieved_num_transactions = 0;
+    let mut recovered_ops = Vec::new();
+    while let Ok(Some(_transaction_id)) =
+        reader.next_transaction(&mut recovered_ops).await
+    {
+        retrieved_num_transactions += 1;
     }
-    assert_eq!(retrieved_num_entries, num_entries);
+    assert_eq!(retrieved_num_transactions, 1);
+    assert_eq!(recovered_ops.len(), num_ops);
 }
 
 #[rstest::rstest]
 #[trace]
 #[tokio::test]
-async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_entries: usize) {
+async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_ops: usize) {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
@@ -64,21 +58,10 @@ async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_entries: usi
 
     assert_eq!(controller.next_checkpoint_op_stamp(), 0);
 
-    let mut entries = Vec::with_capacity(num_entries);
-    for id in 0..num_entries {
-        let entry = LogEntryHeader {
-            transaction_id: id as u64,
-            transaction_n_entries: 1,
-            sequence_id: 1,
-            page_file_id: PageFileId(1),
-            page_id: PageId(id as u32),
-            op: LogOp::Write,
-        };
-        entries.push((entry, None));
-    }
+    let ops = create_sample_ops(num_ops);
 
     controller
-        .write_updates(entries)
+        .write_updates(ops)
         .await
         .expect("controller should write entries");
 
@@ -99,21 +82,10 @@ async fn test_controller_rotate_writers() {
         .await
         .expect("Failed to create WalController");
 
-    let entry = LogEntryHeader {
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        sequence_id: 1,
-        page_file_id: PageFileId(1),
-        page_id: PageId(1),
-        op: LogOp::Write,
-    };
-    let mut entries = Vec::with_capacity(10);
-    for _ in 0..10 {
-        entries.push((entry, None));
-    }
+    let ops = create_sample_ops(10);
 
     controller
-        .write_updates(entries)
+        .write_updates(ops)
         .await
         .expect("controller should write entries");
 
@@ -185,22 +157,10 @@ async fn test_wal_file_rotation_due_to_size() {
         .await
         .expect("Failed to create WalController");
 
-    let entry = LogEntryHeader {
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        sequence_id: 1,
-        page_file_id: PageFileId(1),
-        page_id: PageId(1),
-        op: LogOp::Write,
-    };
-
-    for _ in 0..3 {
-        let mut entries = Vec::with_capacity(10);
-        for _ in 0..100 {
-            entries.push((entry, None));
-        }
+    for _ in 0..8 {
+        let ops = create_sample_ops(100);
         controller
-            .write_updates(entries)
+            .write_updates(ops)
             .await
             .expect("controller should write entries");
     }
@@ -220,28 +180,17 @@ async fn test_wal_file_rotate_due_to_error() {
     let scenario = fail::FailScenario::setup();
     fail::cfg("file::rw::submit_write", "return(-4)").unwrap();
 
-    let entry = LogEntryHeader {
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        sequence_id: 1,
-        page_file_id: PageFileId(1),
-        page_id: PageId(1),
-        op: LogOp::Write,
-    };
-    let mut entries = Vec::with_capacity(10);
-    for _ in 0..10 {
-        entries.push((entry, None));
-    }
+    let ops = create_sample_ops(10);
 
     let err = controller
-        .write_updates(entries.clone())
+        .write_updates(ops.clone())
         .await
         .expect_err("should error");
     assert!(matches!(err, WalError::Io(_)));
     scenario.teardown();
 
     controller
-        .write_updates(entries.clone())
+        .write_updates(ops.clone())
         .await
         .expect("controller should rotate and write updates");
     assert_eq!(controller.num_free_writers(), 0);
@@ -256,21 +205,10 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
         .await
         .expect("Failed to create WalController");
 
-    let entry = LogEntryHeader {
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        sequence_id: 1,
-        page_file_id: PageFileId(1),
-        page_id: PageId(1),
-        op: LogOp::Write,
-    };
-    let mut entries = Vec::with_capacity(10);
-    for _ in 0..10 {
-        entries.push((entry, None));
-    }
+    let ops = create_sample_ops(10);
 
     controller
-        .write_updates(entries)
+        .write_updates(ops)
         .await
         .expect("controller should write entries");
 
@@ -304,18 +242,7 @@ async fn test_flaky_write_coalesce_updates() {
         .map(Arc::new)
         .expect("Failed to create WalController");
 
-    let entry = LogEntryHeader {
-        transaction_id: 0,
-        transaction_n_entries: 1,
-        sequence_id: 1,
-        page_file_id: PageFileId(1),
-        page_id: PageId(1),
-        op: LogOp::Write,
-    };
-    let mut entries = Vec::with_capacity(3);
-    for _ in 0..3 {
-        entries.push((entry, None));
-    }
+    let ops = create_sample_ops(10);
 
     let scenario = fail::FailScenario::setup();
     fail::cfg("wal::write_log", "sleep(1)").unwrap();
@@ -323,7 +250,7 @@ async fn test_flaky_write_coalesce_updates() {
 
     let task1 = tokio::spawn({
         let controller = controller.clone();
-        let entries = entries.clone();
+        let entries = ops.clone();
         async move {
             controller
                 .write_updates(entries)
@@ -334,7 +261,7 @@ async fn test_flaky_write_coalesce_updates() {
 
     let task2 = tokio::spawn({
         let controller = controller.clone();
-        let entries = entries.clone();
+        let entries = ops.clone();
         async move {
             controller
                 .write_updates(entries)

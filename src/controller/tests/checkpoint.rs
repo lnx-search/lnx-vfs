@@ -5,7 +5,7 @@ use crate::controller::checkpoint::{
     recover_wal_updates,
 };
 use crate::controller::metadata::{LookupEntry, MetadataController, PageTable};
-use crate::controller::tests::{create_wal_file, make_log_entry, write_log_entries};
+use crate::controller::tests::{create_wal_file, write_log_ops};
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::layout::page_metadata::PageMetadata;
@@ -242,7 +242,7 @@ async fn test_wal_replay_single_wal() {
         ),
     ];
 
-    write_log_entries(ctx.clone(), wal_file.clone(), entries, 0).await;
+    write_log_ops(ctx.clone(), wal_file.clone(), entries, 0).await;
 
     let mut lookup_table = foldhash::HashMap::default();
     let controller = MetadataController::empty(ctx.clone());
@@ -342,8 +342,8 @@ async fn test_wal_replay_multi_wal_ordering() {
     // wal2 being "older" than "wal1" when it comes to recovery.
     // This tests the behaviour as WAL entries are recycled, note that the revision
     // should still be respected.
-    write_log_entries(ctx.clone(), wal_file2.clone(), entries_wal2, 0).await;
-    write_log_entries(ctx.clone(), wal_file1.clone(), entries_wal1, 1).await;
+    write_log_ops(ctx.clone(), wal_file2.clone(), entries_wal2, 0).await;
+    write_log_ops(ctx.clone(), wal_file1.clone(), entries_wal1, 1).await;
 
     let mut lookup_table = foldhash::HashMap::default();
     let controller = MetadataController::empty(ctx.clone());
@@ -362,7 +362,6 @@ async fn test_wal_replay_multi_wal_ordering() {
                 LookupEntry {
                     page_file_id: PageFileId(1),
                     first_page_id: PageId(0),
-                    revision: 0,
                 }
             ),
             (
@@ -370,7 +369,6 @@ async fn test_wal_replay_multi_wal_ordering() {
                 LookupEntry {
                     page_file_id: PageFileId(4),
                     first_page_id: PageId(9),
-                    revision: 1,
                 }
             ),
             (
@@ -378,7 +376,6 @@ async fn test_wal_replay_multi_wal_ordering() {
                 LookupEntry {
                     page_file_id: PageFileId(1),
                     first_page_id: PageId(3),
-                    revision: 1,
                 }
             ),
         ]
