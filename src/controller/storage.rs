@@ -2,6 +2,7 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::group_lock::{ConcurrentMutationError, GroupGuard, GroupLocks};
 use super::metadata::{MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
 use crate::checkpoint::WriteCheckpointError;
@@ -9,6 +10,7 @@ use crate::controller::page_file::{PageDataWriter, PageFileController};
 use crate::ctx;
 use crate::directory::FileGroup;
 use crate::layout::PageGroupId;
+use crate::layout::log::LogOp;
 use crate::page_data::{CreatePageFileError, OpenPageFileError};
 
 #[derive(Debug, thiserror::Error)]
@@ -39,9 +41,7 @@ pub struct StorageController {
     metadata_controller: MetadataController,
     wal_controller: WalController,
     page_file_controller: PageFileController,
-    transaction_id_counter: AtomicU64,
-
-    group_locks: parking_lot::Mutex<foldhash::HashSet<u64>>,
+    group_locks: GroupLocks,
 }
 
 impl StorageController {
@@ -71,26 +71,24 @@ impl StorageController {
             metadata_controller,
             wal_controller,
             page_file_controller,
-            transaction_id_counter: AtomicU64::new(0),
-            group_locks: parking_lot::Mutex::new(foldhash::HashSet::default()),
+            group_locks: GroupLocks::default(),
         })
     }
 
     /// Create a new storage write transaction.
     pub fn create_write_txn(&self) -> super::txn_write::StorageWriteTxn<'_> {
-        let transaction_id = self.transaction_id_counter.fetch_add(1, Ordering::Relaxed);
-        super::txn_write::StorageWriteTxn::new(transaction_id, self)
+        super::txn_write::StorageWriteTxn::new(self)
     }
 
-    /// Create a new reader for a given [PageGroupId].
-    pub fn create_read_txn(
-        &self,
-        group: PageGroupId,
-    ) -> Option<super::txn_read::StorageReader<'_>> {
-        // let lookup = self.metadata_controller.find_first_page(group)?;
-        // Some(super::txn_read::StorageReader::new(group, lookup, self))
-        todo!()
-    }
+    // /// Create a new reader for a given [PageGroupId].
+    // pub fn create_read_txn(
+    //     &self,
+    //     group: PageGroupId,
+    // ) -> Option<super::txn_read::StorageReader<'_>> {
+    //     // let lookup = self.metadata_controller.find_first_page(group)?;
+    //     // Some(super::txn_read::StorageReader::new(group, lookup, self))
+    //     todo!()
+    // }
 
     /// Creates a new writer for a given length buffer.
     pub fn create_writer(
@@ -99,6 +97,37 @@ impl StorageController {
     ) -> impl Future<Output = Result<PageDataWriter<'_>, CreatePageFileError>> + '_ {
         self.page_file_controller.create_writer(len)
     }
+
+    #[inline]
+    pub(super) fn group_locks(&self) -> &GroupLocks {
+        &self.group_locks
+    }
+
+    /// Writes the list of ops to the WAL and returns the assigned transaction ID.
+    pub(super) async fn commit_ops(&self, ops: Vec<LogOp>) -> Result<u64, WalError> {
+        // TODO: Must go into recovery mode if error!!!
+
+
+        let result = self.wal_controller.write_updates(ops).await;
+        if result.is_err() {
+            self.trigger_recovery().await?;
+        }
+
+        result
+    }
+
+    /// Puts the storage controller into recovery mode.
+    ///
+    /// This will attempt to recover the memory state
+    async fn trigger_recovery(&self) -> Result<(), WalError> {
+        todo!()
+    }
+}
+
+
+struct VolatileMetadataState {
+    metadata_controller: MetadataController,
+    wal_controller: WalController,
 }
 
 /// Removes all WAL files currently in the directory.

@@ -102,6 +102,9 @@ impl WalController {
 
     /// Write a set of updates to the WAL.
     ///
+    /// It is guaranteed that an error returned by the controller will
+    /// force a WAL rotation.
+    /// 
     /// Returns the assigned transaction ID.
     pub async fn write_updates(&self, updates: Vec<LogOp>) -> Result<u64, WalError> {
         let transaction_id = self.transaction_id_counter.fetch_add(1, Ordering::Relaxed);

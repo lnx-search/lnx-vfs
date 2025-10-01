@@ -1,29 +1,52 @@
+use std::mem;
+
+use super::group_lock::{ConcurrentMutationError, GroupGuard};
 use super::storage::StorageController;
-use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageFileId, PageGroupId, PageId};
+use crate::controller::wal::WalError;
+use crate::layout::log::{FreeOp, LogOp, ReassignOp, WriteOp};
+use crate::layout::{PageGroupId, PageId};
 use crate::page_data::SubmitWriterError;
+use crate::page_file_allocator::WriteAllocTx;
+
+#[derive(Debug, thiserror::Error)]
+/// An error preventing the write transaction from completing.
+pub enum StorageWriteError {
+    #[error(transparent)]
+    /// The target group is already being modified by another transaction.
+    LockGroup(#[from] ConcurrentMutationError),
+    #[error(transparent)]
+    /// An error submitting the initial write IOPs.
+    SubmitWrite(#[from] SubmitWriterError),
+    #[error(transparent)]
+    /// An error prevent the WAL from committing the transaction changes.
+    Wal(#[from] WalError),
+}
 
 /// A [StorageWriteTxn] allows for performing multiple writes across multiple
 /// page group IDs as part of a single transaction.
 pub struct StorageWriteTxn<'c> {
-    transaction_id: u64,
     controller: &'c StorageController,
-    ops: Vec<TxnOp<'c>>,
+    ops: Vec<LogOp>,
+    alloc_txs: Vec<WriteAllocTx<'c>>,
+    guards: Vec<GroupGuard<'c>>,
+    is_complete: bool,
 }
 
 impl std::fmt::Debug for StorageWriteTxn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "StorageWriteTx(tx_id={})", self.transaction_id,)
+        write!(f, "StorageWriteTx")
     }
 }
 
 impl<'c> StorageWriteTxn<'c> {
     /// Creates a new [StorageWriteTxn].
-    pub fn new(transaction_id: u64, controller: &'c StorageController) -> Self {
+    pub fn new(controller: &'c StorageController) -> Self {
         Self {
-            transaction_id,
             controller,
             ops: Vec::new(),
+            alloc_txs: Vec::new(),
+            guards: Vec::new(),
+            is_complete: false,
         }
     }
 
@@ -32,38 +55,45 @@ impl<'c> StorageWriteTxn<'c> {
         &mut self,
         page_group_id: PageGroupId,
         writer: super::page_file::PageDataWriter<'c>,
-    ) -> Result<(), SubmitWriterError> {
+    ) -> Result<(), StorageWriteError> {
+        self.try_lock_group(page_group_id)?;
+
         let page_file_id = writer.page_file_id();
-        let (alloc_tx, mut pages_altered) = writer.finish().await?;
+        let (alloc_tx, mut altered_pages) = writer.finish().await?;
 
         // Connect the page change and metadata information the writer is not aware of.
         let mut i = 0;
-        while i < pages_altered.len() {
-            let next_page_id = pages_altered
+        while i < altered_pages.len() {
+            let next_page_id = altered_pages
                 .get(i + 1)
                 .map(|p| p.id)
                 .unwrap_or(PageId::TERMINATOR);
 
-            let page = &mut pages_altered[i];
+            let page = &mut altered_pages[i];
             page.group = page_group_id;
             page.next_page_id = next_page_id;
-            // TODO: Must add! page.revision = revision;
 
             i += 1;
         }
 
-        self.ops.push(TxnOp::Write {
+        self.alloc_txs.push(alloc_tx);
+        self.ops.push(LogOp::Write(WriteOp {
             page_file_id,
-            alloc_tx,
-            pages_altered,
-        });
+            page_group_id,
+            altered_pages,
+        }));
 
         Ok(())
     }
 
     /// Delete a group from the store.
-    pub fn delete_group(&mut self, page_group_id: PageGroupId) {
-        self.ops.push(TxnOp::Delete { page_group_id });
+    pub fn delete_group(
+        &mut self,
+        page_group_id: PageGroupId,
+    ) -> Result<(), StorageWriteError> {
+        self.try_lock_group(page_group_id)?;
+        self.ops.push(LogOp::Free(FreeOp { page_group_id }));
+        Ok(())
     }
 
     /// Reassign the data from one [PageGroupId] to another [PageGroupId].
@@ -71,30 +101,62 @@ impl<'c> StorageWriteTxn<'c> {
         &mut self,
         old_page_group_id: PageGroupId,
         new_page_group_id: PageGroupId,
-    ) {
-        self.ops.push(TxnOp::Reassign {
+    ) -> Result<(), StorageWriteError> {
+        self.try_lock_group(old_page_group_id)?;
+        self.try_lock_group(new_page_group_id)?;
+        self.ops.push(LogOp::Reassign(ReassignOp {
             old_page_group_id,
             new_page_group_id,
-        });
+        }));
+        Ok(())
     }
 
     /// Commit the current transaction and ensure all operations are durable.
-    pub async fn commit(mut self) {
-        todo!("implement wall write");
+    pub async fn commit(mut self) -> Result<(), StorageWriteError> {
+        // WARNING! The ordering of these operations is _very_ important for consistency!
+        // - We *must* commit all our disk allocations before we submit the ops to the WAL
+        //   the reason for this is that if the WAL errors, but the data still ends up
+        //   on disk, we absolutely cannot risk the pages being put back into the allocator
+        //   while the system continues to run, this is because we might then overwrite
+        //   the page data with a new transaction, which intern means we've lost data.
+        // - Once commit_ops is complete, our memory state must be consistent with what
+        //   will be reconstructed on restart.
+        // - The guards on the page groups will be released once this struct is dropped.
+
+        let alloc_txs = mem::take(&mut self.alloc_txs);
+        let ops = mem::take(&mut self.ops);
+
+        for mut alloc in alloc_txs {
+            alloc.commit();
+        }
+
+        self.controller.commit_ops(ops).await?;
+
+        Ok(())
+    }
+
+    /// Rollback the current transaction and abort.
+    pub fn rollback(mut self) {
+        self.is_complete = true;
+    }
+
+    fn try_lock_group(
+        &mut self,
+        page_group_id: PageGroupId,
+    ) -> Result<(), ConcurrentMutationError> {
+        let guard = self.controller.group_locks().try_lock(page_group_id)?;
+        self.guards.push(guard);
+        Ok(())
     }
 }
 
-enum TxnOp<'c> {
-    Write {
-        page_file_id: PageFileId,
-        alloc_tx: crate::page_file_allocator::WriteAllocTx<'c>,
-        pages_altered: Vec<PageMetadata>,
-    },
-    Reassign {
-        old_page_group_id: PageGroupId,
-        new_page_group_id: PageGroupId,
-    },
-    Delete {
-        page_group_id: PageGroupId,
-    },
+impl<'c> Drop for StorageWriteTxn<'c> {
+    fn drop(&mut self) {
+        if !self.is_complete {
+            tracing::warn!(
+                num_ops = self.ops.len(),
+                "transaction was dropped without being finalised via commit or rollback"
+            );
+        }
+    }
 }

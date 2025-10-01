@@ -238,20 +238,12 @@ fn test_decode_err_on_corrupted_data(
 
 #[test]
 fn test_decode_err_buffer_too_small() {
-    let err = decode_log_header(
-        None,
-        b"",
-        &mut [0; 30],
-    ).expect_err("decode should error");
+    let err =
+        decode_log_header(None, b"", &mut [0; 30]).expect_err("decode should error");
     assert_eq!(err.to_string(), "buffer too small");
 
     let mut recovered_ops = Vec::new();
-    let err = decode_log_block(
-        None,
-        b"",
-        &mut [0; 30],
-        &mut recovered_ops,
-    )
-    .expect_err("decode should error");
+    let err = decode_log_block(None, b"", &mut [0; 30], &mut recovered_ops)
+        .expect_err("decode should error");
     assert_eq!(err.to_string(), "buffer too small");
 }
