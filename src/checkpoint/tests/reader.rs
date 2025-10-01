@@ -38,6 +38,7 @@ async fn test_checkpoint_reader(
         encryption: ctx.get_encryption_status(),
         checkpoint_buffer_size: ckpt_buffer.len(),
         checkpoint_num_changes: num_updates as u32,
+        transaction_id: 1,
     };
 
     let mut header_buffer = vec![0; file_metadata::HEADER_SIZE];
@@ -96,6 +97,7 @@ async fn test_header_encryption_missmatch() {
         encryption: encoding_ctx.get_encryption_status(),
         checkpoint_buffer_size: ckpt_buffer.len(),
         checkpoint_num_changes: 0,
+        transaction_id: 1,
     };
 
     let mut header_buffer = vec![0; file_metadata::HEADER_SIZE];

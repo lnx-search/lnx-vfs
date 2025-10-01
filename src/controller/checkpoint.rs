@@ -22,6 +22,7 @@ use crate::{ctx, page_op_log};
 pub(super) async fn checkpoint_page_table(
     ctx: Arc<ctx::FileContext>,
     page_file_id: PageFileId,
+    transaction_id: u64,
     page_table: &PageTable,
 ) -> Result<FileId, WriteCheckpointError> {
     #[cfg(test)]
@@ -43,7 +44,7 @@ pub(super) async fn checkpoint_page_table(
         .await?;
     let file = directory.get_rw_file(FileGroup::Metadata, file_id).await?;
 
-    write_checkpoint(&ctx, &file, page_file_id, assigned_pages).await?;
+    write_checkpoint(&ctx, &file, page_file_id, transaction_id, assigned_pages).await?;
 
     directory
         .persist_atomic_file(FileGroup::Metadata, file_id)

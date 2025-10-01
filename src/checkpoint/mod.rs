@@ -22,6 +22,8 @@ pub(super) struct MetadataHeader {
     pub(super) checkpoint_buffer_size: usize,
     /// The number of entries in the checkpoint.
     pub(super) checkpoint_num_changes: u32,
+    /// The transaction ID when this checkpoint was created.
+    pub(super) transaction_id: u64,
 }
 
 /// Computes the associated data to tag checkpoint file data with.

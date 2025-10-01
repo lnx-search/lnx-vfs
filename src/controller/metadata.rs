@@ -315,7 +315,7 @@ impl MetadataController {
     ///
     /// This operation is technically incremental, if a page table has not changed from the last
     /// checkpoint then a new checkpoint file is not created.
-    pub async fn checkpoint(&self) -> Result<usize, WriteCheckpointError> {
+    pub async fn checkpoint(&self, transaction_id: u64) -> Result<usize, WriteCheckpointError> {
         let mut num_checkpointed_files = 0;
         for (page_file_id, page_table) in self.page_tables.pin().iter() {
             if !page_table.has_changed() {
@@ -325,6 +325,7 @@ impl MetadataController {
             let file_id = super::checkpoint::checkpoint_page_table(
                 self.ctx.clone(),
                 *page_file_id,
+                transaction_id,
                 page_table,
             )
             .await?;

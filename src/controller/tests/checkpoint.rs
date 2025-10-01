@@ -54,7 +54,7 @@ async fn test_file_save(#[case] entries: &[PageMetadata]) {
 
     let page_table = PageTable::from_existing_state(entries);
 
-    let file_id = checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+    let file_id = checkpoint_page_table(ctx.clone(), PageFileId(0), 1, &page_table)
         .await
         .expect("Checkpoint page table failed");
 
@@ -85,7 +85,7 @@ async fn test_page_table_checkpointed_post_write() {
     }]);
     assert!(page_table.has_changed());
 
-    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+    checkpoint_page_table(ctx.clone(), PageFileId(0), 1, &page_table)
         .await
         .expect("Checkpoint page table failed");
 
@@ -110,7 +110,7 @@ async fn test_page_table_load_from_checkpoints() {
     page_table.write_pages(pages);
     assert!(page_table.has_changed());
 
-    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+    checkpoint_page_table(ctx.clone(), PageFileId(0), 1, &page_table)
         .await
         .expect("Checkpoint page table failed");
 
@@ -144,7 +144,7 @@ async fn test_page_table_load_from_checkpoints_cleanup_outdated_files() {
         context: [0; 40],
     }]);
     assert!(page_table.has_changed());
-    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+    checkpoint_page_table(ctx.clone(), PageFileId(0), 1, &page_table)
         .await
         .expect("Checkpoint page table failed");
 
@@ -157,7 +157,7 @@ async fn test_page_table_load_from_checkpoints_cleanup_outdated_files() {
         context: [0; 40],
     }]);
     assert!(page_table.has_changed());
-    let new_file_id = checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+    let new_file_id = checkpoint_page_table(ctx.clone(), PageFileId(0), 1, &page_table)
         .await
         .expect("Checkpoint page table failed");
 
@@ -185,7 +185,7 @@ async fn test_page_table_load_from_checkpoints_skips_cleanup_errors() {
     }]);
     assert!(page_table.has_changed());
 
-    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+    checkpoint_page_table(ctx.clone(), PageFileId(0), 1, &page_table)
         .await
         .expect("Checkpoint page table failed");
 
@@ -198,7 +198,7 @@ async fn test_page_table_load_from_checkpoints_skips_cleanup_errors() {
         context: [0; 40],
     }]);
     assert!(page_table.has_changed());
-    checkpoint_page_table(ctx.clone(), PageFileId(0), &page_table)
+    checkpoint_page_table(ctx.clone(), PageFileId(0), 1, &page_table)
         .await
         .expect("Checkpoint page table failed");
 

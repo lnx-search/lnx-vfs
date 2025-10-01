@@ -14,7 +14,7 @@ async fn test_checkpoint_writer(
     let file = ctx.make_tmp_rw_file(FileGroup::Metadata).await;
 
     let updates = fill_updates(num_updates);
-    crate::checkpoint::write_checkpoint(&ctx, &file, PageFileId(1), updates)
+    crate::checkpoint::write_checkpoint(&ctx, &file, PageFileId(1), 1, updates)
         .await
         .expect("could not write checkpoint");
 
@@ -36,6 +36,7 @@ async fn test_checkpoint_writer(
 
     assert_eq!(header.file_id, file.id());
     assert_eq!(header.parent_page_file_id, PageFileId(1));
+    assert_eq!(header.transaction_id, 1);
     assert_eq!(header.encryption, ctx.get_encryption_status());
 
     let ckpt_associated_data = ckpt_associated_data(

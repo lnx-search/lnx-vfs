@@ -27,6 +27,7 @@ pub async fn write_checkpoint(
     ctx: &Arc<ctx::FileContext>,
     file: &file::RWFile,
     page_file_id: PageFileId,
+    transaction_id: u64,
     changes: page_metadata::PageChangeCheckpoint,
 ) -> Result<(), WriteCheckpointError> {
     let num_changes = changes.len() as u32;
@@ -66,6 +67,7 @@ pub async fn write_checkpoint(
         encryption: ctx.get_encryption_status(),
         checkpoint_buffer_size: changes_buffer.len(),
         checkpoint_num_changes: num_changes,
+        transaction_id,
     };
     file_metadata::encode_metadata(
         ctx.cipher(),

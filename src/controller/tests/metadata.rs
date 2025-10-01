@@ -496,7 +496,7 @@ async fn test_controller_checkpoint() {
 
     // The actual correctness of the files being written is tested in the checkpoint.rs file.
     let num_checkpointed_files = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect("files should be checkpointed and returned");
 
@@ -540,7 +540,7 @@ async fn test_controller_checkpoint() {
     );
 
     let num_checkpointed_files = controller
-        .checkpoint()
+        .checkpoint(2)
         .await
         .expect("files should be checkpointed and returned");
     assert_eq!(num_checkpointed_files, 2);
@@ -575,7 +575,7 @@ async fn test_controller_incremental_checkpoint() {
     fail::cfg("checkpoint::checkpoint_page_table", "1*off->return").unwrap();
 
     let _err = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect_err("checkpoint error should occur");
 
@@ -584,7 +584,7 @@ async fn test_controller_incremental_checkpoint() {
     // The previously successfully tables have not changed, therefore they should be
     // appearing in the result of the next call.
     let num_checkpointed_files = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect("checkpoint should complete");
     assert_eq!(num_checkpointed_files, 1);
@@ -609,7 +609,7 @@ async fn test_controller_gc_old_checkpoint_files() {
         }],
     );
     let num_checkpointed_files = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect("checkpoint should complete");
     assert_eq!(num_checkpointed_files, 1);
@@ -632,7 +632,7 @@ async fn test_controller_gc_old_checkpoint_files() {
     fail::cfg("metadata::garbage_collect_checkpoints", "return").unwrap();
 
     let _err = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect_err("checkpoint error should occur when gc attempted");
     assert_eq!(controller.num_files_to_cleanup(), 1);
@@ -640,7 +640,7 @@ async fn test_controller_gc_old_checkpoint_files() {
     scenario.teardown();
 
     let num_checkpointed_files = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect("checkpoint should complete");
     assert_eq!(num_checkpointed_files, 0);
@@ -669,7 +669,7 @@ async fn test_controller_recover_from_checkpoints() {
             }],
         );
     }
-    let num_checkpointed_files = controller.checkpoint().await.unwrap();
+    let num_checkpointed_files = controller.checkpoint(1).await.unwrap();
     assert_eq!(num_checkpointed_files, 1);
     drop(controller);
 
@@ -812,7 +812,7 @@ async fn test_controller_recovery_checkpoint_fuzz(
     }
 
     let num_checkpointed_files = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect("checkpoint should complete");
     assert_eq!(num_checkpointed_files, num_page_tables);
@@ -832,7 +832,7 @@ async fn test_controller_recovery_checkpoint_fuzz(
     );
 
     let num_checkpointed_files = controller
-        .checkpoint()
+        .checkpoint(1)
         .await
         .expect("checkpoint should complete");
     assert_eq!(num_checkpointed_files, 1);
