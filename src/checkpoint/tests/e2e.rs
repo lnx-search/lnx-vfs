@@ -14,7 +14,7 @@ async fn test_reader_can_read_writer_output(
 
     let updates = fill_updates(num_updates);
 
-    crate::checkpoint::write_checkpoint(&ctx, &file, PageFileId(1), 1, updates.clone())
+    crate::checkpoint::write_checkpoint(&ctx, &file, PageFileId(1), updates.clone())
         .await
         .expect("could not write checkpoint");
 
@@ -23,5 +23,4 @@ async fn test_reader_can_read_writer_output(
         .expect("could not read checkpoint");
     assert_eq!(checkpoint.updates, updates);
     assert_eq!(checkpoint.page_file_id, PageFileId(1));
-    assert_eq!(checkpoint.transaction_id, 1);
 }

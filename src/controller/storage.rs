@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::group_lock::{ConcurrentMutationError, GroupGuard, GroupLocks};
 use super::metadata::{MetadataController, OpenMetadataControllerError};
@@ -36,12 +36,29 @@ pub enum OpenStorageControllerError {
     PageFileCreate(#[from] CreatePageFileError),
 }
 
+// TODO: We need to recover on a WAL error and prevent the memory state from diverging from
+//       the on-disk state.
+//  - All reads must be locked out while this occurs.
+//  - If the WAL errors, we need to enter "recovery mode" where we lock all writes.
+//  - Potential issue, if we have multiple writes queued up on the WAL, and one write errors
+//    we may have inflight IOPS writing to a new WAL which may be successful.
+//
+
 /// The [StorageController] manages persisting updates to pages of data.
 pub struct StorageController {
     metadata_controller: MetadataController,
     wal_controller: WalController,
     page_file_controller: PageFileController,
     group_locks: GroupLocks,
+
+    /// An indicator flag for if the system is currently in recovery mode or not.
+    ///
+    /// If this is `true`, no writes are allowed to progress as the system must process
+    /// its on-disk state before the memory state is confirmed to be correct.
+    recovery_mode_active: AtomicBool,
+    /// A guard to prevent multiple writers attempting to perform the recovery operation
+    /// at the same time.
+    recovery_mode_lock: tokio::sync::Mutex<()>,
 }
 
 impl StorageController {
@@ -72,6 +89,9 @@ impl StorageController {
             wal_controller,
             page_file_controller,
             group_locks: GroupLocks::default(),
+
+            recovery_mode_active: AtomicBool::new(false),
+            recovery_mode_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -107,7 +127,6 @@ impl StorageController {
     pub(super) async fn commit_ops(&self, ops: Vec<LogOp>) -> Result<u64, WalError> {
         // TODO: Must go into recovery mode if error!!!
 
-
         let result = self.wal_controller.write_updates(ops).await;
         if result.is_err() {
             self.trigger_recovery().await?;
@@ -123,7 +142,6 @@ impl StorageController {
         todo!()
     }
 }
-
 
 struct VolatileMetadataState {
     metadata_controller: MetadataController,

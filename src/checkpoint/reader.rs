@@ -35,8 +35,6 @@ pub enum ReadCheckpointError {
 pub struct Checkpoint {
     /// The ID of the page file the state is tied to.
     pub page_file_id: PageFileId,
-    /// The transaction ID that the checkpoint accounts for.
-    pub transaction_id: u64,
     /// The page state checkpoint.
     pub updates: page_metadata::PageChangeCheckpoint,
 }
@@ -100,7 +98,6 @@ pub async fn read_checkpoint(
 
     Ok(Checkpoint {
         page_file_id: header.parent_page_file_id,
-        transaction_id: header.transaction_id,
         updates: checkpoint,
     })
 }
