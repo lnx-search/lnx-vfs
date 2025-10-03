@@ -33,17 +33,71 @@ impl Default for WalConfig {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
 /// An error that prevented the controller from writing set of metadata updates
 /// to the WAL file.
-pub enum WalError {
-    #[error(transparent)]
+pub struct WalError {
+    /// The OP stamp of the WAL when the error occurred.
+    pub wal_op_stamp: u64,
+    /// The source that caused the error.
+    pub source: WalErrorSource,
+}
+
+impl WalError {
+    fn new(wal_op_stamp: u64, source: impl Into<WalErrorSource>) -> Self {
+        Self {
+            wal_op_stamp,
+            source: source.into(),
+        }
+    }
+}
+
+impl std::fmt::Debug for WalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WalError")
+            .field("wal_op_stamp", &self.wal_op_stamp)
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+impl std::fmt::Display for WalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.source {
+            WalErrorSource::Io(ref err) => write!(f, "WAL Error: {}", err),
+            WalErrorSource::RotateError(ref err) => write!(f, "WAL Error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for WalError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.source {
+            WalErrorSource::RotateError(err) => Some(err),
+            WalErrorSource::Io(err) => Some(err),
+        }
+    }
+}
+
+#[derive(Debug)]
+/// The source of a [WalError].
+pub enum WalErrorSource {
     /// The controller could not open a new WAL file during a WAL rotation
     /// operation.
-    RotateError(#[from] page_op_log::LogOpenWriteError),
-    #[error(transparent)]
+    RotateError(page_op_log::LogOpenWriteError),
     /// An IO error occurred.
-    Io(#[from] io::Error),
+    Io(io::Error),
+}
+
+impl From<io::Error> for WalErrorSource {
+    fn from(err: io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<page_op_log::LogOpenWriteError> for WalErrorSource {
+    fn from(value: page_op_log::LogOpenWriteError) -> Self {
+        Self::RotateError(value)
+    }
 }
 
 /// The [WalController] manages a set of [page_op_log::LogFileWriter]s and
@@ -63,9 +117,9 @@ pub struct WalController {
     checkpoint_pending_writers: Mutex<VecDeque<TaggedWriter>>,
     /// The current active WAL writer.
     active_writer: tokio::sync::Mutex<page_op_log::LogFileWriter>,
-    /// The current op stamp that is incremented for every checkpoint operation
+    /// The current op stamp that is incremented for every WAL rotation operation
     /// performed on the log.
-    checkpoint_op_stamp: AtomicU64,
+    op_stamp: AtomicU64,
     /// Enqueued operations from other tasks that are waiting for the writer
     /// lock. This allows the system to coalesce writes.
     enqueued_operations: Mutex<EnqueuedOperations>,
@@ -83,7 +137,9 @@ impl WalController {
     /// A new WAL file will automatically be created.
     pub async fn create(ctx: Arc<ctx::FileContext>) -> Result<WalController, WalError> {
         let config = ctx.config();
-        let writer = create_new_wal_file(ctx.clone()).await?;
+        let writer = create_new_wal_file(ctx.clone())
+            .await
+            .map_err(|e| WalError::new(0, e))?;
         tracing::info!(file_id = ?writer.file_id(), "created new WAL writer");
         Ok(Self {
             ctx,
@@ -91,7 +147,7 @@ impl WalController {
             free_writers: Mutex::new(VecDeque::new()),
             checkpoint_pending_writers: Mutex::new(VecDeque::new()),
             active_writer: tokio::sync::Mutex::new(writer),
-            checkpoint_op_stamp: AtomicU64::new(0),
+            op_stamp: AtomicU64::new(1),
             enqueued_operations: Mutex::new(EnqueuedOperations::default()),
             transaction_id_counter: AtomicU64::new(1),
             total_write_operations: AtomicU64::new(0),
@@ -107,15 +163,13 @@ impl WalController {
     ///
     /// Returns the assigned transaction ID.
     pub async fn write_updates(&self, updates: Vec<LogOp>) -> Result<u64, WalError> {
-        // TODO: Transaction IDs might not be correctly written in order doing it this was.
-        let transaction_id = self.transaction_id_counter.fetch_add(1, Ordering::Relaxed);
         self.total_write_operations.fetch_add(1, Ordering::Relaxed);
 
         let (op_id, mut waiter) = {
             let mut enqueued_operations = self.enqueued_operations.lock();
             enqueued_operations.push(updates)
         };
-        tracing::trace!(op_id = op_id, "pushed update to queue");
+        tracing::debug!(op_id = op_id, "pushed update to queue");
 
         // Wait for us to either get the writer lock, or for our write to
         // be completed by another task.
@@ -124,10 +178,10 @@ impl WalController {
             result = &mut waiter => {
                 self.total_coalesced_write_operations.fetch_add(1, Ordering::Relaxed);
                 return match result {
-                    Ok(_) => Ok(transaction_id),
+                    Ok(_) => Ok(op_id),
                     Err(_) => {
                         self.total_coalesced_failures.fetch_add(1, Ordering::Relaxed);
-                        Err(WalError::Io(interrupted_prior_error()))
+                        Err(WalError::new(self.op_stamp(), interrupted_prior_error()))
                     },
                 }
             },
@@ -137,14 +191,14 @@ impl WalController {
             Ok(()) => {
                 self.total_coalesced_write_operations
                     .fetch_add(1, Ordering::Relaxed);
-                return Ok(transaction_id);
+                return Ok(op_id);
             },
             Err(oneshot::error::TryRecvError::Closed) => {
                 self.total_coalesced_write_operations
                     .fetch_add(1, Ordering::Relaxed);
                 self.total_coalesced_failures
                     .fetch_add(1, Ordering::Relaxed);
-                return Err(WalError::Io(interrupted_prior_error()));
+                return Err(WalError::new(self.op_stamp(), interrupted_prior_error()));
             },
             Err(oneshot::error::TryRecvError::Empty) => {},
         }
@@ -166,10 +220,16 @@ impl WalController {
                 replies_to_complete.push(op.tx);
             }
 
-            writer.write_log(transaction_id, &op.updates).await?;
+            writer
+                .write_log(op_id, &op.updates)
+                .await
+                .map_err(|e| WalError::new(self.op_stamp(), e))?;
         }
 
-        writer.sync().await?;
+        writer
+            .sync()
+            .await
+            .map_err(|e| WalError::new(self.op_stamp(), e))?;
 
         let num_coalesced_updates = replies_to_complete.len();
         for reply in replies_to_complete {
@@ -188,7 +248,7 @@ impl WalController {
             "BUG: WAL exhausted enqueued ops but its own op did not appear"
         );
 
-        Ok(transaction_id)
+        Ok(op_id)
     }
 
     #[cfg(test)]
@@ -202,8 +262,13 @@ impl WalController {
 
     #[inline]
     /// Increment the op stamp counter and return the value.
-    pub fn next_checkpoint_op_stamp(&self) -> u64 {
-        self.checkpoint_op_stamp.fetch_add(1, Ordering::Relaxed)
+    fn next_op_stamp(&self) -> u64 {
+        self.op_stamp.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    #[inline]
+    pub fn op_stamp(&self) -> u64 {
+        self.op_stamp.load(Ordering::Acquire)
     }
 
     #[inline]
@@ -244,12 +309,13 @@ impl WalController {
     ///
     /// This is used as a way to do some WAL maintenance when the system
     /// is not heavily loaded with writes and speedup startup/recovery.
-    pub async fn prepare_checkpoint(&self) -> Result<(), WalError> {
+    pub async fn prepare_checkpoint(&self) -> Result<u64, WalError> {
         let mut writer = self.active_writer.lock().await;
+        let old_writer_op_stamp = self.op_stamp();
         let new_writer = self.rotate_writer().await?;
         let old_writer = mem::replace(&mut *writer, new_writer);
-        self.add_writer_to_checkpoint_pending(old_writer);
-        Ok(())
+        self.add_writer_to_checkpoint_pending(old_writer, old_writer_op_stamp);
+        Ok(old_writer_op_stamp)
     }
 
     /// Put any WAL writer that has an op stamp tag less than or equal to the checkpointed
@@ -281,9 +347,11 @@ impl WalController {
                     "max size reached for WAL, rotating WAL file",
                 );
             }
+
+            let current_op_stamp = self.op_stamp();
             let new_writer = self.rotate_writer().await?;
             let old_writer = mem::replace(&mut *writer, new_writer);
-            self.add_writer_to_checkpoint_pending(old_writer);
+            self.add_writer_to_checkpoint_pending(old_writer, current_op_stamp);
         }
 
         Ok(())
@@ -296,15 +364,19 @@ impl WalController {
         };
 
         if num_to_repopulate > 0 {
-            let writer =
-                page_op_log::LogFileWriter::create(self.ctx.clone(), file).await?;
+            let writer = page_op_log::LogFileWriter::create(self.ctx.clone(), file)
+                .await
+                .map_err(|e| WalError::new(self.op_stamp(), e))?;
             let mut free_writers = self.free_writers.lock();
             free_writers.push_back(writer);
         } else {
             let file_id = file.id();
             drop(file);
             let directory = self.ctx.directory();
-            directory.remove_file(FileGroup::Wal, file_id).await?;
+            directory
+                .remove_file(FileGroup::Wal, file_id)
+                .await
+                .map_err(|e| WalError::new(self.op_stamp(), e))?;
         }
 
         Ok(())
@@ -326,9 +398,12 @@ impl WalController {
         None
     }
 
-    fn add_writer_to_checkpoint_pending(&self, writer: page_op_log::LogFileWriter) {
+    fn add_writer_to_checkpoint_pending(
+        &self,
+        writer: page_op_log::LogFileWriter,
+        op_stamp: u64,
+    ) {
         let file = writer.into_file();
-        let op_stamp = self.next_checkpoint_op_stamp();
         let tagged = TaggedWriter { file, op_stamp };
         let mut waiting_writers = self.checkpoint_pending_writers.lock();
         waiting_writers.push_back(tagged);
@@ -336,16 +411,21 @@ impl WalController {
 
     /// Gets a free WAL writer or creates a new log file & writer.
     async fn rotate_writer(&self) -> Result<page_op_log::LogFileWriter, WalError> {
+        let op_stamp = self.next_op_stamp();
+        tracing::info!(assigned_op_stamp = op_stamp, "rotating WAL file");
+
         {
             let mut free_writers = self.free_writers.lock();
             if let Some(free_writer) = free_writers.pop_front() {
+                tracing::debug!(assigned_op_stamp = op_stamp, "using free WAL file");
                 return Ok(free_writer);
             }
         }
 
+        tracing::debug!(assigned_op_stamp = op_stamp, "creating new WAL file");
         create_new_wal_file(self.ctx.clone())
             .await
-            .map_err(WalError::RotateError)
+            .map_err(|e| WalError::new(op_stamp, e))
     }
 }
 

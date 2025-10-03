@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::controller::tests::create_sample_ops;
-use crate::controller::wal::{WalConfig, WalController, WalError};
+use crate::controller::wal::{WalConfig, WalController};
 use crate::directory::FileGroup;
 use crate::{ctx, page_op_log};
 
@@ -56,7 +56,7 @@ async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_ops: usize) 
         .await
         .expect("Failed to create WalController");
 
-    assert_eq!(controller.next_checkpoint_op_stamp(), 0);
+    assert_eq!(controller.op_stamp(), 1);
 
     let ops = create_sample_ops(num_ops);
 
@@ -68,7 +68,7 @@ async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_ops: usize) 
     // This is because the checkpoint op stamp should only be incremented
     // when a writer is rotated.
     assert_eq!(
-        controller.next_checkpoint_op_stamp(),
+        controller.op_stamp(),
         1 + controller.num_checkpoint_pending_writers() as u64,
         "op stamp should align with the number of pending writers",
     );
@@ -100,7 +100,7 @@ async fn test_controller_rotate_writers() {
     assert_eq!(controller.num_free_writers(), 0);
     assert_eq!(controller.num_checkpoint_pending_writers(), 1);
 
-    let checkpoint_op_stamp = controller.next_checkpoint_op_stamp();
+    let checkpoint_op_stamp = controller.op_stamp();
     controller
         .recycle_writers(checkpoint_op_stamp)
         .await
@@ -135,7 +135,7 @@ async fn test_evict_free_writers() {
     assert_eq!(controller.num_free_writers(), 0);
     assert_eq!(controller.num_checkpoint_pending_writers(), 2);
 
-    let checkpoint_op_stamp = controller.next_checkpoint_op_stamp();
+    let checkpoint_op_stamp = controller.op_stamp();
     controller
         .recycle_writers(checkpoint_op_stamp)
         .await
@@ -171,6 +171,8 @@ async fn test_wal_file_rotation_due_to_size() {
 
 #[tokio::test]
 async fn test_wal_file_rotate_due_to_error() {
+    let _ = tracing_subscriber::fmt::try_init();
+
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
@@ -186,7 +188,15 @@ async fn test_wal_file_rotate_due_to_error() {
         .write_updates(ops.clone())
         .await
         .expect_err("should error");
-    assert!(matches!(err, WalError::Io(_)));
+    assert_eq!(
+        err.to_string(),
+        "WAL Error: Interrupted system call (os error 4)"
+    );
+    assert_eq!(err.wal_op_stamp, 1);
+    assert_eq!(
+        format!("{err:?}"),
+        "WalError { wal_op_stamp: 1, source: Io(Os { code: 4, kind: Interrupted, message: \"Interrupted system call\" }) }"
+    );
     scenario.teardown();
 
     controller
@@ -195,6 +205,7 @@ async fn test_wal_file_rotate_due_to_error() {
         .expect("controller should rotate and write updates");
     assert_eq!(controller.num_free_writers(), 0);
     assert_eq!(controller.num_checkpoint_pending_writers(), 1);
+    assert_eq!(controller.op_stamp(), 2);
 }
 
 #[tokio::test]
@@ -226,7 +237,7 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
     assert_eq!(controller.num_free_writers(), 0);
     assert_eq!(controller.num_checkpoint_pending_writers(), 2);
 
-    controller.recycle_writers(0).await.unwrap();
+    controller.recycle_writers(1).await.unwrap();
     assert_eq!(controller.num_free_writers(), 1);
     assert_eq!(controller.num_checkpoint_pending_writers(), 1);
 }
