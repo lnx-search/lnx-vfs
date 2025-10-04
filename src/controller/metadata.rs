@@ -589,7 +589,10 @@ impl PageTable {
         block_shard.write_page(page_idx, *first_page);
 
         for metadata in to_update.iter().skip(1) {
-            assert_or_abort!(!first_page.is_null(), "BUG: provided page in chain cannot be null");
+            assert_or_abort!(
+                !first_page.is_null(),
+                "BUG: provided page in chain cannot be null"
+            );
 
             let old_block_idx = block_idx;
             block_idx = (metadata.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;

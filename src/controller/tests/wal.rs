@@ -170,7 +170,7 @@ async fn test_wal_file_rotation_due_to_size() {
 }
 
 #[tokio::test]
-async fn test_wal_file_rotate_due_to_error() {
+async fn test_wal_file_dont_rotate_due_to_error() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let ctx = ctx::FileContext::for_test(false).await;
@@ -192,20 +192,20 @@ async fn test_wal_file_rotate_due_to_error() {
         err.to_string(),
         "WAL Error: Interrupted system call (os error 4)"
     );
-    assert_eq!(err.wal_op_stamp, 1);
     assert_eq!(
         format!("{err:?}"),
-        "WalError { wal_op_stamp: 1, source: Io(Os { code: 4, kind: Interrupted, message: \"Interrupted system call\" }) }"
+        "Io(Os { code: 4, kind: Interrupted, message: \"Interrupted system call\" })"
     );
     scenario.teardown();
 
-    controller
+    let err = controller
         .write_updates(ops.clone())
         .await
-        .expect("controller should rotate and write updates");
-    assert_eq!(controller.num_free_writers(), 0);
-    assert_eq!(controller.num_checkpoint_pending_writers(), 1);
-    assert_eq!(controller.op_stamp(), 2);
+        .expect_err("controller should not rotate automatically");
+    assert_eq!(
+        err.to_string(),
+        "WAL Error: WAL write failed due to prior error"
+    );
 }
 
 #[tokio::test]

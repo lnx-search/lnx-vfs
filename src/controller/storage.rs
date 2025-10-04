@@ -1,15 +1,13 @@
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use super::group_lock::{ConcurrentMutationError, GroupGuard, GroupLocks};
+use super::group_lock::GroupLocks;
 use super::metadata::{MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
 use crate::checkpoint::WriteCheckpointError;
 use crate::controller::page_file::{PageDataWriter, PageFileController};
 use crate::ctx;
 use crate::directory::FileGroup;
-use crate::layout::PageGroupId;
 use crate::layout::log::LogOp;
 use crate::page_data::{CreatePageFileError, OpenPageFileError};
 
@@ -50,15 +48,6 @@ pub struct StorageController {
     wal_controller: WalController,
     page_file_controller: PageFileController,
     group_locks: GroupLocks,
-
-    /// An indicator flag for if the system is currently in recovery mode or not.
-    ///
-    /// If this is `true`, no writes are allowed to progress as the system must process
-    /// its on-disk state before the memory state is confirmed to be correct.
-    recovery_mode_active: AtomicBool,
-    /// A guard to prevent multiple writers attempting to perform the recovery operation
-    /// at the same time.
-    recovery_mode_lock: tokio::sync::Mutex<()>,
 }
 
 impl StorageController {
@@ -89,9 +78,6 @@ impl StorageController {
             wal_controller,
             page_file_controller,
             group_locks: GroupLocks::default(),
-
-            recovery_mode_active: AtomicBool::new(false),
-            recovery_mode_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -124,22 +110,14 @@ impl StorageController {
     }
 
     /// Writes the list of ops to the WAL and returns the assigned transaction ID.
-    pub(super) async fn commit_ops(&self, ops: Vec<LogOp>) -> Result<u64, WalError> {
-        // TODO: Must go into recovery mode if error!!!
-
-        let result = self.wal_controller.write_updates(ops).await;
-        if result.is_err() {
-            self.trigger_recovery().await?;
-        }
-
-        result
-    }
-
-    /// Puts the storage controller into recovery mode.
     ///
-    /// This will attempt to recover the memory state
-    async fn trigger_recovery(&self) -> Result<(), WalError> {
-        todo!()
+    /// If this operation errors, it is safe to assume that data will _not_ be recovered on
+    /// restart.
+    pub(super) fn commit_ops(
+        &self,
+        ops: Vec<LogOp>,
+    ) -> impl Future<Output = Result<u64, WalError>> + '_ {
+        self.wal_controller.write_updates(ops)
     }
 }
 

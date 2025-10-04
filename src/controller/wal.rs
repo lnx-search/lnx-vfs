@@ -33,71 +33,16 @@ impl Default for WalConfig {
     }
 }
 
-/// An error that prevented the controller from writing set of metadata updates
-/// to the WAL file.
-pub struct WalError {
-    /// The OP stamp of the WAL when the error occurred.
-    pub wal_op_stamp: u64,
-    /// The source that caused the error.
-    pub source: WalErrorSource,
-}
-
-impl WalError {
-    fn new(wal_op_stamp: u64, source: impl Into<WalErrorSource>) -> Self {
-        Self {
-            wal_op_stamp,
-            source: source.into(),
-        }
-    }
-}
-
-impl std::fmt::Debug for WalError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WalError")
-            .field("wal_op_stamp", &self.wal_op_stamp)
-            .field("source", &self.source)
-            .finish()
-    }
-}
-
-impl std::fmt::Display for WalError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.source {
-            WalErrorSource::Io(ref err) => write!(f, "WAL Error: {}", err),
-            WalErrorSource::RotateError(ref err) => write!(f, "WAL Error: {}", err),
-        }
-    }
-}
-
-impl std::error::Error for WalError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.source {
-            WalErrorSource::RotateError(err) => Some(err),
-            WalErrorSource::Io(err) => Some(err),
-        }
-    }
-}
-
-#[derive(Debug)]
-/// The source of a [WalError].
-pub enum WalErrorSource {
+#[derive(Debug, thiserror::Error)]
+/// An error preventing the WAL from completing the operation.
+pub enum WalError {
+    #[error("WAL Error: {0}")]
     /// The controller could not open a new WAL file during a WAL rotation
     /// operation.
-    RotateError(page_op_log::LogOpenWriteError),
+    RotateError(#[from] page_op_log::LogOpenWriteError),
+    #[error("WAL Error: {0}")]
     /// An IO error occurred.
-    Io(io::Error),
-}
-
-impl From<io::Error> for WalErrorSource {
-    fn from(err: io::Error) -> Self {
-        Self::Io(err)
-    }
-}
-
-impl From<page_op_log::LogOpenWriteError> for WalErrorSource {
-    fn from(value: page_op_log::LogOpenWriteError) -> Self {
-        Self::RotateError(value)
-    }
+    Io(#[from] io::Error),
 }
 
 /// The [WalController] manages a set of [page_op_log::LogFileWriter]s and
@@ -137,9 +82,7 @@ impl WalController {
     /// A new WAL file will automatically be created.
     pub async fn create(ctx: Arc<ctx::FileContext>) -> Result<WalController, WalError> {
         let config = ctx.config();
-        let writer = create_new_wal_file(ctx.clone())
-            .await
-            .map_err(|e| WalError::new(0, e))?;
+        let writer = create_new_wal_file(ctx.clone()).await?;
         tracing::info!(file_id = ?writer.file_id(), "created new WAL writer");
         Ok(Self {
             ctx,
@@ -181,7 +124,7 @@ impl WalController {
                     Ok(_) => Ok(op_id),
                     Err(_) => {
                         self.total_coalesced_failures.fetch_add(1, Ordering::Relaxed);
-                        Err(WalError::new(self.op_stamp(), interrupted_prior_error()))
+                        Err(WalError::Io(interrupted_prior_error()))
                     },
                 }
             },
@@ -198,9 +141,13 @@ impl WalController {
                     .fetch_add(1, Ordering::Relaxed);
                 self.total_coalesced_failures
                     .fetch_add(1, Ordering::Relaxed);
-                return Err(WalError::new(self.op_stamp(), interrupted_prior_error()));
+                return Err(WalError::Io(interrupted_prior_error()));
             },
             Err(oneshot::error::TryRecvError::Empty) => {},
+        }
+
+        if writer.is_locked_out() {
+            return Err(WalError::Io(interrupted_prior_error()));
         }
 
         let start = Instant::now();
@@ -220,16 +167,10 @@ impl WalController {
                 replies_to_complete.push(op.tx);
             }
 
-            writer
-                .write_log(op_id, &op.updates)
-                .await
-                .map_err(|e| WalError::new(self.op_stamp(), e))?;
+            writer.write_log(op_id, &op.updates).await?;
         }
 
-        writer
-            .sync()
-            .await
-            .map_err(|e| WalError::new(self.op_stamp(), e))?;
+        writer.sync().await?;
 
         let num_coalesced_updates = replies_to_complete.len();
         for reply in replies_to_complete {
@@ -335,19 +276,11 @@ impl WalController {
         &self,
         writer: &mut page_op_log::LogFileWriter,
     ) -> Result<(), WalError> {
-        if writer.is_locked_out() || writer.position() >= self.config.soft_max_wal_size {
-            if writer.is_locked_out() {
-                tracing::warn!(
-                    file_id = ?writer.file_id(),
-                    "writer is locked out due to prior error, rotating WAL file",
-                );
-            } else {
-                tracing::info!(
-                    file_id = ?writer.file_id(),
-                    "max size reached for WAL, rotating WAL file",
-                );
-            }
-
+        if writer.position() >= self.config.soft_max_wal_size {
+            tracing::info!(
+                file_id = ?writer.file_id(),
+                "max size reached for WAL, rotating WAL file",
+            );
             let current_op_stamp = self.op_stamp();
             let new_writer = self.rotate_writer().await?;
             let old_writer = mem::replace(&mut *writer, new_writer);
@@ -364,19 +297,15 @@ impl WalController {
         };
 
         if num_to_repopulate > 0 {
-            let writer = page_op_log::LogFileWriter::create(self.ctx.clone(), file)
-                .await
-                .map_err(|e| WalError::new(self.op_stamp(), e))?;
+            let writer =
+                page_op_log::LogFileWriter::create(self.ctx.clone(), file).await?;
             let mut free_writers = self.free_writers.lock();
             free_writers.push_back(writer);
         } else {
             let file_id = file.id();
             drop(file);
             let directory = self.ctx.directory();
-            directory
-                .remove_file(FileGroup::Wal, file_id)
-                .await
-                .map_err(|e| WalError::new(self.op_stamp(), e))?;
+            directory.remove_file(FileGroup::Wal, file_id).await?;
         }
 
         Ok(())
@@ -425,7 +354,7 @@ impl WalController {
         tracing::debug!(assigned_op_stamp = op_stamp, "creating new WAL file");
         create_new_wal_file(self.ctx.clone())
             .await
-            .map_err(|e| WalError::new(op_stamp, e))
+            .map_err(WalError::RotateError)
     }
 }
 

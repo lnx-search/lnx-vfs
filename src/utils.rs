@@ -5,7 +5,6 @@ use std::{io, mem};
 use crate::buffer::ALLOC_PAGE_SIZE;
 use crate::page_data::DISK_PAGE_SIZE;
 
-
 /// Adds an `expect_or_abort()` unwrap method to results and options.
 ///
 /// This will abort the process when in release mode or otherwise panic like normal when testing.
@@ -84,7 +83,6 @@ pub(crate) fn abort_system(message: &str, cause: Option<&dyn std::fmt::Debug>) -
     #[cfg(not(test))]
     std::process::abort()
 }
-
 
 /// A helper type for having a single value on the stack of a heap allocated
 /// value in an Arc.

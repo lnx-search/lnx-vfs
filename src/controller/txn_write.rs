@@ -113,24 +113,18 @@ impl<'c> StorageWriteTxn<'c> {
 
     /// Commit the current transaction and ensure all operations are durable.
     pub async fn commit(mut self) -> Result<(), StorageWriteError> {
-        // WARNING! The ordering of these operations is _very_ important for consistency!
-        // - We *must* commit all our disk allocations before we submit the ops to the WAL
-        //   the reason for this is that if the WAL errors, but the data still ends up
-        //   on disk, we absolutely cannot risk the pages being put back into the allocator
-        //   while the system continues to run, this is because we might then overwrite
-        //   the page data with a new transaction, which intern means we've lost data.
-        // - Once commit_ops is complete, our memory state must be consistent with what
-        //   will be reconstructed on restart.
-        // - The guards on the page groups will be released once this struct is dropped.
-
         let alloc_txs = mem::take(&mut self.alloc_txs);
         let ops = mem::take(&mut self.ops);
 
+        self.controller.commit_ops(ops).await?;
+
+        // This branch only ever is hit *if* the data is persisted correctly.
+        // - If there is an error and data was confirmed to be removed, then
+        //   the commit call will error.
+        // - If we _couldnt_ confirm the write hit disks or not, we will abort.
         for mut alloc in alloc_txs {
             alloc.commit();
         }
-
-        self.controller.commit_ops(ops).await?;
 
         Ok(())
     }
