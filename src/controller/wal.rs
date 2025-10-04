@@ -394,10 +394,18 @@ struct TaggedWriter {
     op_stamp: u64,
 }
 
-#[derive(Default)]
 struct EnqueuedOperations {
     id: u64,
     ops: VecDeque<EnqueuedOperation>,
+}
+
+impl Default for EnqueuedOperations {
+    fn default() -> Self {
+        Self {
+            id: 1,
+            ops: VecDeque::new(),
+        }
+    }
 }
 
 impl EnqueuedOperations {
