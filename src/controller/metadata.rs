@@ -18,7 +18,7 @@ use crate::page_data::{
     NUM_BLOCKS_PER_FILE,
     NUM_PAGES_PER_BLOCK,
 };
-use crate::{ctx, disk_allocator, page_file_allocator};
+use crate::{assert_or_abort, ctx, disk_allocator, page_file_allocator};
 
 type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, foldhash::fast::RandomState>;
 
@@ -61,7 +61,6 @@ impl MetadataController {
 
         let slf = Self::empty(ctx.clone());
         for (page_file_id, page_table) in checkpointed_state.page_tables {
-            dbg!(page_file_id);
             slf.insert_page_table(page_file_id, page_table);
         }
 
@@ -581,7 +580,7 @@ impl PageTable {
             None => return,
             Some(first_page) => first_page,
         };
-        assert!(!first_page.is_null(), "BUG: provided page cannot be null");
+        assert_or_abort!(!first_page.is_null(), "BUG: provided page cannot be null");
 
         let mut block_idx = (first_page.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
         let mut page_idx = (first_page.id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
@@ -590,7 +589,7 @@ impl PageTable {
         block_shard.write_page(page_idx, *first_page);
 
         for metadata in to_update.iter().skip(1) {
-            assert!(!first_page.is_null(), "BUG: provided page cannot be null");
+            assert_or_abort!(!first_page.is_null(), "BUG: provided page in chain cannot be null");
 
             let old_block_idx = block_idx;
             block_idx = (metadata.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;

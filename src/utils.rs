@@ -50,6 +50,16 @@ impl<T> AbortingExpect for Option<T> {
     }
 }
 
+#[macro_export]
+/// Assert a given condition is `true` otherwise, abort.
+macro_rules! assert_or_abort {
+    ($condition:expr, $message:expr) => {
+        if !$condition {
+            $crate::utils::abort_system($message, Some(&"assertion failed"));
+        }
+    };
+}
+
 #[inline(never)]
 #[cold]
 /// Abort the process, logging as much information as possible.
