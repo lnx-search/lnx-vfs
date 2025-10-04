@@ -87,7 +87,7 @@ impl<'c> StorageWriteTxn<'c> {
     }
 
     /// Delete a group from the store.
-    pub fn delete_group(
+    pub fn unassign_group(
         &mut self,
         page_group_id: PageGroupId,
     ) -> Result<(), StorageWriteError> {
