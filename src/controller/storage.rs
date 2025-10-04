@@ -8,6 +8,7 @@ use crate::checkpoint::WriteCheckpointError;
 use crate::controller::page_file::{PageDataWriter, PageFileController};
 use crate::ctx;
 use crate::directory::FileGroup;
+use crate::layout::PageGroupId;
 use crate::layout::log::LogOp;
 use crate::page_data::{CreatePageFileError, OpenPageFileError};
 
@@ -33,14 +34,6 @@ pub enum OpenStorageControllerError {
     /// The page file controller could not create a new page file.
     PageFileCreate(#[from] CreatePageFileError),
 }
-
-// TODO: We need to recover on a WAL error and prevent the memory state from diverging from
-//       the on-disk state.
-//  - All reads must be locked out while this occurs.
-//  - If the WAL errors, we need to enter "recovery mode" where we lock all writes.
-//  - Potential issue, if we have multiple writes queued up on the WAL, and one write errors
-//    we may have inflight IOPS writing to a new WAL which may be successful.
-//
 
 /// The [StorageController] manages persisting updates to pages of data.
 pub struct StorageController {
@@ -81,6 +74,12 @@ impl StorageController {
         })
     }
 
+    #[inline]
+    /// Returns if the controller contains a given page group.
+    pub fn contains_page_group(&self, group: PageGroupId) -> bool {
+        self.metadata_controller.contains_page_group(group)
+    }
+
     /// Create a new storage write transaction.
     pub fn create_write_txn(&self) -> super::txn_write::StorageWriteTxn<'_> {
         super::txn_write::StorageWriteTxn::new(self)
@@ -113,11 +112,37 @@ impl StorageController {
     ///
     /// If this operation errors, it is safe to assume that data will _not_ be recovered on
     /// restart.
-    pub(super) fn commit_ops(
-        &self,
-        ops: Vec<LogOp>,
-    ) -> impl Future<Output = Result<u64, WalError>> + '_ {
-        self.wal_controller.write_updates(ops)
+    pub(super) async fn commit_ops(&self, ops: Vec<LogOp>) -> Result<(), WalError> {
+        self.wal_controller.write_updates(ops.clone()).await?;
+
+        for op in ops {
+            match op {
+                LogOp::Write(op) => {
+                    if !self
+                        .metadata_controller
+                        .contains_page_table(op.page_file_id)
+                    {
+                        self.metadata_controller
+                            .create_blank_page_table(op.page_file_id);
+                    }
+                    self.metadata_controller.assign_pages_to_group(
+                        op.page_file_id,
+                        op.page_group_id,
+                        &op.altered_pages,
+                    );
+                },
+                LogOp::Free(op) => {
+                    self.metadata_controller
+                        .unassign_pages_in_group(op.page_group_id);
+                },
+                LogOp::Reassign(op) => {
+                    self.metadata_controller
+                        .reassign_pages(op.old_page_group_id, op.new_page_group_id);
+                },
+            }
+        }
+
+        Ok(())
     }
 }
 
