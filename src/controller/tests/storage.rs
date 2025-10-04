@@ -297,3 +297,40 @@ async fn test_write_commit_wal_error_handling(
 
     scenario.teardown();
 }
+
+#[tokio::test]
+async fn test_storage_does_not_recover_previously_failed_transaction() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    ctx.set_config(WalConfig::default());
+    let controller = StorageController::open(ctx.clone())
+        .await
+        .expect("controller should open");
+
+    let mut write_txn = controller.create_write_txn();
+    let mut writer = controller
+        .create_writer(13)
+        .await
+        .expect("create new writer");
+    writer.write(b"Hello, world!").await.unwrap();
+    write_txn
+        .add_writer(PageGroupId(0), writer)
+        .await
+        .expect("add writer");
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("i2o2::fail::try_get_result", "1*return(-5)->off").unwrap();
+
+    write_txn
+        .commit()
+        .await
+        .expect_err("transaction should fail");
+
+    scenario.teardown();
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+    drop(controller);
+
+    let controller = StorageController::open(ctx)
+        .await
+        .expect("controller should open");
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+}
