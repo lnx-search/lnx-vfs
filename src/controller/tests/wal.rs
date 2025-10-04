@@ -247,9 +247,11 @@ async fn test_wal_file_reset_becomes_sealed_and_rotates() {
 }
 
 #[rstest::rstest]
+#[case::fsync_fail("file::rw::fsync")]
+#[case::ftruncate_fail("file::rw::truncate")]
 #[tokio::test]
 async fn test_wal_file_abort_hook_triggered_after_reset_retry(
-    #[values("file::rw::fsync", "file::rw::truncate")] reset_component_failure: &str,
+    #[case] reset_component_failure: &str,
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
