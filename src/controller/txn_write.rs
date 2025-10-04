@@ -40,7 +40,7 @@ impl std::fmt::Debug for StorageWriteTxn<'_> {
 
 impl<'c> StorageWriteTxn<'c> {
     /// Creates a new [StorageWriteTxn].
-    pub fn new(controller: &'c StorageController) -> Self {
+    pub(super) fn new(controller: &'c StorageController) -> Self {
         Self {
             controller,
             ops: Vec::new(),
