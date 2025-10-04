@@ -5,6 +5,77 @@ use std::{io, mem};
 use crate::buffer::ALLOC_PAGE_SIZE;
 use crate::page_data::DISK_PAGE_SIZE;
 
+
+/// Adds an `expect_or_abort()` unwrap method to results and options.
+///
+/// This will abort the process when in release mode or otherwise panic like normal when testing.
+///
+/// This is primarily used to ensure correctness in the state where an error in production
+/// should be treated as a fatal error (but still want to be tested in debug mode.)
+pub(crate) trait AbortingExpect {
+    /// The resulting output from the unwrap.
+    type Output;
+
+    /// Unwrap the inner value or abort.
+    ///
+    /// This is primarily used to ensure correctness in the state where an error in production
+    /// should be treated as a fatal error (but still want to be tested in debug mode.)
+    fn expect_or_abort(self, msg: &str) -> Self::Output;
+}
+
+impl<T, E> AbortingExpect for Result<T, E>
+where
+    E: std::fmt::Debug,
+{
+    type Output = T;
+
+    #[inline]
+    fn expect_or_abort(self, msg: &str) -> Self::Output {
+        match self {
+            Ok(inner) => inner,
+            Err(err) => abort_system(msg, Some(&err)),
+        }
+    }
+}
+
+impl<T> AbortingExpect for Option<T> {
+    type Output = T;
+
+    #[inline]
+    fn expect_or_abort(self, msg: &str) -> Self::Output {
+        match self {
+            Some(inner) => inner,
+            None => abort_system(msg, Some(&"null value was encountered")),
+        }
+    }
+}
+
+#[inline(never)]
+#[cold]
+/// Abort the process, logging as much information as possible.
+pub(crate) fn abort_system(message: &str, cause: Option<&dyn std::fmt::Debug>) -> ! {
+    tracing::error!(message = %message, "FATAL: system is preparing to abort");
+
+    eprintln!("FATAL: system is preparing to abort");
+    eprintln!("FATAL: system is preparing to abort");
+    eprintln!("FATAL: system is preparing to abort");
+    eprintln!("FATAL: {message}");
+    eprintln!("FATAL: additional cause: {cause:?}");
+    eprintln!(
+        "FATAL: you are seeing this message as the VFS storage layer could not ensure the \
+        state memory remains consistent with the persisted data. \
+        This normally means a underlying device has failed."
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    #[cfg(test)]
+    panic!("ABORT CALL ACTIVATED: {message}, cause: {cause:?}");
+    #[cfg(not(test))]
+    std::process::abort()
+}
+
+
 /// A helper type for having a single value on the stack of a heap allocated
 /// value in an Arc.
 ///
@@ -83,7 +154,7 @@ pub(super) fn create_file(
         let parent = path.parent().unwrap();
         std::fs::OpenOptions::new()
             .read(true)
-            .open(&parent)?
+            .open(parent)?
             .sync_all()?;
     }
 
