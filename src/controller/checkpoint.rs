@@ -221,8 +221,9 @@ async fn recover_wal_file(
 
         assert!(
             last_transaction_id < transaction_id,
-            "BUG: last transaction ID was not smaller than next transaction ID, \
-            this means the writer has lost track of the order of operations within the WAL."
+            "BUG: last transaction ID ({last_transaction_id}) was not smaller than the \
+            next transaction ID ({transaction_id}), this means the writer has lost track \
+            of the order of operations within the WAL."
         );
         last_transaction_id = transaction_id;
 
