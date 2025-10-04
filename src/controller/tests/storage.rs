@@ -135,6 +135,50 @@ async fn test_write_errors_on_concurrent_modification() {
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
+
+    let mut write_txn1 = controller.create_write_txn();
+    let mut write_txn2 = controller.create_write_txn();
+    write_txn1.unassign_group(PageGroupId(0)).unwrap();
+
+    let err = write_txn2
+        .reassign_group(PageGroupId(0), PageGroupId(1))
+        .expect_err("operation should error because of concurrent modification");
+    assert_eq!(
+        err.to_string(),
+        "concurrent mutation error on PageGroupId(0)"
+    );
+
+    let err = write_txn2
+        .unassign_group(PageGroupId(0))
+        .expect_err("operation should error because of concurrent modification");
+    assert_eq!(
+        err.to_string(),
+        "concurrent mutation error on PageGroupId(0)"
+    );
+
+    // Ops within the same transaction are also required to follow this rule!
+    let err = write_txn1
+        .unassign_group(PageGroupId(0))
+        .expect_err("operation should error because of concurrent modification");
+    assert_eq!(
+        err.to_string(),
+        "concurrent mutation error on PageGroupId(0)"
+    );
+
+    let mut write_txn3 = controller.create_write_txn();
+    let mut writer = controller
+        .create_writer(13)
+        .await
+        .expect("create new writer");
+    writer.write(b"Hello, world!").await.unwrap();
+    let err = write_txn3
+        .add_writer(PageGroupId(0), writer)
+        .await
+        .expect_err("operation should error because of concurrent modification");
+    assert_eq!(
+        err.to_string(),
+        "concurrent mutation error on PageGroupId(0)"
+    );
 }
 
 #[tokio::test]
@@ -144,6 +188,35 @@ async fn test_write_commit_rolls_back_on_drop() {
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+
+    let mut write_txn = controller.create_write_txn();
+    let mut writer = controller
+        .create_writer(13)
+        .await
+        .expect("create new writer");
+    writer.write(b"Hello, world!").await.unwrap();
+    write_txn
+        .add_writer(PageGroupId(0), writer)
+        .await
+        .expect("add writer");
+
+    drop(write_txn);
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+
+    // Doing a new txn should go through just fine.
+    let mut write_txn = controller.create_write_txn();
+    let mut writer = controller
+        .create_writer(13)
+        .await
+        .expect("create new writer");
+    writer.write(b"Hello, world!").await.unwrap();
+    write_txn
+        .add_writer(PageGroupId(0), writer)
+        .await
+        .expect("add writer");
+    write_txn.commit().await.expect("commit transaction");
+    assert!(controller.contains_page_group(PageGroupId(0)));
 }
 
 #[rstest::rstest]
@@ -158,16 +231,69 @@ async fn test_write_commit_rolls_back_on_page_file_error(
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
+
+    // Setup existing page group.
+    let mut write_txn = controller.create_write_txn();
+    let mut writer = controller
+        .create_writer(13)
+        .await
+        .expect("create new writer");
+    writer.write(b"Hello, world!").await.unwrap();
+    write_txn
+        .add_writer(PageGroupId(0), writer)
+        .await
+        .expect("add writer");
+    write_txn.commit().await.expect("commit transaction");
+
+    let mut write_txn = controller.create_write_txn();
+    write_txn.unassign_group(PageGroupId(0)).unwrap();
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg(component_failure, "return(-5)").unwrap();
+
+    write_txn
+        .commit()
+        .await
+        .expect_err("transaction should fail");
+
+    scenario.teardown();
+
+    assert!(controller.contains_page_group(PageGroupId(0)));
 }
 
 #[rstest::rstest]
-#[case::fsync_fail("file::rw::fsync")]
-#[case::ftruncate_fail("file::rw::truncate")]
+#[case::fsync_fail("file::rw::fsync", "1*return(-5)->off")]
+#[case::ftruncate_fail("file::rw::truncate", "1*return(-5)->off")]
+#[should_panic(
+    expected = "ABORT CALL ACTIVATED: WAL file could not be reset to the last successful write, cause: Some(Os { code: 5, kind: Uncategorized, message: \"Input/output error\" })"
+)]
+#[case::fsync_fail_retry_exceeds_limit("file::rw::fsync", "4*return(-5)->off")]
+#[should_panic(
+    expected = "ABORT CALL ACTIVATED: WAL file could not be reset to the last successful write, cause: Some(Os { code: 5, kind: Uncategorized, message: \"Input/output error\" })"
+)]
+#[case::ftruncate_fail_retry_exceeds_limit("file::rw::truncate", "4*return(-5)->off")]
 #[tokio::test]
-async fn test_write_commit_wal_error_handling(#[case] reset_component_failure: &str) {
+async fn test_write_commit_wal_error_handling(
+    #[case] reset_component_failure: &str,
+    #[case] fail_cfg: &str,
+) {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
+
+    let mut write_txn = controller.create_write_txn();
+    write_txn.unassign_group(PageGroupId(0)).unwrap();
+
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("wal::sync", "return(-5)").unwrap();
+    fail::cfg(reset_component_failure, fail_cfg).unwrap();
+
+    write_txn
+        .commit()
+        .await
+        .expect_err("transaction should fail");
+
+    scenario.teardown();
 }
