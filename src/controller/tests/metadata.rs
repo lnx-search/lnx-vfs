@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::controller::metadata::{MetadataController, PageTable};
 use crate::controller::tests::{create_wal_file, write_log_ops};
 use crate::ctx;
-use crate::layout::log::{LogOp, WriteOp};
+use crate::layout::log::{LogOp, ReassignOp, WriteOp};
 use crate::layout::page_metadata::PageMetadata;
 use crate::layout::{PageFileId, PageGroupId, PageId};
 use crate::page_data::{DISK_PAGE_SIZE, NUM_PAGES_PER_BLOCK};
@@ -760,6 +760,124 @@ async fn test_controller_recover_from_wal() {
             context: [0; 40],
         }]
     );
+}
+
+#[tokio::test]
+async fn test_controller_recover_from_wal_with_existing_checkpoint() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx.clone());
+    controller.create_blank_page_table(PageFileId(1));
+
+    // The existing group should be overwritten if the WAL is newer.
+    controller.assign_pages_to_group(
+        PageFileId(1),
+        PageGroupId(2),
+        &[
+            PageMetadata {
+                group: PageGroupId(2),
+                revision: 0,
+                next_page_id: PageId(40_000),
+                id: PageId(0),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(2),
+                revision: 0,
+                next_page_id: PageId(80_000),
+                id: PageId(40_000),
+                data_len: 0,
+                context: [0; 40],
+            },
+            PageMetadata {
+                group: PageGroupId(2),
+                revision: 0,
+                next_page_id: PageId::TERMINATOR,
+                id: PageId(80_000),
+                data_len: 0,
+                context: [0; 40],
+            },
+        ],
+    );
+    controller.assign_pages_to_group(
+        PageFileId(1),
+        PageGroupId(3),
+        &[PageMetadata {
+            group: PageGroupId(3),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(0),
+            data_len: 0,
+            context: [0; 40],
+        }],
+    );
+
+    let num_checkpointed_files = controller.checkpoint().await.unwrap();
+    assert_eq!(num_checkpointed_files, 1);
+    drop(controller);
+
+    let wal_file = create_wal_file(&ctx).await;
+    let log_ops = &[
+        (
+            1,
+            vec![LogOp::Write(WriteOp {
+                page_group_id: PageGroupId(4),
+                page_file_id: PageFileId(1),
+                altered_pages: vec![PageMetadata {
+                    group: PageGroupId(4),
+                    revision: 0,
+                    next_page_id: PageId::TERMINATOR,
+                    id: PageId(1),
+                    data_len: 0,
+                    context: [0; 40],
+                }],
+            })],
+        ),
+        (
+            2,
+            vec![LogOp::Write(WriteOp {
+                page_group_id: PageGroupId(2),
+                page_file_id: PageFileId(1),
+                altered_pages: vec![PageMetadata {
+                    group: PageGroupId(2),
+                    revision: 0,
+                    next_page_id: PageId::TERMINATOR,
+                    id: PageId(0),
+                    data_len: 0,
+                    context: [0; 40],
+                }],
+            })],
+        ),
+        (
+            3,
+            vec![LogOp::Reassign(ReassignOp {
+                old_page_group_id: PageGroupId(3),
+                new_page_group_id: PageGroupId(5),
+            })],
+        ),
+    ];
+    write_log_ops(ctx.clone(), wal_file.clone(), log_ops).await;
+
+    let controller = MetadataController::open(ctx)
+        .await
+        .expect("controller should be opened without error");
+    assert_eq!(controller.num_page_groups(), 3);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageGroupId(2), 0..50_000, &mut pages);
+    assert_eq!(pages.len(), 1);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageGroupId(5), 0..50_000, &mut pages);
+    assert_eq!(pages.len(), 1);
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageGroupId(3), 0..50_000, &mut pages);
+    assert!(pages.is_empty());
+
+    let mut pages = Vec::new();
+    controller.collect_pages(PageGroupId(4), 0..50_000, &mut pages);
+    assert_eq!(pages.len(), 1);
 }
 
 // Debugging tip: Ignore this set of tests if the `test_controller_recover_from_checkpoints`
