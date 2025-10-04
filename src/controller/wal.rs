@@ -151,7 +151,7 @@ impl WalController {
         match self.write_to_log(op_id, &mut writer).await {
             Ok(op_id) => Ok(op_id),
             Err(err) => {
-                tracing::warn!(error = %err, "WAL write failed, attempting to recover");
+                tracing::info!(error = %err, "WAL write failed, attempting to recover");
                 writer.reset_to_last_safe_point().await;
                 Err(err)
             },

@@ -17,6 +17,11 @@ const BUFFER_SIZE: usize = 512 << 10;
 const SEQUENCE_ID_START: u32 = 1;
 static ORDER_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MAX_TEMP_BUFFER_SIZE: usize = 2 << 20;
+const RESET_RETRY_DELAY: Duration = if cfg!(test) {
+    Duration::from_millis(1)
+} else {
+    Duration::from_millis(500)
+};
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevent the writer from opening the log.
@@ -232,6 +237,9 @@ impl LogFileWriter {
     ///
     /// If this cannot be done the process will abort.
     pub async fn reset_to_last_safe_point(&mut self) {
+        #[cfg(test)]
+        fail::fail_point!("wal::reset_to_last_safe_point", |_| ());
+
         let mut last_error = None;
         for attempt in 1..4 {
             tracing::info!(
@@ -249,7 +257,7 @@ impl LogFileWriter {
                 Err(err) => {
                     tracing::error!(attempt = attempt, error = %err, "WAL failed to reset");
                     last_error = Some(err);
-                    let duration = Duration::from_secs(500) * attempt;
+                    let duration = RESET_RETRY_DELAY * attempt;
                     tokio::time::sleep(duration).await;
                 },
             }
