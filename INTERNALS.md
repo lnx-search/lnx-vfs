@@ -4,14 +4,21 @@
 
 - The system is running on Linux of a kernel version 5.15+.
 - `io_uring` is enabled.
-- `PageId`s are always assigned mapped to data from smallest to largest, meaning the smallest allocated `PageId`
-  will always hold the start of the data in a buffer.
+- The maximum required alignment for `O_DIRECT` is `4KB`.
+- The file system is not insane.
+
+
+## Implementation Assumptions
+
+These are assumptions other components of the system might make, and the system itself is responsible to 
+ensure is correct.
+
 - Writes a COW, meaning the page table can never (outside of testing) modify a page in-place, any page writes
   to the page tables under normal operations should be writing to an unassigned page.
 - `transaction_id`s are never `u64::MAX` in value.
-- A single page group/file will never be modified/updated more than `u32::MAX` times.
-- The maximum required alignment for `O_DIRECT` is `4KB`.
-- The file system is not insane.
+- `PageId`s are always assigned mapped to data from smallest to largest, meaning the smallest allocated `PageId`
+  will always hold the start of the data in a buffer.
+
 
 ## Durability 
 
@@ -58,6 +65,60 @@ we have confirmed on multiple enterprise drives that they will silently ignore t
   preventing file systems from deferring metadata updates of files (be it length, name, etc...) until the 
   sync call is issued. Meaning I still believe data loss is possible when not issuing sync calls.
 
+### IO error playbook
+
+File system error handling is an incredibly dangerous game, there are many ways you can trip up and accidentally
+shoot yourself in the foot.
+
+We define the error handling rules for each component here:
+
+#### Page file IO
+
+Page file IO may be retried for both reads and writes without issue providing write errors are treated  
+as a total failure and must be retried in their entirety.
+
+Page files should be created via the [atomic API in the directory system](#atomic-file-creation).
+
+#### Checkpoint file IO
+
+Checkpoints must be created via the [atomic API in the directory system](#atomic-file-creation), once
+all data is written and persisted they can be made durable.
+
+An error on the checkpoint file write can be handled gracefully, however, old checkpoint files must not
+be removed until the new checkpoint file is confirmed to be durable and persisted.
+
+#### WAL file IO
+
+Checkpoints must be created via the [atomic API in the directory system](#atomic-file-creation), once
+all data is written and persisted they can be made durable.
+
+Particular care must be taken here as this is the file IO stage before an operation is either
+confirmed as durable or rejected.
+
+If an IO error occurs on the WAL:
+1. The WAL file must be locked out preventing any subsequent writes
+from being completed.
+2. Then the WAL file must attempt to be truncated back to the original size and a fsync issued.
+   - If this operation is successful, the WAL file can be rotated and writes may continue.
+   - If the operation fails, it may be retried twice more with exponential backoff. 
+     - Note: The truncate and fsync must _both_ be tried.
+   - If the operation continues to fail, the process must abort. 
+     - This is because we cannot ensure the memory state remains consistent with the disk state.
+
+
+### Atomic file creation
+
+We create "atomic" files by following the given set of steps:
+
+- Create new file with `.atomic` suffix.
+- `fsync` file
+- `fsync` parent directory
+- *Allow downstream system to initialise the file with content*.
+- `fdatasync` file
+- `rename` file, removing the `.atomic` suffix.
+- `fsync` file
+- `fsync` parent directory.
+
 ### Data layout
 
 The system internally must align all writes to the logical block size of the device, which is normally either `512`
@@ -72,8 +133,7 @@ as we pack multiples of those buffers into the buffer we're about to write to di
 Meaning if we have a struct that is serialized to `450` bytes, we will pad it to `512` to ensure we keep alignment 
 internally and do not run into corruption in the event that a torn-write takes place.
 
-The only place where torn-write awareness truly matters is in the WAL / Page Operation Log as that is
-our log of metadata operations that need to be recovered and re-applied on restart or recovery after a crash.
+Even though we assume torn write protection of `512` bytes, we don't actively depend on this behaviour currently.
 
 ### References Used
 
