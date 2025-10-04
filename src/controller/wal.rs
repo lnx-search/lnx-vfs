@@ -145,11 +145,26 @@ impl WalController {
         }
 
         if writer.is_locked_out() {
-            return Err(WalError::Io(interrupted_prior_error()));
+            writer.reset_to_last_safe_point().await;
         }
 
+        match self.write_to_log(op_id, &mut writer).await {
+            Ok(op_id) => Ok(op_id),
+            Err(err) => {
+                tracing::warn!(error = %err, "WAL write failed, attempting to recover");
+                writer.reset_to_last_safe_point().await;
+                Err(err)
+            },
+        }
+    }
+
+    async fn write_to_log(
+        &self,
+        op_id: u64,
+        writer: &mut page_op_log::LogFileWriter,
+    ) -> Result<u64, WalError> {
         let start = Instant::now();
-        self.maybe_rotate_writer(&mut writer).await?;
+        self.maybe_rotate_writer(writer).await?;
 
         let mut seen_own_op = false;
         let mut replies_to_complete = SmallVec::<[oneshot::Sender<()>; 4]>::new();
@@ -274,10 +289,10 @@ impl WalController {
         &self,
         writer: &mut page_op_log::LogFileWriter,
     ) -> Result<(), WalError> {
-        if writer.position() >= self.config.soft_max_wal_size {
+        if writer.is_sealed() || writer.position() >= self.config.soft_max_wal_size {
             tracing::info!(
                 file_id = ?writer.file_id(),
-                "max size reached for WAL, rotating WAL file",
+                "max size reached for WAL or has become sealed, rotating WAL file",
             );
             let current_op_stamp = self.op_stamp();
             let new_writer = self.rotate_writer().await?;

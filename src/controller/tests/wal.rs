@@ -204,7 +204,7 @@ async fn test_wal_file_dont_rotate_due_to_error() {
         .expect_err("controller should not rotate automatically");
     assert_eq!(
         err.to_string(),
-        "WAL Error: WAL write failed due to prior error"
+        "WAL Error: writer is locked due to prior error"
     );
 }
 

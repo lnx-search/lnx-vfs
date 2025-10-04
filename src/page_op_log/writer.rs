@@ -1,6 +1,7 @@
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use std::{cmp, io, mem};
 
 use crate::buffer::DmaBuffer;
@@ -44,10 +45,12 @@ pub struct LogFileWriter {
     file: file::RWFile,
     log_file_id: u64,
     locked_out: bool,
+    sealed: bool,
 
     log_offset: u64,
     current_pos: u64,
     buffered_pos: u64,
+    last_successful_sync_pos: u64,
 
     temp_buffer: Vec<u8>,
     temp_buffer_offset: usize,
@@ -123,11 +126,13 @@ impl LogFileWriter {
             ctx,
             file,
             log_file_id,
+            sealed: false,
             locked_out: false,
 
             log_offset,
             current_pos: 0,
             buffered_pos: 0,
+            last_successful_sync_pos: log_offset,
 
             temp_buffer: Vec::new(),
             temp_buffer_offset: 0,
@@ -146,6 +151,12 @@ impl LogFileWriter {
     /// Returns whether the file is locked out due to a prior error.
     pub fn is_locked_out(&self) -> bool {
         self.locked_out
+    }
+
+    #[inline]
+    /// Returns whether the sealed and now read only.
+    pub fn is_sealed(&self) -> bool {
+        self.sealed
     }
 
     #[inline]
@@ -215,6 +226,48 @@ impl LogFileWriter {
         result
     }
 
+    #[tracing::instrument("wal::reset_to_last_safe_point", skip_all)]
+    /// Resets the writer and truncates the WAL file to the last safely
+    /// persisted point.
+    ///
+    /// If this cannot be done the process will abort.
+    pub async fn reset_to_last_safe_point(&mut self) {
+        let mut last_error = None;
+        for attempt in 1..4 {
+            tracing::info!(
+                attempt = attempt,
+                "attempting to reset WAL file to last safe position"
+            );
+
+            match self.try_reset_to_last_successful_post().await {
+                Ok(()) => {
+                    // Once reset, seal the writer which prevents us having to
+                    // worry about the memory state.
+                    self.sealed = true;
+                    return;
+                },
+                Err(err) => {
+                    tracing::error!(attempt = attempt, error = %err, "WAL failed to reset");
+                    last_error = Some(err);
+                    let duration = Duration::from_secs(500) * attempt;
+                    tokio::time::sleep(duration).await;
+                },
+            }
+        }
+
+        crate::utils::abort_system(
+            "WAL file could not be reset to the last successful write",
+            last_error
+                .as_ref()
+                .map(|inner| inner as &dyn std::fmt::Debug),
+        )
+    }
+
+    async fn try_reset_to_last_successful_post(&self) -> io::Result<()> {
+        self.file.truncate(self.last_successful_sync_pos).await?;
+        self.file.fsync().await
+    }
+
     pub(self) async fn write_log_inner(
         &mut self,
         transaction_id: u64,
@@ -266,6 +319,8 @@ impl LogFileWriter {
     }
 
     pub(self) async fn sync_inner(&mut self) -> io::Result<()> {
+        let next_safe_pos = self.position();
+
         // Flush any intermediate buffers.
         self.write_buffer().await?;
 
@@ -274,7 +329,7 @@ impl LogFileWriter {
             complete_iop(iop).await?;
         }
 
-        // TODO: self.file.fdatasync().await?;
+        self.last_successful_sync_pos = next_safe_pos;
 
         Ok(())
     }
@@ -357,6 +412,11 @@ impl LogFileWriter {
             Err(io::Error::new(
                 ErrorKind::ReadOnlyFilesystem,
                 "writer is locked due to prior error",
+            ))
+        } else if self.is_sealed() {
+            Err(io::Error::new(
+                ErrorKind::ReadOnlyFilesystem,
+                "writer is sealed",
             ))
         } else {
             Ok(())

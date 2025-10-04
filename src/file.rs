@@ -223,6 +223,48 @@ impl File<RW> {
         };
         wait_for_reply(reply).await
     }
+
+    /// Truncate the file to a give length.
+    pub async fn truncate(&self, len: u64) -> io::Result<()> {
+        #[cfg(test)]
+        fail::fail_point!("file::rw::truncate", crate::utils::parse_io_error_return);
+
+        let op = i2o2::opcode::Ftruncate::new(
+            i2o2::types::Fixed(self.file_ref.ring_id()),
+            len,
+        );
+
+        let reply = unsafe {
+            self.handle
+                .submit_async(op, None)
+                .await
+                .map_err(io::Error::other)?
+        };
+
+        wait_for_reply(reply).await?;
+        Ok(())
+    }
+
+    /// Sync the file via a `fsync` call.
+    pub async fn fsync(&self) -> io::Result<()> {
+        #[cfg(test)]
+        fail::fail_point!("file::rw::fsync", crate::utils::parse_io_error_return);
+
+        let op = i2o2::opcode::Fsync::new(
+            i2o2::types::Fixed(self.file_ref.ring_id()),
+            i2o2::opcode::FSyncMode::Full,
+        );
+
+        let reply = unsafe {
+            self.handle
+                .submit_async(op, None)
+                .await
+                .map_err(io::Error::other)?
+        };
+
+        wait_for_reply(reply).await?;
+        Ok(())
+    }
 }
 
 impl File<Dir> {
