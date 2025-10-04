@@ -233,7 +233,7 @@ impl File<Dir> {
 
         let op = i2o2::opcode::Fsync::new(
             i2o2::types::Fixed(self.file_ref.ring_id()),
-            i2o2::opcode::FSyncMode::Data,
+            i2o2::opcode::FSyncMode::Full,
         );
 
         let reply = unsafe {

@@ -68,7 +68,6 @@ pub struct WalController {
     /// Enqueued operations from other tasks that are waiting for the writer
     /// lock. This allows the system to coalesce writes.
     enqueued_operations: Mutex<EnqueuedOperations>,
-    transaction_id_counter: AtomicU64,
 
     // controller metrics - see their getters for docs.
     total_write_operations: AtomicU64,
@@ -92,7 +91,6 @@ impl WalController {
             active_writer: tokio::sync::Mutex::new(writer),
             op_stamp: AtomicU64::new(1),
             enqueued_operations: Mutex::new(EnqueuedOperations::default()),
-            transaction_id_counter: AtomicU64::new(1),
             total_write_operations: AtomicU64::new(0),
             total_coalesced_write_operations: AtomicU64::new(0),
             total_coalesced_failures: AtomicU64::new(0),
@@ -362,9 +360,12 @@ async fn create_new_wal_file(
     ctx: Arc<ctx::FileContext>,
 ) -> Result<page_op_log::LogFileWriter, page_op_log::LogOpenWriteError> {
     let directory = ctx.directory();
-    let file_id = directory.create_new_file(FileGroup::Wal).await?;
+    let file_id = directory.create_new_atomic_file(FileGroup::Wal).await?;
     let file = directory.get_rw_file(FileGroup::Wal, file_id).await?;
-    let writer = page_op_log::LogFileWriter::create(ctx, file).await?;
+    let writer = page_op_log::LogFileWriter::create(ctx.clone(), file).await?;
+    directory
+        .persist_atomic_file(FileGroup::Wal, file_id)
+        .await?;
     Ok(writer)
 }
 

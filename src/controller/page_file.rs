@@ -235,12 +235,14 @@ impl PageFileController {
         });
 
         let directory = self.ctx.directory();
-        let file_id = directory.create_new_file(FileGroup::Pages).await?;
-
+        let file_id = directory.create_new_atomic_file(FileGroup::Pages).await?;
         let file = directory.get_rw_file(FileGroup::Pages, file_id).await?;
-
         let page_file =
             PageFile::create(self.ctx.clone(), file, next_page_file_id).await?;
+        directory
+            .persist_atomic_file(FileGroup::Pages, file_id)
+            .await?;
+
         self.add_new_page_file(page_file);
 
         drop(creation_guard);
