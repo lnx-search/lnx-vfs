@@ -1,6 +1,7 @@
 use crate::controller::storage::StorageController;
 use crate::controller::wal::WalConfig;
 use crate::ctx;
+use crate::directory::FileGroup;
 use crate::layout::PageGroupId;
 
 #[tokio::test]
@@ -330,6 +331,38 @@ async fn test_storage_does_not_recover_previously_failed_transaction() {
     drop(controller);
 
     let controller = StorageController::open(ctx)
+        .await
+        .expect("controller should open");
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+}
+
+#[tokio::test]
+async fn test_storage_does_not_recover_truncated_log_entry() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    ctx.set_config(WalConfig::default());
+    let controller = StorageController::open(ctx.clone())
+        .await
+        .expect("controller should open");
+
+    let mut write_txn = controller.create_write_txn();
+    let mut writer = controller.create_writer(13).await.unwrap();
+    writer.write(b"Hello, world!").await.unwrap();
+    write_txn.add_writer(PageGroupId(0), writer).await.unwrap();
+    write_txn.commit().await.unwrap();
+    drop(controller);
+
+    let directory = ctx.directory();
+    let file_ids = directory.list_dir(FileGroup::Wal).await;
+    let wal_file = directory
+        .get_rw_file(FileGroup::Wal, file_ids[0])
+        .await
+        .unwrap();
+
+    // Truncate the WAL to include header + part of the log.
+    wal_file.truncate(4096 + 250).await.unwrap();
+    drop(wal_file);
+
+    let controller = StorageController::open(ctx.clone())
         .await
         .expect("controller should open");
     assert!(!controller.contains_page_group(PageGroupId(0)));
