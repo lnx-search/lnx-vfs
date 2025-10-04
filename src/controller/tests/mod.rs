@@ -9,6 +9,7 @@ use crate::{ctx, file};
 mod checkpoint;
 mod metadata;
 mod page_file;
+mod storage;
 mod wal;
 
 async fn create_wal_file(ctx: &ctx::FileContext) -> file::RWFile {
