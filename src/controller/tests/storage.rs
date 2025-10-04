@@ -29,6 +29,47 @@ async fn test_write_updates_memory() {
 
     write_txn.commit().await.expect("commit transaction");
     assert!(controller.contains_page_group(PageGroupId(0)));
+
+    let mut write_txn = controller.create_write_txn();
+    write_txn
+        .reassign_group(PageGroupId(0), PageGroupId(1))
+        .unwrap();
+    write_txn.commit().await.expect("commit transaction");
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+    assert!(controller.contains_page_group(PageGroupId(1)));
+
+    let mut write_txn = controller.create_write_txn();
+    write_txn.unassign_group(PageGroupId(1)).unwrap();
+    write_txn.commit().await.expect("commit transaction");
+    assert!(!controller.contains_page_group(PageGroupId(1)));
+}
+
+#[tokio::test]
+async fn test_write_rollback_does_not_set_memory() {
+    let ctx = ctx::FileContext::for_test(false).await;
+    ctx.set_config(WalConfig::default());
+    let controller = StorageController::open(ctx)
+        .await
+        .expect("controller should open");
+
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+    let mut write_txn = controller.create_write_txn();
+    assert_eq!(format!("{write_txn:?}"), "StorageWriteTx");
+
+    let mut writer = controller
+        .create_writer(13)
+        .await
+        .expect("create new writer");
+    writer.write(b"Hello, world!").await.unwrap();
+
+    write_txn
+        .add_writer(PageGroupId(0), writer)
+        .await
+        .expect("add writer");
+    assert!(!controller.contains_page_group(PageGroupId(0)));
+
+    write_txn.rollback();
+    assert!(!controller.contains_page_group(PageGroupId(0)));
 }
 
 #[tokio::test]
