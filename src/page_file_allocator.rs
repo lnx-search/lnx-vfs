@@ -7,7 +7,7 @@ use super::disk_allocator::{self, AllocSpan};
 use crate::layout::PageFileId;
 
 #[derive(Default)]
-/// The write controller manages what pages should be written within the file
+/// The page file allocator manages what pages should be written within the file
 /// and internally manages the page allocator.
 pub(super) struct PageFileAllocator {
     /// The set of page files currently available for writing.
@@ -15,7 +15,8 @@ pub(super) struct PageFileAllocator {
 }
 
 impl PageFileAllocator {
-    /// Insert a new page file into the writer controller.
+    /// Insert a new page file into the page file allocator if it does not
+    /// already exist.
     pub(super) fn insert_page_file(
         &self,
         id: PageFileId,
@@ -23,10 +24,8 @@ impl PageFileAllocator {
     ) {
         let mut lock = self.page_files.write();
         if lock.contains_key(&id) {
-            tracing::error!(id = ?id, "BUG: page file already exists in writer controller");
-            panic!("BUG: page file already exists in writer controller");
+            return;
         }
-
         lock.insert(id, Mutex::new(allocator));
     }
 
@@ -46,7 +45,7 @@ impl PageFileAllocator {
         total
     }
 
-    /// Remove an existing page file from the writer controller if it exists.
+    /// Remove an existing page file from the page file allocator if it exists.
     pub(super) fn remove_page_file(&self, id: PageFileId) {
         let mut lock = self.page_files.write();
         debug_assert!(lock.contains_key(&id), "SOFT-BUG: page file does not exist");

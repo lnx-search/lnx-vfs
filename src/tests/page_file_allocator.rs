@@ -151,14 +151,15 @@ fn test_free() {
         .expect("page allocation transaction should be produced");
 }
 
-#[should_panic(expected = "BUG: page file already exists in writer controller")]
 #[test]
-fn test_double_page_file_insert_panic() {
+fn test_double_page_file_insert_does_not_overwrite() {
     let controller = PageFileAllocator::default();
     let allocator = PageAllocator::new(InitState::Allocated);
     controller.insert_page_file(PageFileId(1), allocator);
-    let allocator = PageAllocator::new(InitState::Allocated);
+    let allocator = PageAllocator::new(InitState::Free);
     controller.insert_page_file(PageFileId(1), allocator);
+    let alloc = controller.get_alloc_tx(1);
+    assert!(alloc.is_none());
 }
 
 #[test]
