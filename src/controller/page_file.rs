@@ -173,7 +173,10 @@ impl PageFileController {
             let buffer = self.ctx.alloc_pages(utils::disk_to_alloc_pages(iop.len()));
             let metadata_slice = get_page_range_to_page_indices(page_metadata, iop);
             let pages_slice = page_metadata[metadata_slice.clone()].to_vec();
-            let user_data = user_data.map(|ud| ud[metadata_slice].to_vec().into_iter());
+            let user_data = user_data.map(|ud| {
+                #[allow(clippy::unnecessary_to_owned)]
+                ud[metadata_slice].to_vec().into_iter()
+            });
 
             join_set.spawn(async move {
                 let _permit = limiter.acquire().await;
