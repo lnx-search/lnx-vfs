@@ -291,9 +291,8 @@ impl VirtualMemoryBlock {
         let state = self.state_at(permit.page);
         let mut page_mem = self.inner.get_mut_page(permit.page);
 
-        assert_eq!(
-            data.len(),
-            self.inner.page_size() as usize,
+        assert!(
+            data.len() <= self.inner.page_size() as usize,
             "data length is not equal to the page size."
         );
 

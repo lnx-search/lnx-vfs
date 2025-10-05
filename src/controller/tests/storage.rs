@@ -379,6 +379,69 @@ async fn test_storage_does_not_recover_truncated_log_entry() {
     assert!(!controller.contains_page_group(PageGroupId(0)));
 }
 
+#[rstest::rstest]
+#[case::full_read_zero_cache(0, 13, 0, 13)]
+#[case::full_read_one_page(32 << 10, 13, 0, 13)]
+#[case::full_read_many_pages(512 << 10, 13, 0, 13)]
+#[case::with_offset_zero_cache(0, 13, 5, 8)]
+#[case::with_offset_one_page(32 << 10, 13, 5, 8)]
+#[case::with_offset_many_pages(512 << 10, 13, 5, 8)]
+#[case::with_truncation_zero_cache(0, 13, 0, 10)]
+#[case::with_truncation_one_page(32 << 10, 13, 0, 10)]
+#[case::with_truncation_many_pages(512 << 10, 13, 0, 10)]
+#[case::with_offset_and_truncation_zero_cache(0, 13, 5, 5)]
+#[case::with_offset_and_truncation_one_page(32 << 10, 13, 5, 5)]
+#[case::with_offset_and_truncation_many_pages(512 << 10, 13, 5, 5)]
+#[case::multi_page1(0, 64 << 10, 32 << 10, 13)]
+#[case::multi_page2(0, 64 << 10, 20 << 10, 20)]
+#[tokio::test]
+async fn test_storage_read(
+    #[case] cache_capacity: u64,
+    #[case] buffer_size: u64,
+    #[case] read_offset: usize,
+    #[case] read_len: usize,
+) {
+    let ctx = ctx::FileContext::for_test(false).await;
+    ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(cache_capacity));
+    let controller = StorageController::open(ctx.clone())
+        .await
+        .expect("controller should open");
+
+    write_group(&controller, PageGroupId(0), buffer_size).await;
+
+    let buffer_offset = read_offset % 13;
+    let mut expected_buffer = Vec::new();
+    expected_buffer.extend_from_slice(b"Hello, world!");
+    for _ in 0..read_len / 13 {
+        expected_buffer.extend_from_slice(b"Hello, world!");
+    }
+    let expected_buffer = &expected_buffer[buffer_offset..][..read_len];
+
+    let read_range = read_offset..read_offset + read_len;
+    let read_ref = controller
+        .read_group(PageGroupId(0), read_range)
+        .await
+        .expect("read page group");
+    assert_eq!(read_ref.as_ref(), expected_buffer);
+}
+
+async fn write_group(controller: &StorageController, group: PageGroupId, size: u64) {
+    let mut write_txn = controller.create_write_txn();
+    let mut writer = controller.create_writer(size).await.unwrap();
+
+    let mut remaining = size;
+    while remaining > 0 {
+        let take_n = std::cmp::min(remaining, 13);
+        let buffer = b"Hello, world!";
+        writer.write(&buffer[..take_n as usize]).await.unwrap();
+        remaining -= take_n;
+    }
+
+    write_txn.add_writer(group, writer).await.unwrap();
+    write_txn.commit().await.unwrap();
+}
+
 fn cache_config(capacity: u64) -> CacheConfig {
     CacheConfig {
         memory_allowance: capacity,

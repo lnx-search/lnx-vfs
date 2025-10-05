@@ -1,5 +1,5 @@
 use std::io;
-use std::ops::Range;
+use std::ops::{Deref, Range};
 use std::sync::Arc;
 
 use super::group_lock::GroupLocks;
@@ -102,7 +102,7 @@ impl StorageController {
         &self,
         group: PageGroupId,
         range: Range<usize>,
-    ) -> Result<cache::ReadRef, ReadPageError> {
+    ) -> Result<ReadRef, ReadPageError> {
         let cache_layer = self.get_or_create_cache_layer(group)?;
 
         let mut pages = Vec::new();
@@ -111,6 +111,8 @@ impl StorageController {
             .collect_pages(group, range.clone(), &mut pages)
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
 
+        let read_len = range.len();
+        let read_offset = range.start % DISK_PAGE_SIZE;
         let page_range = resolve_to_pages(range, DISK_PAGE_SIZE);
 
         let mut prepared_read =
@@ -125,7 +127,9 @@ impl StorageController {
             waiter.as_mut().enable();
 
             match prepared_read.try_finish() {
-                Ok(read) => {
+                Ok(inner) => {
+                    // Final compare step to ensure reads don't accidentally return
+                    // overwritten data.
                     let new_lookup = self
                         .metadata_controller
                         .get_group_lookup(group)
@@ -138,7 +142,11 @@ impl StorageController {
                         )
                         .into())
                     } else {
-                        Ok(read)
+                        Ok(ReadRef {
+                            inner,
+                            offset: read_offset,
+                            len: read_len,
+                        })
                     };
                 },
                 Err(read) => {
@@ -252,6 +260,22 @@ impl StorageController {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+/// A read buffer that spans a set of pages in a page group.
+pub struct ReadRef {
+    inner: cache::ReadRef,
+    offset: usize,
+    len: usize,
+}
+
+impl Deref for ReadRef {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner[self.offset..][..self.len]
     }
 }
 
