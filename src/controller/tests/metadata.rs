@@ -778,7 +778,7 @@ async fn test_controller_recover_from_wal_with_existing_checkpoint() {
                 revision: 0,
                 next_page_id: PageId(40_000),
                 id: PageId(0),
-                data_len: 0,
+                data_len: 500,
                 context: [0; 40],
             },
             PageMetadata {
@@ -786,7 +786,7 @@ async fn test_controller_recover_from_wal_with_existing_checkpoint() {
                 revision: 0,
                 next_page_id: PageId(80_000),
                 id: PageId(40_000),
-                data_len: 0,
+                data_len: 200,
                 context: [0; 40],
             },
             PageMetadata {
@@ -794,7 +794,7 @@ async fn test_controller_recover_from_wal_with_existing_checkpoint() {
                 revision: 0,
                 next_page_id: PageId::TERMINATOR,
                 id: PageId(80_000),
-                data_len: 0,
+                data_len: 300,
                 context: [0; 40],
             },
         ],
@@ -828,7 +828,7 @@ async fn test_controller_recover_from_wal_with_existing_checkpoint() {
                     revision: 0,
                     next_page_id: PageId::TERMINATOR,
                     id: PageId(1),
-                    data_len: 0,
+                    data_len: 32 << 10,
                     context: [0; 40],
                 }],
             })],
@@ -843,7 +843,7 @@ async fn test_controller_recover_from_wal_with_existing_checkpoint() {
                     revision: 0,
                     next_page_id: PageId::TERMINATOR,
                     id: PageId(0),
-                    data_len: 0,
+                    data_len: 6000,
                     context: [0; 40],
                 }],
             })],
@@ -862,6 +862,11 @@ async fn test_controller_recover_from_wal_with_existing_checkpoint() {
         .await
         .expect("controller should be opened without error");
     assert_eq!(controller.num_page_groups(), 3);
+
+    assert_eq!(controller.get_group_size(PageGroupId(2)), Some(6000));
+    assert_eq!(controller.get_group_size(PageGroupId(3)), None);
+    assert_eq!(controller.get_group_size(PageGroupId(4)), Some(32 << 10));
+    assert_eq!(controller.get_group_size(PageGroupId(5)), Some(0));
 
     let mut pages = Vec::new();
     controller.collect_pages(PageGroupId(2), 0..50_000, &mut pages);
@@ -990,4 +995,65 @@ async fn test_controller_create_page_file_allocator() {
     let page_file_allocator = controller.create_page_file_allocator();
     assert_eq!(page_file_allocator.num_page_files(), 1);
     assert_eq!(page_file_allocator.capacity(), 491520)
+}
+
+#[rstest::rstest]
+#[case::empty(&[])]
+#[case::single_page_zeroed(
+    &[
+        PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(0),
+            data_len: 0,
+            context: [0; 40],
+        },
+    ]
+)]
+#[case::single_page_has_data(
+    &[
+        PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(0),
+            data_len: 500,
+            context: [0; 40],
+        },
+    ]
+)]
+#[case::many_pages(
+    &[
+        PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId(4),
+            id: PageId(0),
+            data_len: 500,
+            context: [0; 40],
+        },
+        PageMetadata {
+            group: PageGroupId(1),
+            revision: 0,
+            next_page_id: PageId::TERMINATOR,
+            id: PageId(4),
+            data_len: 6000,
+            context: [0; 40],
+        },
+    ]
+)]
+#[tokio::test]
+async fn test_controller_page_group_size(#[case] page_metadata: &[PageMetadata]) {
+    let ctx = ctx::FileContext::for_test(false).await;
+    let controller = MetadataController::empty(ctx);
+    controller.create_blank_page_table(PageFileId(0));
+
+    controller.assign_pages_to_group(PageFileId(0), PageGroupId(1), page_metadata);
+
+    let expected_total_size =
+        page_metadata.iter().map(|p| p.data_len as u64).sum::<u64>();
+
+    let size = controller.get_group_size(PageGroupId(1));
+    assert_eq!(size, Some(expected_total_size));
 }

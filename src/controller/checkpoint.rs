@@ -281,9 +281,11 @@ fn reconstruct_lookup_table_from_pages(
         let lookup_entry = LookupEntry {
             page_file_id,
             first_page_id: page.id,
+            total_size: 0,
         };
 
-        lookup_table.entry(page.group).or_insert(lookup_entry);
+        let entry = lookup_table.entry(page.group).or_insert(lookup_entry);
+        entry.total_size += page.data_len as u64;
     }
 }
 
@@ -301,7 +303,7 @@ mod tests {
                 revision: 0,
                 next_page_id: PageId(5),
                 id: PageId(4),
-                data_len: 0,
+                data_len: 500,
                 context: [0; 40],
             },
             PageMetadata {
@@ -317,7 +319,7 @@ mod tests {
                 revision: 0,
                 next_page_id: PageId(4),
                 id: PageId(3),
-                data_len: 0,
+                data_len: 1000,
                 context: [0; 40],
             },
             PageMetadata {
@@ -325,7 +327,7 @@ mod tests {
                 revision: 0,
                 next_page_id: PageId(9),
                 id: PageId(2),
-                data_len: 0,
+                data_len: 133,
                 context: [0; 40],
             },
             PageMetadata {
@@ -333,7 +335,7 @@ mod tests {
                 revision: 2,
                 next_page_id: PageId(9),
                 id: PageId(5),
-                data_len: 0,
+                data_len: 20,
                 context: [0; 40],
             },
         ];
@@ -352,6 +354,7 @@ mod tests {
                     LookupEntry {
                         page_file_id: PageFileId(1),
                         first_page_id: PageId(4),
+                        total_size: 1500,
                     }
                 ),
                 (
@@ -359,6 +362,7 @@ mod tests {
                     LookupEntry {
                         page_file_id: PageFileId(1),
                         first_page_id: PageId(2),
+                        total_size: 153,
                     }
                 ),
                 (
@@ -366,6 +370,7 @@ mod tests {
                     LookupEntry {
                         page_file_id: PageFileId(1),
                         first_page_id: PageId(1),
+                        total_size: 0,
                     }
                 ),
             ],

@@ -67,6 +67,12 @@ impl CacheController {
         layers.remove(&group);
     }
 
+    #[inline]
+    /// Returns the page size used by the cache in bytes.
+    pub fn page_size(&self) -> usize {
+        self.cache.page_size() as usize
+    }
+
     fn next_cache_layer_id(&self) -> u64 {
         self.cache_layer_id_counter.fetch_add(1, Ordering::Relaxed)
     }

@@ -148,7 +148,7 @@ impl MetadataController {
     /// it is stored at and the page ID of the first page.
     ///
     /// Returns `None` if the group does not exist.
-    fn find_first_page(&self, group: PageGroupId) -> Option<LookupEntry> {
+    fn get_group_lookup(&self, group: PageGroupId) -> Option<LookupEntry> {
         self.lookup_table.pin().get(&group).copied()
     }
 
@@ -184,6 +184,12 @@ impl MetadataController {
         }
     }
 
+    #[inline]
+    /// Returns the total size of the given group if it exists.
+    pub fn get_group_size(&self, group: PageGroupId) -> Option<u64> {
+        self.get_group_lookup(group).map(|lookup| lookup.total_size)
+    }
+
     /// Collects the pages of a given page group.
     ///
     /// The `data_range` is the range of bytes that need to be read from the group,
@@ -196,9 +202,9 @@ impl MetadataController {
         page_group_id: PageGroupId,
         data_range: Range<usize>,
         results: &mut Vec<PageMetadata>,
-    ) -> bool {
-        let lookup = match self.find_first_page(page_group_id) {
-            None => return false,
+    ) -> Option<PageFileId> {
+        let lookup = match self.get_group_lookup(page_group_id) {
+            None => return None,
             Some(lookup) => lookup,
         };
 
@@ -209,7 +215,7 @@ impl MetadataController {
 
         page_table.collect_pages(lookup.first_page_id, data_range, results);
 
-        true
+        Some(lookup.page_file_id)
     }
 
     /// Assign a set of pages to a target [PageGroupId] in a given page file.
@@ -239,27 +245,29 @@ impl MetadataController {
         // Ordering is important here, if, for some reason there is a panic, we need to
         // make sure the memory state stays in a semi-valid configuration (even if it means
         // we leak some disk space.)
-        if let Some(existing_lookup) = self.find_first_page(group) {
+        if let Some(existing_lookup) = self.get_group_lookup(group) {
             let old_page_table = tables
                 .get(&existing_lookup.page_file_id)
                 .expect("BUG: page file ID should exist");
 
-            new_page_table.write_pages(pages);
+            let total_size = new_page_table.write_pages(pages);
             self.insert_page_group(
                 group,
                 LookupEntry {
                     page_file_id,
                     first_page_id,
+                    total_size,
                 },
             );
             old_page_table.unassign_pages_in_chain(existing_lookup.first_page_id);
         } else {
-            new_page_table.write_pages(pages);
+            let total_size = new_page_table.write_pages(pages);
             self.insert_page_group(
                 group,
                 LookupEntry {
                     page_file_id,
                     first_page_id,
+                    total_size,
                 },
             );
         }
@@ -379,8 +387,12 @@ impl MetadataController {
 /// A lookup entry contains the location of the first page that a page group
 /// contains and the revision of the page group.
 pub struct LookupEntry {
+    /// The page file ID where the group is stored.
     pub page_file_id: PageFileId,
+    /// The first page assigned to the group.
     pub first_page_id: PageId,
+    /// The total size of the group.
+    pub total_size: u64,
 }
 
 struct PageBlock {
@@ -575,12 +587,14 @@ impl PageTable {
         drop(block_shard);
     }
 
-    pub(super) fn write_pages(&self, to_update: &[PageMetadata]) {
+    pub(super) fn write_pages(&self, to_update: &[PageMetadata]) -> u64 {
         let first_page = match to_update.first() {
-            None => return,
+            None => return 0,
             Some(first_page) => first_page,
         };
         assert_or_abort!(!first_page.is_null(), "BUG: provided page cannot be null");
+
+        let mut total_group_size = first_page.data_len as u64;
 
         let mut block_idx = (first_page.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
         let mut page_idx = (first_page.id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
@@ -594,6 +608,8 @@ impl PageTable {
                 "BUG: provided page in chain cannot be null"
             );
 
+            total_group_size += metadata.data_len as u64;
+
             let old_block_idx = block_idx;
             block_idx = (metadata.id.0 / NUM_PAGES_PER_BLOCK as u32) as usize;
             page_idx = (metadata.id.0 % NUM_PAGES_PER_BLOCK as u32) as usize;
@@ -606,6 +622,8 @@ impl PageTable {
         }
 
         self.change_op_stamp.fetch_add(1, Ordering::SeqCst);
+
+        total_group_size
     }
 
     pub(super) fn collect_pages(
