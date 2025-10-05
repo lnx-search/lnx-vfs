@@ -863,10 +863,30 @@ async fn test_controller_recover_from_wal_with_existing_checkpoint() {
         .expect("controller should be opened without error");
     assert_eq!(controller.num_page_groups(), 3);
 
-    assert_eq!(controller.get_group_size(PageGroupId(2)), Some(6000));
-    assert_eq!(controller.get_group_size(PageGroupId(3)), None);
-    assert_eq!(controller.get_group_size(PageGroupId(4)), Some(32 << 10));
-    assert_eq!(controller.get_group_size(PageGroupId(5)), Some(0));
+    assert_eq!(
+        controller
+            .get_group_lookup(PageGroupId(2))
+            .map(|l| l.total_size),
+        Some(6000)
+    );
+    assert_eq!(
+        controller
+            .get_group_lookup(PageGroupId(3))
+            .map(|l| l.total_size),
+        None
+    );
+    assert_eq!(
+        controller
+            .get_group_lookup(PageGroupId(4))
+            .map(|l| l.total_size),
+        Some(32 << 10)
+    );
+    assert_eq!(
+        controller
+            .get_group_lookup(PageGroupId(5))
+            .map(|l| l.total_size),
+        Some(0)
+    );
 
     let mut pages = Vec::new();
     controller.collect_pages(PageGroupId(2), 0..50_000, &mut pages);
@@ -1054,6 +1074,6 @@ async fn test_controller_page_group_size(#[case] page_metadata: &[PageMetadata])
     let expected_total_size =
         page_metadata.iter().map(|p| p.data_len as u64).sum::<u64>();
 
-    let size = controller.get_group_size(PageGroupId(1));
-    assert_eq!(size, Some(expected_total_size));
+    let lookup = controller.get_group_lookup(PageGroupId(1));
+    assert_eq!(lookup.map(|l| l.total_size), Some(expected_total_size));
 }

@@ -3,6 +3,7 @@ use std::ops::{Deref, Range};
 use std::sync::Arc;
 
 use tokio::sync::Notify;
+use tokio::sync::futures::Notified;
 
 use super::mem_block::{
     PageFreePermit,
@@ -240,7 +241,7 @@ impl PreparedRead {
     }
 
     /// Returns a future that waits until a write operation has been completed on the page file.
-    pub fn wait_for_signal(&self) -> impl Future<Output = ()> + use<'_> {
+    pub fn wait_for_signal(&self) -> Notified<'static> {
         let waker = self.get_waker();
         waker.notified()
     }

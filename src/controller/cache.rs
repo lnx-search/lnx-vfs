@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::cache::{CacheLayer, PageFileCache, PageSize};
 use crate::ctx;
 use crate::layout::PageGroupId;
+use crate::page_data::DISK_PAGE_SIZE;
 
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 /// Configuration options for the cache controller.
@@ -27,6 +28,10 @@ impl CacheController {
     pub fn new(ctx: &ctx::FileContext) -> Self {
         let config: CacheConfig = ctx.config();
         let cache = PageFileCache::new(config.memory_allowance, PageSize::Std32KB);
+
+        // NOTE: The system relies on these two sizes matching currently.
+        assert_eq!(cache.page_size() as usize, DISK_PAGE_SIZE);
+
         Self {
             cache,
             layers: papaya::HashMap::default(),
@@ -65,12 +70,6 @@ impl CacheController {
     pub fn remove_layer(&self, group: PageGroupId) {
         let layers = self.layers.pin();
         layers.remove(&group);
-    }
-
-    #[inline]
-    /// Returns the page size used by the cache in bytes.
-    pub fn page_size(&self) -> usize {
-        self.cache.page_size() as usize
     }
 
     fn next_cache_layer_id(&self) -> u64 {

@@ -148,7 +148,7 @@ impl MetadataController {
     /// it is stored at and the page ID of the first page.
     ///
     /// Returns `None` if the group does not exist.
-    fn get_group_lookup(&self, group: PageGroupId) -> Option<LookupEntry> {
+    pub fn get_group_lookup(&self, group: PageGroupId) -> Option<LookupEntry> {
         self.lookup_table.pin().get(&group).copied()
     }
 
@@ -184,12 +184,6 @@ impl MetadataController {
         }
     }
 
-    #[inline]
-    /// Returns the total size of the given group if it exists.
-    pub fn get_group_size(&self, group: PageGroupId) -> Option<u64> {
-        self.get_group_lookup(group).map(|lookup| lookup.total_size)
-    }
-
     /// Collects the pages of a given page group.
     ///
     /// The `data_range` is the range of bytes that need to be read from the group,
@@ -202,11 +196,8 @@ impl MetadataController {
         page_group_id: PageGroupId,
         data_range: Range<usize>,
         results: &mut Vec<PageMetadata>,
-    ) -> Option<PageFileId> {
-        let lookup = match self.get_group_lookup(page_group_id) {
-            None => return None,
-            Some(lookup) => lookup,
-        };
+    ) -> Option<LookupEntry> {
+        let lookup = self.get_group_lookup(page_group_id)?;
 
         let tables = self.page_tables.pin();
         let page_table = tables
@@ -215,7 +206,7 @@ impl MetadataController {
 
         page_table.collect_pages(lookup.first_page_id, data_range, results);
 
-        Some(lookup.page_file_id)
+        Some(lookup)
     }
 
     /// Assign a set of pages to a target [PageGroupId] in a given page file.
