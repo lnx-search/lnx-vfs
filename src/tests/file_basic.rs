@@ -1,8 +1,6 @@
 use super::tempdir;
 use crate::buffer::DmaBuffer;
 use crate::directory::{FileGroup, SystemDirectory};
-use crate::file;
-use crate::file::DISK_ALIGN;
 
 #[rstest::rstest]
 #[tokio::test]

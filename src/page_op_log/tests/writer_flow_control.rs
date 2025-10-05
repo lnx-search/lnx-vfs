@@ -4,8 +4,7 @@ use std::io::ErrorKind;
 use crate::directory::FileGroup;
 use crate::file::DISK_ALIGN;
 use crate::layout::log::{FreeOp, LogOp, ReassignOp, WriteOp};
-use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageFileId, PageGroupId, PageId};
+use crate::layout::{PageFileId, PageGroupId};
 use crate::page_op_log::writer::LogFileWriter;
 use crate::{ctx, utils};
 
