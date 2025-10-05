@@ -155,6 +155,12 @@ impl CacheLayer {
     }
 
     #[inline]
+    /// The unique ID assigned to the page layer.
+    pub fn id(&self) -> LayerId {
+        self.layer_id
+    }
+
+    #[inline]
     /// Returns the page size used by the cache.
     pub fn page_size(&self) -> PageSize {
         self.memory.page_size()

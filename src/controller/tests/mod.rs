@@ -6,6 +6,7 @@ use crate::layout::log::{FreeOp, LogOp};
 use crate::page_op_log::LogFileWriter;
 use crate::{ctx, file};
 
+mod cache;
 mod checkpoint;
 mod metadata;
 mod page_file;

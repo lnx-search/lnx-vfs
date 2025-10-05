@@ -33,6 +33,7 @@ fn test_cache_create(
     let layer = cache
         .create_page_file_layer(1, num_pages)
         .expect("create page cache layer");
+    assert_eq!(layer.id(), 1);
     assert_eq!(layer.page_size(), page_size);
 }
 
