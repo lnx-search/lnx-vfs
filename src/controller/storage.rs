@@ -247,6 +247,18 @@ impl StorageController {
                 },
                 LogOp::Free(op) => {
                     self.cache_controller.remove_layer(op.page_group_id);
+
+                    let mut pages = Vec::new();
+                    let lookup = self.metadata_controller.collect_pages(
+                        op.page_group_id,
+                        0..usize::MAX,
+                        &mut pages,
+                    );
+                    let Some(_lookup) = lookup else { continue };
+
+                    // TODO: Implement freeing logic
+                    // self.page_file_controller
+                    //     .free_pages(lookup.page_file_id, &pages);
                     self.metadata_controller
                         .unassign_pages_in_group(op.page_group_id);
                 },
