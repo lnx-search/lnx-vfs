@@ -113,15 +113,12 @@ impl PageFileController {
     /// channel receiver to collect the results.
     ///
     /// The provided set of pages to read must be sorted from the smallest page ID to largest.
-    pub async fn read_many<D>(
+    pub async fn read_many(
         &self,
         page_file_id: PageFileId,
         page_metadata: &[PageMetadata],
-        user_data: Option<&[D]>,
-    ) -> io::Result<tokio::task::JoinSet<Result<ReadIop<D>, ReadPageError>>>
-    where
-        D: Clone + Send + 'static,
-    {
+        user_data: Option<&[usize]>,
+    ) -> io::Result<tokio::task::JoinSet<Result<ReadIop, ReadPageError>>> {
         tracing::trace!("reading many pages");
 
         let page_file = self
@@ -535,15 +532,15 @@ impl<'controller> PageDataWriter<'controller> {
 }
 
 /// A completed read IOP spanning a range of pages.
-pub struct ReadIop<D> {
+pub struct ReadIop {
     pages: std::vec::IntoIter<PageMetadata>,
-    user_data: Option<std::vec::IntoIter<D>>,
+    user_data: Option<std::vec::IntoIter<usize>>,
     mask: u8,
     offset: usize,
     buffer: DmaBuffer,
 }
 
-impl<D> std::fmt::Debug for ReadIop<D> {
+impl std::fmt::Debug for ReadIop {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -554,10 +551,10 @@ impl<D> std::fmt::Debug for ReadIop<D> {
     }
 }
 
-impl<D> ReadIop<D> {
+impl ReadIop {
     /// Gets the next page in the IOP and returns the slice of data for the page
     /// along with the metadata of the page.
-    pub fn next_page(&mut self) -> Option<(PageMetadata, &[u8], Option<D>)> {
+    pub fn next_page(&mut self) -> Option<(PageMetadata, &[u8], Option<usize>)> {
         let page = self.pages.next()?;
         let user_data = self.user_data.as_mut().and_then(|ud| ud.next());
         let offset = self.advance_to_next_set_bit();
@@ -650,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_read_iop_debug() {
-        let iop: ReadIop<()> = ReadIop {
+        let iop = ReadIop {
             pages: vec![].into_iter(),
             user_data: None,
             mask: 0b0100_0000,
@@ -662,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_read_iop_advance_next_bit() {
-        let mut iop: ReadIop<()> = ReadIop {
+        let mut iop = ReadIop {
             pages: vec![].into_iter(),
             user_data: None,
             mask: 0b0010_0000,
