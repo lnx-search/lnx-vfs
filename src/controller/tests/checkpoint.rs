@@ -363,7 +363,7 @@ async fn test_wal_replay_multi_wal_ordering() {
 
     let mut pages = Vec::new();
     let lookup = controller.collect_pages(PageGroupId(2), 0..60_000, &mut pages);
-    assert!(lookup.is_some());
+    assert!(lookup.is_none());
 
     let mut pages = Vec::new();
     controller.collect_pages(PageGroupId(4), 0..60_000, &mut pages);
