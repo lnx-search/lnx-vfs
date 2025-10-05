@@ -105,16 +105,23 @@ impl PageFileController {
         Ok(PageDataWriter::new(&self.ctx, page_file, alloc_txn, len))
     }
 
-    #[tracing::instrument(skip(self, page_metadata), fields(num_pages = page_metadata.len()))]
+    #[tracing::instrument(
+        skip(self, page_metadata, user_data),
+        fields(num_pages = page_metadata.len()),
+    )]
     /// Read multiple pages of data from a given page file returning a
     /// channel receiver to collect the results.
     ///
     /// The provided set of pages to read must be sorted from the smallest page ID to largest.
-    pub async fn read_many(
+    pub async fn read_many<D>(
         &self,
         page_file_id: PageFileId,
         page_metadata: &[PageMetadata],
-    ) -> io::Result<tokio::task::JoinSet<Result<ReadIop, ReadPageError>>> {
+        user_data: Option<&[D]>,
+    ) -> io::Result<tokio::task::JoinSet<Result<ReadIop<D>, ReadPageError>>>
+    where
+        D: Clone + Send + 'static,
+    {
         tracing::trace!("reading many pages");
 
         let page_file = self
@@ -138,6 +145,15 @@ impl PageFileController {
             ));
         }
 
+        if let Some(user_data) = user_data {
+            if user_data.len() != page_metadata.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "user data and page metadata slices are different lengths",
+                ));
+            }
+        }
+
         let iops = page_metadata.iter().map(|page| {
             let start = page.id.0;
             let end = page.id.0 + 1;
@@ -159,13 +175,15 @@ impl PageFileController {
 
             let buffer = self.ctx.alloc_pages(utils::disk_to_alloc_pages(iop.len()));
             let metadata_slice = get_page_range_to_page_indices(page_metadata, iop);
-            let pages_slice = page_metadata[metadata_slice].to_vec();
+            let pages_slice = page_metadata[metadata_slice.clone()].to_vec();
+            let user_data = user_data.map(|ud| ud[metadata_slice].to_vec().into_iter());
 
             join_set.spawn(async move {
                 let _permit = limiter.acquire().await;
                 let (mask, buffer) = page_file.read_at(&pages_slice, buffer).await?;
                 Ok(ReadIop {
                     pages: pages_slice.into_iter(),
+                    user_data,
                     mask,
                     offset: 0,
                     buffer,
@@ -175,6 +193,8 @@ impl PageFileController {
 
         Ok(join_set)
     }
+
+    // TODO: We need to mark pages as available to be re-allocated.
 
     /// Attempts to get a [WriteAllocTx] from an existing page file allocator
     /// otherwise a new page file is created and added to the allocator pool.
@@ -515,14 +535,15 @@ impl<'controller> PageDataWriter<'controller> {
 }
 
 /// A completed read IOP spanning a range of pages.
-pub struct ReadIop {
+pub struct ReadIop<D> {
     pages: std::vec::IntoIter<PageMetadata>,
+    user_data: Option<std::vec::IntoIter<D>>,
     mask: u8,
     offset: usize,
     buffer: DmaBuffer,
 }
 
-impl std::fmt::Debug for ReadIop {
+impl<D> std::fmt::Debug for ReadIop<D> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -533,13 +554,18 @@ impl std::fmt::Debug for ReadIop {
     }
 }
 
-impl ReadIop {
+impl<D> ReadIop<D> {
     /// Gets the next page in the IOP and returns the slice of data for the page
     /// along with the metadata of the page.
-    pub fn next_page(&mut self) -> Option<(PageMetadata, &[u8])> {
+    pub fn next_page(&mut self) -> Option<(PageMetadata, &[u8], Option<D>)> {
         let page = self.pages.next()?;
+        let user_data = self.user_data.as_mut().and_then(|ud| ud.next());
         let offset = self.advance_to_next_set_bit();
-        Some((page, &self.buffer[offset..][..page.data_len as usize]))
+        Some((
+            page,
+            &self.buffer[offset..][..page.data_len as usize],
+            user_data,
+        ))
     }
 
     fn advance_to_next_set_bit(&mut self) -> usize {
@@ -624,8 +650,9 @@ mod tests {
 
     #[test]
     fn test_read_iop_debug() {
-        let iop = ReadIop {
+        let iop: ReadIop<()> = ReadIop {
             pages: vec![].into_iter(),
+            user_data: None,
             mask: 0b0100_0000,
             offset: 0,
             buffer: DmaBuffer::alloc_empty(),
@@ -635,8 +662,9 @@ mod tests {
 
     #[test]
     fn test_read_iop_advance_next_bit() {
-        let mut iop = ReadIop {
+        let mut iop: ReadIop<()> = ReadIop {
             pages: vec![].into_iter(),
+            user_data: None,
             mask: 0b0010_0000,
             offset: 0,
             buffer: DmaBuffer::alloc_empty(),

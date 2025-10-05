@@ -227,7 +227,7 @@ async fn test_controller_read(
     }
 
     let mut results = controller
-        .read_many(PageFileId(0), &pages_to_read)
+        .read_many::<()>(PageFileId(0), &pages_to_read, None)
         .await
         .expect("read pages");
 
@@ -237,7 +237,7 @@ async fn test_controller_read(
             .expect("read should not panic")
             .expect("read should not error");
 
-        while let Some((metadata, slice)) = result.next_page() {
+        while let Some((metadata, slice, _user_data)) = result.next_page() {
             pages_and_is_valid.push((metadata, slice.iter().all(|b| *b == 4)));
         }
     }
@@ -328,7 +328,7 @@ async fn test_controller_read_page_file_not_found_err() {
     assert_eq!(controller.num_page_files(), 0);
 
     let err = controller
-        .read_many(PageFileId(0), &[])
+        .read_many::<()>(PageFileId(0), &[], None)
         .await
         .expect_err("finish should fail");
     assert_eq!(err.to_string(), "page file not found: PageFileId(0)");
