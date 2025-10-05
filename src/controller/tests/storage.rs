@@ -1,3 +1,4 @@
+use crate::controller::cache::CacheConfig;
 use crate::controller::storage::StorageController;
 use crate::controller::wal::WalConfig;
 use crate::ctx;
@@ -8,6 +9,7 @@ use crate::layout::PageGroupId;
 async fn test_write_updates_memory() {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
@@ -49,6 +51,7 @@ async fn test_write_updates_memory() {
 async fn test_write_rollback_does_not_set_memory() {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
@@ -77,6 +80,7 @@ async fn test_write_rollback_does_not_set_memory() {
 async fn test_add_writer_errors_on_writer_finish_error() {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
@@ -106,6 +110,7 @@ async fn test_open_already_existing_data() {
 
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx.clone())
         .await
         .expect("controller should open");
@@ -133,6 +138,7 @@ async fn test_open_already_existing_data() {
 async fn test_write_errors_on_concurrent_modification() {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
@@ -186,6 +192,7 @@ async fn test_write_errors_on_concurrent_modification() {
 async fn test_write_commit_rolls_back_on_drop() {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
@@ -229,6 +236,7 @@ async fn test_write_commit_rolls_back_on_page_file_error(
 ) {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
@@ -280,6 +288,7 @@ async fn test_write_commit_wal_error_handling(
 ) {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
         .await
         .expect("controller should open");
@@ -303,6 +312,7 @@ async fn test_write_commit_wal_error_handling(
 async fn test_storage_does_not_recover_previously_failed_transaction() {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx.clone())
         .await
         .expect("controller should open");
@@ -340,6 +350,7 @@ async fn test_storage_does_not_recover_previously_failed_transaction() {
 async fn test_storage_does_not_recover_truncated_log_entry() {
     let ctx = ctx::FileContext::for_test(false).await;
     ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx.clone())
         .await
         .expect("controller should open");
@@ -366,4 +377,11 @@ async fn test_storage_does_not_recover_truncated_log_entry() {
         .await
         .expect("controller should open");
     assert!(!controller.contains_page_group(PageGroupId(0)));
+}
+
+fn cache_config(capacity: u64) -> CacheConfig {
+    CacheConfig {
+        memory_allowance: capacity,
+        disable_gc_worker: true,
+    }
 }
