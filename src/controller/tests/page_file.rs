@@ -219,7 +219,6 @@ async fn test_controller_read(
         .await
         .expect("open page file");
     assert_eq!(controller.num_page_files(), 1);
-    tracing::info!("about to read???");
 
     let mut pages_to_read = Vec::with_capacity(read_pages.len());
     for &idx in read_pages {
@@ -256,6 +255,71 @@ async fn test_controller_read(
             "page was invalid, actual: {actual_metadata:?}, expected: {expected_metadata:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn test_controller_read_passes_user_data() {
+    let pages = [PageMetadata {
+        group: PageGroupId(0),
+        revision: 0,
+        next_page_id: PageId::TERMINATOR,
+        id: PageId(0),
+        data_len: 5_000,
+        context: [0; 40],
+    }];
+
+    let ctx = ctx::FileContext::for_test(false).await;
+    let page_file = create_blank_page_file(ctx.clone(), PageFileId(0)).await;
+    let pages = populate_page_file(&ctx, &page_file, &pages).await;
+    let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
+    let controller = PageFileController::open(ctx.clone(), &metadata_controller)
+        .await
+        .expect("open page file");
+
+    let mut results = controller
+        .read_many(PageFileId(0), &pages, Some(&[123]))
+        .await
+        .expect("read pages");
+
+    while let Some(result) = results.join_next().await {
+        let mut result = result
+            .expect("read should not panic")
+            .expect("read should not error");
+
+        while let Some((metadata, _slice, user_data)) = result.next_page() {
+            assert_eq!(metadata.id, PageId(0));
+            assert_eq!(user_data, Some(123));
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_controller_read_error_with_user_data() {
+    let pages = [PageMetadata {
+        group: PageGroupId(0),
+        revision: 0,
+        next_page_id: PageId::TERMINATOR,
+        id: PageId(0),
+        data_len: 5_000,
+        context: [0; 40],
+    }];
+
+    let ctx = ctx::FileContext::for_test(false).await;
+    let page_file = create_blank_page_file(ctx.clone(), PageFileId(0)).await;
+    let pages = populate_page_file(&ctx, &page_file, &pages).await;
+    let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
+    let controller = PageFileController::open(ctx.clone(), &metadata_controller)
+        .await
+        .expect("open page file");
+
+    let err = controller
+        .read_many(PageFileId(0), &pages, Some(&[1, 2, 3]))
+        .await
+        .expect_err("read should error");
+    assert_eq!(
+        err.to_string(),
+        "user data and page metadata slices are different lengths"
+    );
 }
 
 #[rstest::rstest]
