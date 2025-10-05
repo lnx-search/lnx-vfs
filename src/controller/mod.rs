@@ -1,3 +1,4 @@
+mod cache;
 mod checkpoint;
 mod group_lock;
 mod metadata;

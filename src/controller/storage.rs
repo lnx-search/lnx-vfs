@@ -5,6 +5,7 @@ use super::group_lock::GroupLocks;
 use super::metadata::{MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
 use crate::checkpoint::WriteCheckpointError;
+use crate::controller::cache::CacheController;
 use crate::controller::page_file::{PageDataWriter, PageFileController};
 use crate::ctx;
 use crate::directory::FileGroup;
@@ -40,6 +41,7 @@ pub struct StorageController {
     metadata_controller: MetadataController,
     wal_controller: WalController,
     page_file_controller: PageFileController,
+    cache_controller: CacheController,
     group_locks: GroupLocks,
 }
 
@@ -65,11 +67,13 @@ impl StorageController {
         let wal_controller = WalController::create(ctx.clone()).await?;
         let page_file_controller =
             PageFileController::open(ctx.clone(), &metadata_controller).await?;
+        let cache_controller = CacheController::new(&ctx);
 
         Ok(Self {
             metadata_controller,
             wal_controller,
             page_file_controller,
+            cache_controller,
             group_locks: GroupLocks::default(),
         })
     }
@@ -85,15 +89,12 @@ impl StorageController {
         super::txn_write::StorageWriteTxn::new(self)
     }
 
-    // /// Create a new reader for a given [PageGroupId].
-    // pub fn create_read_txn(
-    //     &self,
-    //     group: PageGroupId,
-    // ) -> Option<super::txn_read::StorageReader<'_>> {
-    //     // let lookup = self.metadata_controller.find_first_page(group)?;
-    //     // Some(super::txn_read::StorageReader::new(group, lookup, self))
-    //     todo!()
-    // }
+    /// Create a new reader for a given [PageGroupId].
+    pub fn create_read_txn(&self, group: PageGroupId) {
+        // let lookup = self.metadata_controller.collect_pages(group)?;
+        // Some(super::txn_read::StorageReader::new(group, lookup, self))
+        todo!()
+    }
 
     /// Creates a new writer for a given length buffer.
     pub fn create_writer(
@@ -118,6 +119,7 @@ impl StorageController {
         for op in ops {
             match op {
                 LogOp::Write(op) => {
+                    self.cache_controller.remove_layer(op.page_group_id);
                     if !self
                         .metadata_controller
                         .contains_page_table(op.page_file_id)
@@ -132,10 +134,13 @@ impl StorageController {
                     );
                 },
                 LogOp::Free(op) => {
+                    self.cache_controller.remove_layer(op.page_group_id);
                     self.metadata_controller
                         .unassign_pages_in_group(op.page_group_id);
                 },
                 LogOp::Reassign(op) => {
+                    self.cache_controller
+                        .reassign_layer(op.old_page_group_id, op.new_page_group_id);
                     self.metadata_controller
                         .reassign_pages(op.old_page_group_id, op.new_page_group_id);
                 },

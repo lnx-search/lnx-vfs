@@ -15,7 +15,7 @@ pub use self::mem_block::{PageIndex, PageSize, PageWritePermit, PreparedRead};
 pub use self::page_file::{CacheLayer, ReadRef};
 
 /// A unique identifier for a cache layer.
-pub type LayerId = u32;
+pub type LayerId = u64;
 
 type LivePagesLfu =
     moka::sync::Cache<(LayerId, PageIndex), (), foldhash::fast::RandomState>;
