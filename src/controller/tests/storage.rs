@@ -418,9 +418,12 @@ async fn test_storage_read(
     }
     let expected_buffer = &expected_buffer[buffer_offset..][..read_len];
 
-    let read_range = read_offset..read_offset + read_len;
     let read_ref = controller
-        .read_group(PageGroupId(0), read_range)
+        .read_group(
+            PageGroupId(0),
+            Some(read_offset),
+            Some(read_offset + read_len),
+        )
         .await
         .expect("read page group");
     assert_eq!(read_ref.as_ref(), expected_buffer);

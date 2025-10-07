@@ -101,8 +101,18 @@ impl StorageController {
     pub async fn read_group(
         &self,
         group: PageGroupId,
-        range: Range<usize>,
+        start: Option<usize>,
+        end: Option<usize>,
     ) -> Result<ReadRef, ReadPageError> {
+        let lookup = self
+            .metadata_controller
+            .get_group_lookup(group)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+
+        let start = start.unwrap_or_default();
+        let end = end.unwrap_or(lookup.total_size as usize);
+        let range = start..end;
+
         let cache_layer = self.get_or_create_cache_layer(group)?;
 
         let mut pages = Vec::new();

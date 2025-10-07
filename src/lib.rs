@@ -10,6 +10,7 @@ mod core;
 mod ctx;
 mod directory;
 mod disk_allocator;
+mod encryption_file;
 mod encryption_key;
 mod file;
 mod layout;
@@ -22,7 +23,8 @@ mod tests;
 mod transaction;
 mod utils;
 
-use std::ops::Range;
+use std::collections::Bound;
+use std::ops::RangeBounds;
 use std::sync::Arc;
 
 use self::controller::{
@@ -36,6 +38,11 @@ use self::layout::PageGroupId;
 pub use self::page_data::CreatePageFileError;
 use self::page_data::ReadPageError;
 pub use self::transaction::FileSystemTransaction;
+
+/// Configuration options for the VFS components.
+pub mod config {
+    pub use crate::controller::{CacheConfig, WalConfig};
+}
 
 #[cfg(feature = "bench-internal")]
 pub mod bench {
@@ -75,10 +82,22 @@ impl VirtualFileSystem {
     pub async fn read_file(
         &self,
         file_id: u64,
-        range: Range<usize>,
+        range: impl RangeBounds<usize>,
     ) -> Result<ReadRef, ReadPageError> {
+        let start = match range.start_bound() {
+            Bound::Included(s) => Some(*s),
+            Bound::Excluded(s) => Some(*s + 1),
+            Bound::Unbounded => None,
+        };
+
+        let end = match range.end_bound() {
+            Bound::Included(s) => Some(*s + 1),
+            Bound::Excluded(s) => Some(*s),
+            Bound::Unbounded => None,
+        };
+
         self.storage_controller
-            .read_group(PageGroupId(file_id), range)
+            .read_group(PageGroupId(file_id), start, end)
             .await
     }
 }
