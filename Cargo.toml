@@ -69,3 +69,7 @@ required-features = ["bench-internal"]
 name = "cache_reads_hot"
 harness = false
 required-features = ["bench-internal"]
+
+[[bench]]
+name = "vfs_single_writes"
+harness = false
