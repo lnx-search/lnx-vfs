@@ -23,48 +23,51 @@ mod transaction;
 mod utils;
 
 use std::ops::Range;
+use std::sync::Arc;
+
+use crate::controller::{PageDataWriter, ReadRef, StorageController};
+use crate::layout::PageGroupId;
+pub use crate::page_data::CreatePageFileError;
+use crate::page_data::ReadPageError;
 
 #[cfg(feature = "bench-internal")]
 pub mod bench {
     pub use crate::cache::*;
 }
 
-pub use self::core::FileSystemCore;
 pub use self::transaction::FileSystemTransaction;
 
 /// A virtual filesystem abstraction over underlying storage.
-pub struct VirtualFileSystem {}
+pub struct VirtualFileSystem {
+    ctx: Arc<ctx::FileContext>,
+    storage_controller: StorageController,
+}
 
 impl VirtualFileSystem {
     /// Begin a new [FileSystemTransaction] for applying multiple
     /// operations atomically.
-    pub fn begin(&self) -> FileSystemTransaction {
-        todo!()
-    }
-}
-
-impl FileSystemCore for VirtualFileSystem {
-    async fn create_writer(&self, _file_id: u64, _total_size: u64) {
-        todo!()
+    pub fn begin(&self) -> FileSystemTransaction<'_> {
+        let txn = self.storage_controller.create_write_txn();
+        FileSystemTransaction { parent: self, txn }
     }
 
-    async fn create_reader(&self, _file_id: u64) {
-        todo!()
+    /// Create a new writer which allows for incremental writing of a large file
+    /// with a known total length.
+    pub async fn create_writer(
+        &self,
+        len: u64,
+    ) -> Result<PageDataWriter<'_>, CreatePageFileError> {
+        self.storage_controller.create_writer(len).await
     }
 
-    async fn read(&self, _file_id: u64, _range: Range<u64>) {
-        todo!()
-    }
-
-    async fn write(&self, _file_id: u64, _data: &[u8]) {
-        todo!()
-    }
-
-    async fn remove(&self, _file_id: u64) {
-        todo!()
-    }
-
-    async fn rename(&self, _new_file_id: u64, _old_file_id: u64) {
-        todo!()
+    /// Read the file at a given range.
+    pub async fn read_file(
+        &self,
+        file_id: u64,
+        range: Range<usize>,
+    ) -> Result<ReadRef, ReadPageError> {
+        self.storage_controller
+            .read_group(PageGroupId(file_id), range)
+            .await
     }
 }

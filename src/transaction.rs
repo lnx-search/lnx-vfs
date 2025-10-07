@@ -1,57 +1,83 @@
-use std::ops::Range;
+use crate::CreatePageFileError;
+use crate::controller::{PageDataWriter, StorageWriteError};
+use crate::layout::PageGroupId;
+use crate::page_data::SubmitWriterError;
 
-use crate::core::FileSystemCore;
-
-/// A [FileSystemTransaction] allows you to modify multiple files in the filesystem atomically.
-pub struct FileSystemTransaction {
-    complete: bool,
+#[derive(Debug, thiserror::Error)]
+/// An error preventing the transaction from completing.
+pub enum TxnError {
+    #[error(transparent)]
+    /// The system could not create a new page file to complete the write.
+    CreatePageFile(#[from] CreatePageFileError),
+    #[error(transparent)]
+    /// The system could not write the provided data.
+    StorageWrite(#[from] StorageWriteError),
+    #[error(transparent)]
+    /// The system could not submit the write.
+    SubmitWrite(#[from] SubmitWriterError),
 }
 
-impl FileSystemTransaction {
+/// A [FileSystemTransaction] allows you to modify multiple files in the filesystem atomically.
+pub struct FileSystemTransaction<'c> {
+    pub(super) parent: &'c crate::VirtualFileSystem,
+    pub(super) txn: crate::controller::StorageWriteTxn<'c>,
+}
+
+impl<'c> FileSystemTransaction<'c> {
     /// Apply the current pending operations.
-    pub async fn commit(mut self) -> Result<(), ()> {
-        self.complete = true;
-        Ok(())
+    pub async fn commit(self) -> Result<(), StorageWriteError> {
+        self.txn.commit().await
     }
 
     /// Rollback/abort the current pending operations.
-    pub fn rollback(mut self) {
-        self.complete = true;
-    }
-}
-
-impl FileSystemCore for FileSystemTransaction {
-    async fn create_writer(&self, _file_id: u64, total_size: u64) {
-        todo!()
+    pub fn rollback(self) {
+        self.txn.rollback()
     }
 
-    async fn create_reader(&self, _file_id: u64) {
-        todo!()
+    /// A completed writer to the transaction under the given file ID.
+    ///
+    /// This will overwrite any existing file.
+    pub async fn add_writer(
+        &mut self,
+        file_id: u64,
+        writer: PageDataWriter<'c>,
+    ) -> Result<(), TxnError> {
+        self.txn
+            .add_writer(PageGroupId(file_id), writer)
+            .await
+            .map_err(TxnError::StorageWrite)
     }
 
-    async fn read(&self, _file_id: u64, _range: Range<u64>) {
-        todo!()
+    /// Persist the given buffer and assign it the given file ID.
+    ///
+    /// This will overwrite any existing file.
+    pub async fn write(&mut self, file_id: u64, data: &[u8]) -> Result<(), TxnError> {
+        let mut writer = self.parent.create_writer(data.len() as u64).await?;
+        writer.write(data).await?;
+        self.add_writer(file_id, writer).await
     }
 
-    async fn write(&self, _file_id: u64, _data: &[u8]) {
-        todo!()
+    #[inline]
+    /// Remove the target file.
+    ///
+    /// If the file does not exist this is a no-op.
+    pub fn remove(&mut self, file_id: u64) -> Result<(), TxnError> {
+        self.txn
+            .unassign_group(PageGroupId(file_id))
+            .map_err(TxnError::StorageWrite)
     }
 
-    async fn remove(&self, _file_id: u64) {
-        todo!()
-    }
-
-    async fn rename(&self, _new_file_id: u64, _old_file_id: u64) {
-        todo!()
-    }
-}
-
-impl Drop for FileSystemTransaction {
-    fn drop(&mut self) {
-        if !self.complete {
-            tracing::warn!(
-                "transaction was aborted without explicitly calling commit or rollback"
-            );
-        }
+    #[inline]
+    /// Remove the target file.
+    ///
+    /// If the `old_file_id` does not exist, this is a no-op.
+    pub fn rename(
+        &mut self,
+        old_file_id: u64,
+        new_file_id: u64,
+    ) -> Result<(), TxnError> {
+        self.txn
+            .reassign_group(PageGroupId(old_file_id), PageGroupId(new_file_id))
+            .map_err(TxnError::StorageWrite)
     }
 }
