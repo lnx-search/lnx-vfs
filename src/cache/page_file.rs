@@ -214,7 +214,7 @@ impl PreparedRead {
     /// with outstanding writes that are able to acquire the individual page locks.
     pub fn get_outstanding_write_permits(
         &self,
-    ) -> impl Iterator<Item = PageWritePermit> + use<'_> {
+    ) -> impl Iterator<Item = PageWritePermit<'_>> + use<'_> {
         self.inner.outstanding_writes().iter().filter_map(|page| {
             // If the lock is acquired or already allocated we can ignore
             // the error as the next `try_finish` call will resolve any outstanding

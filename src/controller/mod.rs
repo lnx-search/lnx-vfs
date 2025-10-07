@@ -11,6 +11,6 @@ mod wal;
 
 pub use self::cache::CacheConfig;
 pub use self::page_file::PageDataWriter;
-pub use self::storage::{ReadRef, StorageController};
+pub use self::storage::{OpenStorageControllerError, ReadRef, StorageController};
 pub use self::txn_write::{StorageWriteError, StorageWriteTxn};
 pub use self::wal::WalConfig;

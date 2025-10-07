@@ -98,12 +98,7 @@ async fn test_reader_unexpected_eof() {
     assert_eq!(n, buffer.len());
 }
 
-async fn write_all_at(
-    ctx: &ctx::Context,
-    file_id: FileId,
-    data: &[u8],
-    offset: u64,
-) {
+async fn write_all_at(ctx: &ctx::Context, file_id: FileId, data: &[u8], offset: u64) {
     let path = ctx
         .directory()
         .resolve_file_path(FileGroup::Wal, file_id)

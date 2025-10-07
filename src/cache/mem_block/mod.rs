@@ -316,7 +316,7 @@ impl VirtualMemoryBlock {
     pub fn try_prepare_for_write(
         &self,
         page: PageIndex,
-    ) -> Result<PageWritePermit, PrepareWriteError> {
+    ) -> Result<PageWritePermit<'_>, PrepareWriteError> {
         let state = self.state_at(page);
         let flags = state.flags();
 
@@ -353,7 +353,7 @@ impl VirtualMemoryBlock {
     ///
     /// This will allow the caller to select pages and write any pages that need to be
     /// allocated before the read is safe.
-    pub fn prepare_read(&self, range: Range<PageIndex>) -> PreparedRead {
+    pub fn prepare_read(&self, range: Range<PageIndex>) -> PreparedRead<'_> {
         assert!(
             range.start < self.state.len() as u32
                 && range.end <= self.state.len() as u32

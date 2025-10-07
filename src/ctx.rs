@@ -1,5 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use crate::arena::ArenaAllocator;
 use crate::buffer;
@@ -8,12 +10,89 @@ use crate::directory::SystemDirectory;
 use crate::layout::encrypt;
 use crate::layout::file_metadata::Encryption;
 
+/// Create a new [Context] instance with options.
+pub struct ContextBuilder {
+    base_path: PathBuf,
+    encryption_key: Option<String>,
+    io_memory: usize,
+}
+
+impl ContextBuilder {
+    /// Creates a new [ContextBuilder] with a provided base path.
+    pub fn new(base_path: impl AsRef<Path>) -> Self {
+        Self {
+            base_path: base_path.as_ref().to_path_buf(),
+            encryption_key: None,
+            io_memory: 32 << 20,
+        }
+    }
+
+    /// Set or unset the encryption key for the system.
+    ///
+    /// If data already exists, the system will error if the config passed in here
+    /// does not match what is enabled on the existing system.
+    ///
+    /// For example, you cannot open an existing unencrypted system with context that
+    /// has an encryption key set. And you cannot open an encrypted system with context
+    /// that is missing the encryption key.
+    pub fn with_encryption_key(mut self, encryption_key: Option<String>) -> Self {
+        self.encryption_key = encryption_key;
+        self
+    }
+
+    /// The size of the IO memory arena in bytes.
+    ///
+    /// System will fall back to the system allocator when ever it needs to do an allocation
+    /// and the arena is full.
+    ///
+    /// By default, this is `32MB`.
+    pub fn io_memory_arena_size(mut self, size: usize) -> Self {
+        self.io_memory = size;
+        self
+    }
+
+    /// Open the context.
+    pub async fn open(self) -> io::Result<Context> {
+        static GUARD_FILE: &str = ".lnx-vfs-guard";
+        let guard_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.base_path.join(GUARD_FILE))?;
+
+        guard_file.try_lock().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                "VFS already open on this directory",
+            )
+        })?;
+        tracing::info!("acquired guard file lock");
+
+        let directory = SystemDirectory::open(&self.base_path).await?;
+
+        let num_arena_pages = self.io_memory / ALLOC_PAGE_SIZE;
+        let ctx = Context {
+            cipher: None,
+            arena_allocator: ArenaAllocator::new(num_arena_pages),
+            directory,
+            configs: parking_lot::RwLock::new(BTreeMap::new()),
+            _guard_file: guard_file,
+            #[cfg(test)]
+            tmp_dir: std::sync::Arc::new(tempfile::tempdir()?),
+        };
+
+        Ok(ctx)
+    }
+}
+
 /// The file context contains general settings and information for the system to use.
 pub struct Context {
     cipher: Option<encrypt::Cipher>,
     arena_allocator: ArenaAllocator,
     directory: SystemDirectory,
     configs: parking_lot::RwLock<BTreeMap<TypeId, Box<dyn Any + Send + Sync>>>,
+    _guard_file: std::fs::File,
     #[cfg(test)]
     tmp_dir: std::sync::Arc<tempfile::TempDir>,
 }
@@ -46,11 +125,14 @@ impl Context {
             .await
             .expect("open system directory");
 
+        let guard_file = tempfile::tempfile().unwrap();
+
         std::sync::Arc::new(Self {
             cipher,
             arena_allocator: ArenaAllocator::new(100),
             directory,
             configs: parking_lot::RwLock::new(BTreeMap::new()),
+            _guard_file: guard_file,
             tmp_dir,
         })
     }
