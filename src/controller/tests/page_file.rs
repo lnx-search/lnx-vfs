@@ -11,7 +11,7 @@ use crate::{ctx, file};
 #[rstest::rstest]
 #[tokio::test]
 async fn test_open_page_file_controller(#[values(0, 1, 4)] num_existing_files: u32) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     for i in 0..num_existing_files {
         create_blank_page_file(ctx.clone(), PageFileId(i)).await;
@@ -38,7 +38,7 @@ async fn test_controller_write(
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
     let controller = PageFileController::open(ctx.clone(), &metadata_controller)
         .await
@@ -70,7 +70,7 @@ async fn test_controller_write(
 async fn test_controller_write_uses_existing_page_file() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     create_blank_page_file(ctx.clone(), PageFileId(1)).await;
 
@@ -210,7 +210,7 @@ async fn test_controller_read(
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let page_file = create_blank_page_file(ctx.clone(), PageFileId(0)).await;
     let pages_written = populate_page_file(&ctx, &page_file, write_metadata).await;
 
@@ -268,7 +268,7 @@ async fn test_controller_read_passes_user_data() {
         context: [0; 40],
     }];
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let page_file = create_blank_page_file(ctx.clone(), PageFileId(0)).await;
     let pages = populate_page_file(&ctx, &page_file, &pages).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
@@ -304,7 +304,7 @@ async fn test_controller_read_error_with_user_data() {
         context: [0; 40],
     }];
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let page_file = create_blank_page_file(ctx.clone(), PageFileId(0)).await;
     let pages = populate_page_file(&ctx, &page_file, &pages).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
@@ -327,7 +327,7 @@ async fn test_controller_read_error_with_user_data() {
 async fn test_controller_write_finish_early_err() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
     let controller = PageFileController::open(ctx.clone(), &metadata_controller)
         .await
@@ -352,7 +352,7 @@ async fn test_controller_write_finish_early_err() {
 async fn test_controller_write_too_many_bytes_err() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
     let controller = PageFileController::open(ctx.clone(), &metadata_controller)
         .await
@@ -384,7 +384,7 @@ async fn test_controller_write_too_many_bytes_err() {
 async fn test_controller_read_page_file_not_found_err() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
     let controller = PageFileController::open(ctx.clone(), &metadata_controller)
         .await
@@ -402,7 +402,7 @@ async fn test_controller_read_page_file_not_found_err() {
 async fn test_controller_short_write_err() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
     let controller = PageFileController::open(ctx.clone(), &metadata_controller)
         .await
@@ -452,7 +452,7 @@ async fn test_controller_short_write_err() {
 async fn test_controller_create_new_page_file_timeout_err() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
     let controller = PageFileController::open(ctx.clone(), &metadata_controller)
         .await
@@ -480,7 +480,7 @@ async fn test_controller_create_new_page_file_timeout_err() {
 async fn test_controller_create_new_page_file_err() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let metadata_controller = MetadataController::open(ctx.clone()).await.unwrap();
     let controller = PageFileController::open(ctx.clone(), &metadata_controller)
         .await
@@ -501,7 +501,7 @@ async fn test_controller_create_new_page_file_err() {
 }
 
 async fn create_blank_page_file(
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     page_file_id: PageFileId,
 ) -> PageFile {
     let directory = ctx.directory();
@@ -516,7 +516,7 @@ async fn create_blank_page_file(
 }
 
 async fn populate_page_file(
-    ctx: &ctx::FileContext,
+    ctx: &ctx::Context,
     page_file: &PageFile,
     pages: &[PageMetadata],
 ) -> Vec<PageMetadata> {

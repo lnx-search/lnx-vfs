@@ -7,7 +7,7 @@ use crate::layout::PageGroupId;
 
 #[tokio::test]
 async fn test_write_updates_memory() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
@@ -49,7 +49,7 @@ async fn test_write_updates_memory() {
 
 #[tokio::test]
 async fn test_write_rollback_does_not_set_memory() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
@@ -78,7 +78,7 @@ async fn test_write_rollback_does_not_set_memory() {
 
 #[tokio::test]
 async fn test_add_writer_errors_on_writer_finish_error() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
@@ -108,7 +108,7 @@ async fn test_add_writer_errors_on_writer_finish_error() {
 async fn test_open_already_existing_data() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx.clone())
@@ -136,7 +136,7 @@ async fn test_open_already_existing_data() {
 
 #[tokio::test]
 async fn test_write_errors_on_concurrent_modification() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
@@ -190,7 +190,7 @@ async fn test_write_errors_on_concurrent_modification() {
 
 #[tokio::test]
 async fn test_write_commit_rolls_back_on_drop() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
@@ -234,7 +234,7 @@ async fn test_write_commit_rolls_back_on_drop() {
 async fn test_write_commit_rolls_back_on_page_file_error(
     #[case] component_failure: &str,
 ) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
@@ -286,7 +286,7 @@ async fn test_write_commit_wal_error_handling(
     #[case] reset_component_failure: &str,
     #[case] fail_cfg: &str,
 ) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx)
@@ -310,7 +310,7 @@ async fn test_write_commit_wal_error_handling(
 
 #[tokio::test]
 async fn test_storage_does_not_recover_previously_failed_transaction() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx.clone())
@@ -348,7 +348,7 @@ async fn test_storage_does_not_recover_previously_failed_transaction() {
 
 #[tokio::test]
 async fn test_storage_does_not_recover_truncated_log_entry() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(0));
     let controller = StorageController::open(ctx.clone())
@@ -401,7 +401,7 @@ async fn test_storage_read(
     #[case] read_offset: usize,
     #[case] read_len: usize,
 ) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(cache_capacity));
     let controller = StorageController::open(ctx.clone())

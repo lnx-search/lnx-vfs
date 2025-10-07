@@ -17,7 +17,7 @@ use crate::{ctx, file};
 #[rstest::rstest]
 #[tokio::test]
 async fn test_create_page_file(#[values(false, true)] encryption: bool) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
 
     let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
@@ -50,7 +50,7 @@ async fn test_create_page_file(#[values(false, true)] encryption: bool) {
 #[rstest::rstest]
 #[tokio::test]
 async fn test_open_existing_page_file(#[values(false, true)] encryption: bool) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
 
     let header_associated_data =
@@ -93,7 +93,7 @@ async fn test_open_existing_page_file(#[values(false, true)] encryption: bool) {
 
 #[tokio::test]
 async fn test_page_file_read_at() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
     let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
@@ -143,7 +143,7 @@ async fn test_page_file_read_at_decode_err(
     #[case] encryption: bool,
     #[case] expected_error: &'static str,
 ) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
     let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
@@ -254,7 +254,7 @@ async fn test_page_file_write(
     #[case] num_pages: usize,
 ) {
     let mut metadata = metadata;
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
     let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await
@@ -305,7 +305,7 @@ async fn test_page_file_write_out_of_bounds_panics(
     #[case] metadata: Vec<PageMetadata>,
     #[case] num_pages_to_alloc: usize,
 ) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
     let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await

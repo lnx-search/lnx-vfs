@@ -14,7 +14,7 @@ use crate::{ctx, utils};
 #[case(500, 0)]
 #[tokio::test]
 async fn test_auto_flush(#[case] num_transactions: u64, #[case] expected_size: u64) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let initial_len = file.get_len().await.unwrap();
@@ -57,7 +57,7 @@ async fn test_all_entries_flush(
     #[values(true, false)] encryption: bool,
     #[values(1, 4, 8, 32)] number_of_entries: usize,
 ) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let initial_len = file.get_len().await.unwrap();
@@ -95,7 +95,7 @@ async fn test_entries_and_metadata(
     #[values(false, true)] encryption: bool,
     #[values(1, 4, 8, 32)] number_of_entries: usize,
 ) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let initial_len = file.get_len().await.unwrap();
@@ -128,7 +128,7 @@ async fn test_entries_and_metadata(
 
 #[tokio::test]
 async fn test_no_close_on_write_error_but_lockout() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let scenario = fail::FailScenario::setup();
@@ -162,7 +162,7 @@ async fn test_no_close_on_write_error_but_lockout() {
 async fn test_flush_mem_buffer_i2o2_error() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let scenario = fail::FailScenario::setup();
@@ -182,7 +182,7 @@ async fn test_flush_mem_buffer_i2o2_error() {
 
 #[tokio::test]
 async fn test_storage_full() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let scenario = fail::FailScenario::setup();
@@ -212,7 +212,7 @@ async fn test_storage_full() {
 #[case::aligned_offset2(4096 * 3)]
 #[tokio::test]
 async fn test_log_offset(#[case] log_offset: u64) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
     let _writer = LogFileWriter::new(ctx, file, 1, log_offset);
 }

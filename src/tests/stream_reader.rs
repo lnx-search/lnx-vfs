@@ -17,7 +17,7 @@ async fn test_stream_reader_builder_construction(
     #[case] buffer_size: usize,
     #[case] offset: u64,
 ) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let _reader = StreamReaderBuilder::new(ctx.clone(), file)
@@ -36,7 +36,7 @@ async fn test_reader_single_read(
         .map(|value| (value % 256) as u8)
         .collect::<Vec<u8>>();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     write_all_at(&ctx, file.id(), &sample_buffer, 0).await;
@@ -55,7 +55,7 @@ async fn test_reader_single_read(
 
 #[tokio::test]
 async fn test_reader_short_read_error() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     write_all_at(&ctx, file.id(), &vec![1; 4 << 10], 0).await;
@@ -82,7 +82,7 @@ async fn test_reader_short_read_error() {
 
 #[tokio::test]
 async fn test_reader_unexpected_eof() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     write_all_at(&ctx, file.id(), &vec![1; 4 << 10], 0).await;
@@ -99,7 +99,7 @@ async fn test_reader_unexpected_eof() {
 }
 
 async fn write_all_at(
-    ctx: &ctx::FileContext,
+    ctx: &ctx::Context,
     file_id: FileId,
     data: &[u8],
     offset: u64,

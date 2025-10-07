@@ -13,7 +13,7 @@ mod page_file;
 mod storage;
 mod wal;
 
-async fn create_wal_file(ctx: &ctx::FileContext) -> file::RWFile {
+async fn create_wal_file(ctx: &ctx::Context) -> file::RWFile {
     let file_id = ctx
         .directory()
         .create_new_file(FileGroup::Wal)
@@ -26,7 +26,7 @@ async fn create_wal_file(ctx: &ctx::FileContext) -> file::RWFile {
 }
 
 async fn write_log_ops(
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     file: file::RWFile,
     ops: &[(u64, Vec<LogOp>)],
 ) {

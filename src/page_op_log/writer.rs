@@ -46,7 +46,7 @@ pub enum LogOpenWriteError {
 /// will be closed and no new operations will be available.
 /// This is done in order to prevent accidental corruption of phantom data.
 pub struct LogFileWriter {
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     file: file::RWFile,
     log_file_id: u64,
     locked_out: bool,
@@ -81,7 +81,7 @@ impl LogFileWriter {
     /// This will read and validate the header of the file and perform all the
     /// necessary integrity checks.
     pub async fn create(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         file: file::RWFile,
     ) -> Result<Self, LogOpenWriteError> {
         let order_key = ORDER_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -114,7 +114,7 @@ impl LogFileWriter {
 
     /// Create a new [LogFileWriter] using the provided file context, file and offset.
     pub(super) fn new(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         file: file::RWFile,
         log_file_id: u64,
         log_offset: u64,
@@ -497,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_writer_sequence_id() {
-        let ctx = ctx::FileContext::for_test(false).await;
+        let ctx = ctx::Context::for_test(false).await;
         let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
         let mut writer = LogFileWriter::new(ctx, file, 1, 0);

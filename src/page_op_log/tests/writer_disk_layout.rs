@@ -12,7 +12,7 @@ use crate::page_op_log::{MetadataHeader, op_log_associated_data};
 async fn test_single_transaction_write_layout(#[values(0, 4096)] log_offset: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset as u64);
@@ -55,7 +55,7 @@ async fn test_single_transaction_write_layout(#[values(0, 4096)] log_offset: usi
 #[rstest::rstest]
 #[tokio::test]
 async fn test_header_writing(#[values(false, true)] encryption: bool) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let writer = LogFileWriter::create(ctx.clone(), file.clone())

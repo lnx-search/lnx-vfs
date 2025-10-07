@@ -24,7 +24,7 @@ pub enum WriteCheckpointError {
 ///
 /// The file will automatically be synced to ensure data is persisted.
 pub async fn write_checkpoint(
-    ctx: &Arc<ctx::FileContext>,
+    ctx: &Arc<ctx::Context>,
     file: &file::RWFile,
     page_file_id: PageFileId,
     changes: page_metadata::PageChangeCheckpoint,

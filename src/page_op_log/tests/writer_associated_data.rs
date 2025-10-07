@@ -15,7 +15,7 @@ async fn test_single_transaction_correct_associated_data_tagging(
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset);
@@ -44,7 +44,7 @@ async fn test_multi_transaction_correct_associated_data_tagging(
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let mut writer = LogFileWriter::new(ctx.clone(), file.clone(), 1, log_offset);

@@ -50,7 +50,7 @@ use crate::page_data::NUM_PAGES_PER_BLOCK;
 #[trace]
 #[tokio::test]
 async fn test_file_save(#[case] entries: &[PageMetadata]) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let page_table = PageTable::from_existing_state(entries);
 
@@ -72,7 +72,7 @@ async fn test_file_save(#[case] entries: &[PageMetadata]) {
 
 #[tokio::test]
 async fn test_page_table_checkpointed_post_write() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let page_table = PageTable::default();
     page_table.write_pages(&[PageMetadata {
@@ -95,7 +95,7 @@ async fn test_page_table_checkpointed_post_write() {
 
 #[tokio::test]
 async fn test_page_table_load_from_checkpoints() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let pages = &[PageMetadata {
         group: PageGroupId(1),
@@ -132,7 +132,7 @@ async fn test_page_table_load_from_checkpoints() {
 
 #[tokio::test]
 async fn test_page_table_load_from_checkpoints_cleanup_outdated_files() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let page_table = PageTable::default();
     page_table.write_pages(&[PageMetadata {
@@ -172,7 +172,7 @@ async fn test_page_table_load_from_checkpoints_cleanup_outdated_files() {
 
 #[tokio::test]
 async fn test_page_table_load_from_checkpoints_skips_cleanup_errors() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let page_table = PageTable::default();
     page_table.write_pages(&[PageMetadata {
@@ -215,7 +215,7 @@ async fn test_page_table_load_from_checkpoints_skips_cleanup_errors() {
 
 #[tokio::test]
 async fn test_wal_replay_single_wal() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let wal_file = create_wal_file(&ctx).await;
 
@@ -282,7 +282,7 @@ async fn test_wal_replay_single_wal() {
 async fn test_wal_replay_multi_wal_ordering() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let wal_file1 = create_wal_file(&ctx).await;
     let wal_file2 = create_wal_file(&ctx).await;

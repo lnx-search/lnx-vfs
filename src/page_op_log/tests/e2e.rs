@@ -12,7 +12,7 @@ async fn test_reader_can_decode_writer_output(
 
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     super::write_log_entries(ctx.clone(), file.clone(), num_entries).await;

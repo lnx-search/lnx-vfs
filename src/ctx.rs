@@ -8,9 +8,8 @@ use crate::directory::SystemDirectory;
 use crate::layout::encrypt;
 use crate::layout::file_metadata::Encryption;
 
-/// The file context contains general settings and information
-/// for the file reader and writers of any type to use.
-pub struct FileContext {
+/// The file context contains general settings and information for the system to use.
+pub struct Context {
     cipher: Option<encrypt::Cipher>,
     arena_allocator: ArenaAllocator,
     directory: SystemDirectory,
@@ -19,17 +18,17 @@ pub struct FileContext {
     tmp_dir: std::sync::Arc<tempfile::TempDir>,
 }
 
-impl FileContext {
+impl Context {
     #[cfg(test)]
     /// Create a new file context for testing.
-    pub async fn for_test(encryption: bool) -> std::sync::Arc<Self> {
+    pub(crate) async fn for_test(encryption: bool) -> std::sync::Arc<Self> {
         let tmp_dir = tempfile::tempdir().unwrap();
         Self::for_test_in_dir(encryption, std::sync::Arc::new(tmp_dir)).await
     }
 
     #[cfg(test)]
     /// Create a new file context for testing.
-    pub async fn for_test_in_dir(
+    pub(crate) async fn for_test_in_dir(
         encryption: bool,
         tmp_dir: std::sync::Arc<tempfile::TempDir>,
     ) -> std::sync::Arc<Self> {
@@ -58,19 +57,19 @@ impl FileContext {
 
     #[cfg(test)]
     /// Consumes the temporary directory the context is linked to.
-    pub fn tmp_dir(&self) -> std::sync::Arc<tempfile::TempDir> {
+    pub(crate) fn tmp_dir(&self) -> std::sync::Arc<tempfile::TempDir> {
         self.tmp_dir.clone()
     }
 
     #[inline]
     /// Returns the encryption cipher if enabled.
-    pub fn cipher(&self) -> Option<&encrypt::Cipher> {
+    pub(crate) fn cipher(&self) -> Option<&encrypt::Cipher> {
         self.cipher.as_ref()
     }
 
     #[inline]
     /// Get the [Encryption] status for the given context.
-    pub fn get_encryption_status(&self) -> Encryption {
+    pub(crate) fn get_encryption_status(&self) -> Encryption {
         if self.cipher.is_none() {
             Encryption::Disabled
         } else {
@@ -83,7 +82,7 @@ impl FileContext {
     ///
     /// This will attempt to use an arena allocator first and then fallback
     /// to the system allocator if no space is available.
-    pub fn alloc<const N: usize>(&self) -> buffer::DmaBuffer {
+    pub(crate) fn alloc<const N: usize>(&self) -> buffer::DmaBuffer {
         const {
             assert!(
                 N % ALLOC_PAGE_SIZE == 0,
@@ -108,7 +107,7 @@ impl FileContext {
     /// to the system allocator if no space is available.
     ///
     /// Your should prefer [Self::alloc] over this implementation if at all possible.
-    pub fn alloc_pages(&self, num_pages: usize) -> buffer::DmaBuffer {
+    pub(crate) fn alloc_pages(&self, num_pages: usize) -> buffer::DmaBuffer {
         if num_pages == 0 {
             return buffer::DmaBuffer::alloc_empty();
         }
@@ -122,7 +121,7 @@ impl FileContext {
 
     #[inline]
     /// Returns a reference to the [SystemDirectory].
-    pub fn directory(&self) -> &SystemDirectory {
+    pub(crate) fn directory(&self) -> &SystemDirectory {
         &self.directory
     }
 
@@ -136,7 +135,7 @@ impl FileContext {
     /// Get a config value from the context.
     ///
     /// Panics if the config does not exist.
-    pub fn config<C: Any + Send + Sync + Clone>(&self) -> C {
+    pub(crate) fn config<C: Any + Send + Sync + Clone>(&self) -> C {
         self.config_opt().expect("config not initialized")
     }
 
@@ -144,7 +143,7 @@ impl FileContext {
     /// Get a config value from the context.
     ///
     /// Panics if the config does not exist.
-    pub fn config_opt<C: Any + Send + Sync + Clone>(&self) -> Option<C> {
+    pub(crate) fn config_opt<C: Any + Send + Sync + Clone>(&self) -> Option<C> {
         self.configs
             .read()
             .get(&TypeId::of::<C>())
@@ -169,10 +168,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_encryption_status() {
-        let ctx = FileContext::for_test(false).await;
+        let ctx = Context::for_test(false).await;
         assert_eq!(ctx.get_encryption_status(), Encryption::Disabled);
 
-        let ctx = FileContext::for_test(true).await;
+        let ctx = Context::for_test(true).await;
         assert_eq!(ctx.get_encryption_status(), Encryption::Enabled);
     }
 
@@ -185,7 +184,7 @@ mod tests {
         #[case] num_pages: usize,
         #[case] backing_type: BufferKind,
     ) {
-        let ctx = FileContext::for_test(false).await;
+        let ctx = Context::for_test(false).await;
 
         let buffer = ctx.alloc_pages(num_pages);
         assert_eq!(buffer.len(), ALLOC_PAGE_SIZE * num_pages);
@@ -194,7 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_const_alloc() {
-        let ctx = FileContext::for_test(false).await;
+        let ctx = Context::for_test(false).await;
 
         let buffer = ctx.alloc::<0>();
         assert_eq!(buffer.len(), 0);
@@ -211,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_system_opt() {
-        let ctx = FileContext::for_test(false).await;
+        let ctx = Context::for_test(false).await;
         assert!(ctx.config_opt::<()>().is_none());
         ctx.set_config(());
         assert!(ctx.config_opt::<()>().is_some());
@@ -220,7 +219,7 @@ mod tests {
     #[should_panic(expected = "config not initialized")]
     #[tokio::test]
     async fn test_config_system_config_panics() {
-        let ctx = FileContext::for_test(false).await;
+        let ctx = Context::for_test(false).await;
         ctx.config::<()>();
     }
 }

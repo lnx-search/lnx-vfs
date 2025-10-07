@@ -13,7 +13,7 @@ async fn test_checkpoint_reader(
     #[values(false, true)] encryption: bool,
     #[values(0, 1, 10, 400, 7423)] num_updates: usize,
 ) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file: file::ROFile = ctx.make_tmp_rw_file(FileGroup::Metadata).await.into();
 
     let updates = fill_updates(num_updates);
@@ -72,7 +72,7 @@ async fn test_checkpoint_reader(
 #[rstest::rstest]
 #[tokio::test]
 async fn test_header_encryption_missmatch() {
-    let encoding_ctx = ctx::FileContext::for_test(false).await;
+    let encoding_ctx = ctx::Context::for_test(false).await;
     let file = encoding_ctx.make_tmp_rw_file(FileGroup::Metadata).await;
 
     let associated_data = ckpt_associated_data(
@@ -122,7 +122,7 @@ async fn test_header_encryption_missmatch() {
     raw_file.sync_all().unwrap();
 
     let tmp_dir = encoding_ctx.tmp_dir();
-    let decoding_ctx = ctx::FileContext::for_test_in_dir(true, tmp_dir).await;
+    let decoding_ctx = ctx::Context::for_test_in_dir(true, tmp_dir).await;
     let file_ids = decoding_ctx.directory().list_dir(FileGroup::Metadata).await;
 
     let file = decoding_ctx
@@ -140,7 +140,7 @@ async fn test_header_encryption_missmatch() {
 #[rstest::rstest]
 #[tokio::test]
 async fn test_missing_header() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Metadata).await;
     let err = crate::checkpoint::read_checkpoint(&ctx, &file.into())
         .await

@@ -12,7 +12,7 @@ mod writer_disk_layout;
 mod writer_flow_control;
 
 async fn write_log_entries(
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     file: file::RWFile,
     num_entries: usize,
 ) {

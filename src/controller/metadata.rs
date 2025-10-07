@@ -38,7 +38,7 @@ pub enum OpenMetadataControllerError {
 /// The metadata controller handles the global page table state
 /// and checkpointing the metadata tied to each page of data.
 pub struct MetadataController {
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     lookup_table: ConcurrentHashMap<PageGroupId, LookupEntry>,
     page_tables: ConcurrentHashMap<PageFileId, PageTable>,
     active_checkpoint_files: Mutex<BTreeMap<PageFileId, FileId>>,
@@ -49,7 +49,7 @@ impl MetadataController {
     /// Opens a new [MetadataController] and re-populates data using the page table
     /// checkpoints and replays any WAL file changes.
     pub async fn open(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
     ) -> Result<Self, OpenMetadataControllerError> {
         let checkpointed_state =
             super::checkpoint::read_checkpoints(ctx.clone()).await?;
@@ -81,7 +81,7 @@ impl MetadataController {
     }
 
     /// Create a new empty [MetadataController].
-    pub fn empty(ctx: Arc<ctx::FileContext>) -> Self {
+    pub fn empty(ctx: Arc<ctx::Context>) -> Self {
         Self {
             ctx,
             lookup_table: ConcurrentHashMap::with_hasher(

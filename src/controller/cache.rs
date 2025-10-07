@@ -25,7 +25,7 @@ pub struct CacheController {
 
 impl CacheController {
     /// Create a new [CacheController] using the given context.
-    pub fn new(ctx: &ctx::FileContext) -> Self {
+    pub fn new(ctx: &ctx::Context) -> Self {
         let config: CacheConfig = ctx.config();
         let cache = PageFileCache::new(config.memory_allowance, PageSize::Std32KB);
 

@@ -50,7 +50,7 @@ pub enum WalError {
 ///
 /// There is only one WAL file being written to at any one point in time.
 pub struct WalController {
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     config: WalConfig,
     /// A list of open writers that are free to be used.
     ///
@@ -79,7 +79,7 @@ impl WalController {
     /// Create a new [WalController] using the given [WalConfig].
     ///
     /// A new WAL file will automatically be created.
-    pub async fn create(ctx: Arc<ctx::FileContext>) -> Result<WalController, WalError> {
+    pub async fn create(ctx: Arc<ctx::Context>) -> Result<WalController, WalError> {
         let config = ctx.config();
         let writer = create_new_wal_file(ctx.clone()).await?;
         tracing::info!(file_id = ?writer.file_id(), "created new WAL writer");
@@ -372,7 +372,7 @@ impl WalController {
 }
 
 async fn create_new_wal_file(
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
 ) -> Result<page_op_log::LogFileWriter, page_op_log::LogOpenWriteError> {
     let directory = ctx.directory();
     let file_id = directory.create_new_atomic_file(FileGroup::Wal).await?;

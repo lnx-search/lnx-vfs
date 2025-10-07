@@ -10,7 +10,7 @@ async fn test_controller_create_layer(
     #[values(0, 128 << 10)] capacity: u64,
     #[values(1, 3, 7, 12)] num_pages: usize,
 ) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(CacheConfig {
         memory_allowance: capacity,
         disable_gc_worker: false,
@@ -30,7 +30,7 @@ async fn test_controller_create_layer(
 #[rstest::rstest]
 #[tokio::test]
 async fn test_controller_layer_controls(#[values(0, 128 << 10)] capacity: u64) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(CacheConfig {
         memory_allowance: capacity,
         disable_gc_worker: false,
@@ -66,7 +66,7 @@ async fn test_controller_layer_controls(#[values(0, 128 << 10)] capacity: u64) {
 
 #[tokio::test]
 async fn test_controller_layer_remove_non_existant_layer() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(CacheConfig {
         memory_allowance: 32 << 10,
         disable_gc_worker: false,
@@ -77,7 +77,7 @@ async fn test_controller_layer_remove_non_existant_layer() {
 
 #[tokio::test]
 async fn test_controller_reassign_non_existant_group() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(CacheConfig {
         memory_allowance: 32 << 10,
         disable_gc_worker: false,

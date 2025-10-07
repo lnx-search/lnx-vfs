@@ -61,7 +61,7 @@ async fn test_reader_understands_writer(
     #[case] validate_ranges: Vec<Vec<usize>>,
 ) {
     let mut metadata = metadata;
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Pages).await;
     let page_file = PageFile::create(ctx.clone(), file.clone(), PageFileId(1))
         .await

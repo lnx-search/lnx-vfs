@@ -61,7 +61,7 @@ macro_rules! handle_io_result {
 
 /// The [LogFileReader] decodes
 pub struct LogFileReader {
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     log_file_id: u64,
     order_key: u64,
     expected_sequence_id: u32,
@@ -87,7 +87,7 @@ impl LogFileReader {
     /// This will read and validate the header of the file and perform all the
     /// necessary integrity checks.
     pub async fn open(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         file: file::ROFile,
     ) -> Result<Self, LogOpenReadError> {
         let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
@@ -125,7 +125,7 @@ impl LogFileReader {
     /// NOTE: This does _not_ validate the header of the file, it assumes the file
     /// is already valid
     pub(super) fn new(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         file: file::ROFile,
         log_file_id: u64,
         order_key: u64,

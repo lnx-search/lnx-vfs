@@ -20,7 +20,7 @@ use crate::{ctx, page_op_log};
 #[tracing::instrument(skip(ctx, page_table))]
 /// Checkpoint the target page table if any in-memory state has changed.
 pub(super) async fn checkpoint_page_table(
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     page_file_id: PageFileId,
     page_table: &PageTable,
 ) -> Result<FileId, WriteCheckpointError> {
@@ -75,7 +75,7 @@ pub struct LastCheckpointedState {
 ///
 /// This does NOT recover any additional state from the WAL.
 pub(super) async fn read_checkpoints(
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
 ) -> Result<LastCheckpointedState, ReadCheckpointError> {
     use std::collections::btree_map::Entry;
 
@@ -163,7 +163,7 @@ pub enum RecoverWalError {
 /// We assume an error means the end of the log due to the layout of the WAL
 /// ensuring torn writes should not be possible in any situation.
 pub(super) async fn recover_wal_updates(
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     controller: &MetadataController,
 ) -> Result<(), RecoverWalError> {
     let directory = ctx.directory();

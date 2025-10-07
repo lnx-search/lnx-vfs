@@ -38,7 +38,7 @@ const MAX_READ_CONCURRENCY: usize = 128;
 /// The page file controller manages creation and cleanup of
 /// the page data files.
 pub struct PageFileController {
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     allocator: PageFileAllocator,
     page_files: RwLock<foldhash::HashMap<PageFileId, PageFile>>,
     next_page_file_id: tokio::sync::Mutex<PageFileId>,
@@ -50,7 +50,7 @@ impl PageFileController {
     /// This will open all existing page files and load their existing allocation state
     /// from the metadata controller into the disk allocator.
     pub async fn open(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         metadata_controller: &super::metadata::MetadataController,
     ) -> Result<Self, OpenPageFileError> {
         let directory = ctx.directory();
@@ -297,7 +297,7 @@ impl PageFileController {
 /// page metadata entries, otherwise, the pending write will be aborted and the allocated pages
 /// put back into the allocation pool.
 pub struct PageDataWriter<'controller> {
-    ctx: &'controller ctx::FileContext,
+    ctx: &'controller ctx::Context,
     page_file: PageFile,
     alloc_tx: WriteAllocTx<'controller>,
     write_iops: smallvec::IntoIter<[Range<u32>; 8]>,
@@ -325,7 +325,7 @@ impl std::fmt::Debug for PageDataWriter<'_> {
 
 impl<'controller> PageDataWriter<'controller> {
     fn new(
-        ctx: &'controller ctx::FileContext,
+        ctx: &'controller ctx::Context,
         page_file: PageFile,
         alloc_tx: WriteAllocTx<'controller>,
         expected_len: u64,

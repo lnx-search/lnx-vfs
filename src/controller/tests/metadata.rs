@@ -10,7 +10,7 @@ use crate::page_data::{DISK_PAGE_SIZE, NUM_PAGES_PER_BLOCK};
 
 #[tokio::test]
 async fn test_controller_insert_page_table() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     assert!(!controller.contains_page_table(PageFileId(1)));
     controller.insert_page_table(PageFileId(1), PageTable::default());
@@ -20,7 +20,7 @@ async fn test_controller_insert_page_table() {
 #[tokio::test]
 #[should_panic(expected = "page table already exists")]
 async fn test_controller_insert_page_table_panics_already_exists() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     assert!(!controller.contains_page_table(PageFileId(1)));
     controller.insert_page_table(PageFileId(1), PageTable::default());
@@ -30,7 +30,7 @@ async fn test_controller_insert_page_table_panics_already_exists() {
 
 #[tokio::test]
 async fn test_controller_create_blank_page_table() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     assert!(!controller.contains_page_table(PageFileId(1)));
     controller.create_blank_page_table(PageFileId(1));
@@ -40,7 +40,7 @@ async fn test_controller_create_blank_page_table() {
 #[tokio::test]
 #[should_panic(expected = "BUG: page file ID should exist")]
 async fn test_controller_assign_pages_panics_unknown_page_file() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.assign_pages_to_group(PageFileId(1), PageGroupId(1), &[]);
 }
@@ -126,7 +126,7 @@ async fn test_controller_assign_pages_panics_unknown_page_file() {
 #[trace]
 #[tokio::test]
 async fn test_controller_assign_pages(#[case] entries: &[PageMetadata]) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
     controller.assign_pages_to_group(PageFileId(1), PageGroupId(1), entries);
@@ -135,7 +135,7 @@ async fn test_controller_assign_pages(#[case] entries: &[PageMetadata]) {
 #[tokio::test]
 #[should_panic(expected = "BUG: page being referenced is unassigned")]
 async fn test_controller_panics_on_unassigned() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
@@ -161,7 +161,7 @@ async fn test_controller_panics_on_unassigned() {
 #[tokio::test]
 #[should_panic(expected = "BUG: page metadata entries must be sorted by ID")]
 async fn test_controller_panics_pages_out_of_order() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
 
@@ -476,7 +476,7 @@ async fn test_controller_collect_pages(
     #[case] data_range: Range<usize>,
     #[case] expected_pages: &[PageMetadata],
 ) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
     controller.assign_pages_to_group(PageFileId(1), PageGroupId(1), entries);
@@ -488,7 +488,7 @@ async fn test_controller_collect_pages(
 
 #[tokio::test]
 async fn test_controller_checkpoint() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(1));
     controller.create_blank_page_table(PageFileId(2));
@@ -550,7 +550,7 @@ async fn test_controller_checkpoint() {
 
 #[tokio::test]
 async fn test_controller_incremental_checkpoint() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(0));
     controller.create_blank_page_table(PageFileId(1));
@@ -592,7 +592,7 @@ async fn test_controller_incremental_checkpoint() {
 
 #[tokio::test]
 async fn test_controller_gc_old_checkpoint_files() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(0));
 
@@ -651,7 +651,7 @@ async fn test_controller_gc_old_checkpoint_files() {
 
 #[tokio::test]
 async fn test_controller_recover_from_checkpoints() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx.clone());
     controller.create_blank_page_table(PageFileId(2));
 
@@ -690,7 +690,7 @@ async fn test_controller_recover_from_checkpoints() {
 async fn test_controller_recover_from_wal() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
 
     let wal_file = create_wal_file(&ctx).await;
     let log_ops = &[
@@ -764,7 +764,7 @@ async fn test_controller_recover_from_wal() {
 
 #[tokio::test]
 async fn test_controller_recover_from_wal_with_existing_checkpoint() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx.clone());
     controller.create_blank_page_table(PageFileId(1));
 
@@ -925,7 +925,7 @@ async fn test_controller_recovery_checkpoint_fuzz(
 
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx.clone());
 
     let mut page_id = 0;
@@ -1009,7 +1009,7 @@ async fn test_controller_recovery_checkpoint_fuzz(
 
 #[tokio::test]
 async fn test_controller_create_page_file_allocator() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(0));
     let page_file_allocator = controller.create_page_file_allocator();
@@ -1065,7 +1065,7 @@ async fn test_controller_create_page_file_allocator() {
 )]
 #[tokio::test]
 async fn test_controller_page_group_size(#[case] page_metadata: &[PageMetadata]) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     let controller = MetadataController::empty(ctx);
     controller.create_blank_page_table(PageFileId(0));
 

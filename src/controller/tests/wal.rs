@@ -11,7 +11,7 @@ use crate::{ctx, page_op_log};
 async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_ops: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -50,7 +50,7 @@ async fn test_controller_write_entries(#[values(1, 4, 30, 120)] num_ops: usize) 
 #[trace]
 #[tokio::test]
 async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_ops: usize) {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -76,7 +76,7 @@ async fn test_controller_sync_op_stamp(#[values(1, 4, 30, 120)] num_ops: usize) 
 
 #[tokio::test]
 async fn test_controller_rotate_writers() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -116,7 +116,7 @@ async fn test_evict_free_writers() {
         ..Default::default()
     };
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(config);
     let controller = WalController::create(ctx.clone())
         .await
@@ -151,7 +151,7 @@ async fn test_wal_file_rotation_due_to_size() {
         ..Default::default()
     };
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(config);
     let controller = WalController::create(ctx.clone())
         .await
@@ -173,7 +173,7 @@ async fn test_wal_file_rotation_due_to_size() {
 async fn test_wal_file_dont_rotate_due_if_reset_ignored() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -217,7 +217,7 @@ async fn test_wal_file_dont_rotate_due_if_reset_ignored() {
 async fn test_wal_file_reset_becomes_sealed_and_rotates() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -255,7 +255,7 @@ async fn test_wal_file_abort_hook_triggered_after_reset_retry(
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -298,7 +298,7 @@ async fn test_wal_file_abort_hook_triggered_after_reset_retry_fail(
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -319,7 +319,7 @@ async fn test_wal_file_abort_hook_triggered_after_reset_retry_fail(
 
 #[tokio::test]
 async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await
@@ -355,7 +355,7 @@ async fn test_rotated_file_not_recycled_on_lower_op_stamp() {
 async fn test_flaky_write_coalesce_updates() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(false).await;
+    let ctx = ctx::Context::for_test(false).await;
     ctx.set_config(WalConfig::default());
     let controller = WalController::create(ctx.clone())
         .await

@@ -76,7 +76,7 @@ pub enum ReadPageError {
 /// The page file contains blocks of data called "pages".
 pub struct PageFile {
     id: PageFileId,
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     file: file::RWFile,
     data_offset: u64,
 }
@@ -93,7 +93,7 @@ impl PageFile {
 
     /// Open an existing page file.
     pub async fn open(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         file: file::RWFile,
     ) -> Result<Self, OpenPageFileError> {
         let mut header_buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
@@ -128,7 +128,7 @@ impl PageFile {
 
     /// Create a new page file.
     pub async fn create(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         file: file::RWFile,
         id: PageFileId,
     ) -> Result<Self, CreatePageFileError> {
@@ -163,7 +163,7 @@ impl PageFile {
     }
 
     fn new(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
         file: file::RWFile,
         id: PageFileId,
         data_offset: u64,

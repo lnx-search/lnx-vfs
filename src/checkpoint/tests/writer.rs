@@ -10,7 +10,7 @@ async fn test_checkpoint_writer(
     #[values(false, true)] encryption: bool,
     #[values(0, 1, 10, 400, 7423)] num_updates: usize,
 ) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Metadata).await;
 
     let updates = fill_updates(num_updates);

@@ -10,7 +10,7 @@ const MAX_READ_RETRY: usize = 2;
 
 /// A builder for creating new [StreamReader]s.
 pub struct StreamReaderBuilder {
-    ctx: Arc<ctx::FileContext>,
+    ctx: Arc<ctx::Context>,
     file: file::ROFile,
     offset: u64,
     read_buffer_size: usize,
@@ -18,7 +18,7 @@ pub struct StreamReaderBuilder {
 
 impl StreamReaderBuilder {
     /// Create a new [StreamReaderBuilder] using the target file.
-    pub fn new(ctx: Arc<ctx::FileContext>, file: impl Into<file::ROFile>) -> Self {
+    pub fn new(ctx: Arc<ctx::Context>, file: impl Into<file::ROFile>) -> Self {
         Self {
             ctx,
             file: file.into(),

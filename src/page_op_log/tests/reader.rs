@@ -18,7 +18,7 @@ async fn test_log_reader(
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let mut file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     make_sample_file(&ctx, &mut file, num_blocks, offset).await;
@@ -45,7 +45,7 @@ async fn test_log_reader(
 }
 
 async fn make_sample_file(
-    ctx: &ctx::FileContext,
+    ctx: &ctx::Context,
     file: &mut file::RWFile,
     num_transactions: usize,
     offset: u64,
@@ -96,7 +96,7 @@ async fn make_sample_file(
 #[rstest::rstest]
 #[tokio::test]
 async fn test_missing_header_processing(#[values(false, true)] encryption: bool) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let err = LogFileReader::open(ctx, file.into())
@@ -108,7 +108,7 @@ async fn test_missing_header_processing(#[values(false, true)] encryption: bool)
 #[rstest::rstest]
 #[tokio::test]
 async fn test_header_processing(#[values(false, true)] encryption: bool) {
-    let ctx = ctx::FileContext::for_test(encryption).await;
+    let ctx = ctx::Context::for_test(encryption).await;
     let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let header = MetadataHeader {
@@ -131,7 +131,7 @@ async fn test_header_processing(#[values(false, true)] encryption: bool) {
 #[rstest::rstest]
 #[tokio::test]
 async fn test_header_encryption_missmatch() {
-    let encoding_ctx = ctx::FileContext::for_test(false).await;
+    let encoding_ctx = ctx::Context::for_test(false).await;
     let file = encoding_ctx.make_tmp_rw_file(FileGroup::Wal).await;
 
     let header = MetadataHeader {
@@ -142,7 +142,7 @@ async fn test_header_encryption_missmatch() {
     setup_file_with_header(&encoding_ctx, &file, header).await;
 
     let tmp_dir = encoding_ctx.tmp_dir();
-    let decoding_ctx = ctx::FileContext::for_test_in_dir(true, tmp_dir).await;
+    let decoding_ctx = ctx::Context::for_test_in_dir(true, tmp_dir).await;
     let file_ids = decoding_ctx.directory().list_dir(FileGroup::Wal).await;
 
     let file = decoding_ctx
@@ -161,7 +161,7 @@ async fn test_header_encryption_missmatch() {
 }
 
 async fn setup_file_with_header(
-    ctx: &ctx::FileContext,
+    ctx: &ctx::Context,
     file: &file::RWFile,
     metadata_header: MetadataHeader,
 ) {
@@ -182,7 +182,7 @@ async fn setup_file_with_header(
 }
 
 fn fill_buffer_with_blocks(
-    ctx: &ctx::FileContext,
+    ctx: &ctx::Context,
     file: &file::RWFile,
     buffer: &mut Vec<u8>,
     num_blocks: usize,

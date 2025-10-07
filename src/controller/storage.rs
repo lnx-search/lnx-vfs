@@ -57,7 +57,7 @@ impl StorageController {
     /// This will automatically recover any existing state from the configured
     /// storage directory and checkpoint any WAL files before returning.
     pub async fn open(
-        ctx: Arc<ctx::FileContext>,
+        ctx: Arc<ctx::Context>,
     ) -> Result<Self, OpenStorageControllerError> {
         let metadata_controller = MetadataController::open(ctx.clone()).await?;
 
@@ -297,7 +297,7 @@ struct VolatileMetadataState {
 }
 
 /// Removes all WAL files currently in the directory.
-async fn remove_all_wal_files(ctx: &ctx::FileContext) -> io::Result<()> {
+async fn remove_all_wal_files(ctx: &ctx::Context) -> io::Result<()> {
     let directory = ctx.directory();
 
     let file_ids = directory.list_dir(FileGroup::Wal).await;

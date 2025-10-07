@@ -41,7 +41,7 @@ pub struct Checkpoint {
 
 /// Read a persisted metadata checkpoint.
 pub async fn read_checkpoint(
-    ctx: &Arc<ctx::FileContext>,
+    ctx: &Arc<ctx::Context>,
     file: &file::ROFile,
 ) -> Result<Checkpoint, ReadCheckpointError> {
     #[cfg(test)]

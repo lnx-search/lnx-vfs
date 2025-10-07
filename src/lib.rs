@@ -25,25 +25,28 @@ mod utils;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::controller::{PageDataWriter, ReadRef, StorageController};
-use crate::layout::PageGroupId;
-pub use crate::page_data::CreatePageFileError;
-use crate::page_data::ReadPageError;
+use self::controller::{PageDataWriter, ReadRef, StorageController};
+use self::layout::PageGroupId;
+pub use self::page_data::CreatePageFileError;
+use self::page_data::ReadPageError;
+pub use self::ctx::Context;
+pub use self::transaction::FileSystemTransaction;
 
 #[cfg(feature = "bench-internal")]
 pub mod bench {
     pub use crate::cache::*;
 }
 
-pub use self::transaction::FileSystemTransaction;
 
 /// A virtual filesystem abstraction over underlying storage.
 pub struct VirtualFileSystem {
-    ctx: Arc<ctx::FileContext>,
-    storage_controller: StorageController,
+    ctx: Arc<Context>,
+    storage_controller: Arc<StorageController>,
 }
 
 impl VirtualFileSystem {
+    
+    
     /// Begin a new [FileSystemTransaction] for applying multiple
     /// operations atomically.
     pub fn begin(&self) -> FileSystemTransaction<'_> {
