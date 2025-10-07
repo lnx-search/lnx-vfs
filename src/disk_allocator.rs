@@ -31,7 +31,7 @@ pub enum InitState {
 ///
 /// The design is currently quiet crude as I'm not exactly well-versed in allocator
 /// or disk allocator design :)
-pub(super) struct PageAllocator {
+pub struct PageAllocator {
     /// The number of allocations present in each block of pages.
     block_allocations: [u16; NUM_BLOCKS_PER_FILE],
     /// The list of free blocks of page space.
@@ -40,7 +40,7 @@ pub(super) struct PageAllocator {
 
 impl PageAllocator {
     /// Create a new page allocator with [MAX_NUM_PAGES] number of pages and init state.
-    pub(super) fn new(init_state: InitState) -> Self {
+    pub fn new(init_state: InitState) -> Self {
         let mut free_blocks = FreeBlockList::default();
         if init_state == InitState::Free {
             for idx in 0..NUM_BLOCKS_PER_FILE {
@@ -62,7 +62,7 @@ impl PageAllocator {
     /// Free pages starting at `page_start` and continuing on for `len` pages.
     ///
     /// The page ranges must lay within the bounds of an allocation block.
-    pub(super) fn free(&mut self, page_start: u32, len: u16) {
+    pub fn free(&mut self, page_start: u32, len: u16) {
         let block_idx = page_start as usize / NUM_PAGES_PER_BLOCK;
         let page_end_block =
             (page_start + len as u32 - 1) as usize / NUM_PAGES_PER_BLOCK;
@@ -91,7 +91,7 @@ impl PageAllocator {
     ///
     /// This will return an array of allocation spans if there was free space to hold
     /// the data, otherwise `None` is returned.
-    pub(super) fn alloc(&mut self, num_pages: u32) -> Option<SmallVec<[AllocSpan; 8]>> {
+    pub fn alloc(&mut self, num_pages: u32) -> Option<SmallVec<[AllocSpan; 8]>> {
         if self.spare_capacity() == 0 || self.spare_capacity() < num_pages {
             return None;
         } else if num_pages == 0 {

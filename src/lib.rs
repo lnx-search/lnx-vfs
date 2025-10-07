@@ -47,6 +47,7 @@ pub mod config {
 #[cfg(feature = "bench-internal")]
 pub mod bench {
     pub use crate::cache::*;
+    pub use crate::disk_allocator::*;
 }
 
 /// A virtual filesystem abstraction over underlying storage.
