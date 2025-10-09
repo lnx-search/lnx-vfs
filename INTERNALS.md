@@ -24,14 +24,8 @@ ensure is correct.
 
 ### Fsync & Syscall usage 
 
-You might notice that internally during file writes, we do not call `fdatasync`/`fsync` to flush buffers,
-_we do_ however, do this for synchronizing directories when we create/remove files or modify their names
-(i.e. for "atomic" files). The only exception is during startup when every file is opened and issued
-a `fdatasync` just to be sure.
-
-The reason why we don't do this under normal write conditions is because we open files with 
-the `O_DSYNC` & `O_DIRECT` flag (See: [open(2)](https://www.man7.org/linux/man-pages/man2/open.2.html))
-which combined give us the same durability guarantees we need with a few notable and desirable behaviours:
+Every write is always followed by a `fdatasync` call before we assume it is durable, note that we use
+`i2o2` here so you'll need to look for `FSyncMode` to find the points where we invoke this.
 
 - Using `O_DIRECT` hopefully* bypasses the OS page cache which minimises the overhead of flushing the pages
   immediately to the underlying storage. And prevents issues around `fsync` errors where the file systems have
@@ -39,22 +33,18 @@ which combined give us the same durability guarantees we need with a few notable
   * (*) NOTE: `O_DIRECT` is not guaranteed to bypass the cache, it is technically possible if the call does not meet
         certain requirements for this to result in writes to the page cache. This does not strictly cause us issues
         for reasons I mention a bit later on.
-- Using `O_DSYNC` effectively means every write we do will immediately follow by a flush ensuring the same integrity 
-  as an `fdatasync` call would have. BUT, these methods of synchronizing to disk do very different things, in particular
-  `O_DSYNC` issues the equivalent of a FUA (Forced Unit Access) request going to the backing storage which differs
-  to `fdatasync` which will request a flush of the device's entire write cache if it is not non-volatile/durable.
-  * The kernel does _not_ check if the device has a non-volatile cache or not in order to decide if a FUA request is
-    issued, instead it is always issued and the device may simply choose to ignore it if it knows better.
-  * `O_DSYNC` writes end up being a lot slower latency wise, in particular even on modern NVMEs (with a volatile write cache)
-    results in around `1ms` latency, however, `write + fdatasync` is not strictly lower latency, you are simply deferring
-    the wait. In the VFS' case, we have built the IO layer with this higher latency in mind and made all operations
-    asynchronous and highly concurrent, so even though our single write IOP might take `1ms`, we can still issue 
-    thousands of IOPS and maximise device write throughput.
-  * As mentioned in the point above, `fdatasync` still ends up having to wait, and during this time it normally issues
-    a full flush of the device cache causing a stall in other operations in flight.
-    When testing with `i2o2` we saw that `O_DSYNC` can hit the maximum device throughput easily with concurrent IOPS
-    while still ensuring durability, while issuing an `fsync` even once every 10 IOPS causes slow-downs and limits
-    us to `MB/s`.
+
+#### `O_DSYNC` Issues
+
+In the git history, you might notice that we originally planned to use `O_DSYNC`, however, this was done off the back
+of a benchmark that ended up incorrectly ignoring the `O_DSYNC` flag, which meant our original assumptions about
+it and the impact of issuing a write-through requeston a NVME drive was wrong.
+
+In fact, we ended up observing that it is incredibly easy to max out the queue depth of the NVME when using `O_DYSNC`
+where it results in a FUA request being sent to the drive.
+
+This meant our throughput ended up being artificially limited and unable to make the most use of the drive
+even if we operated with a large concurrent model.
 
 ### Disabling durability guarantees
 
