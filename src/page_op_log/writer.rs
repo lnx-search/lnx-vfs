@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::{cmp, io, mem};
 
+use i2o2::opcode::FSyncMode;
+
 use crate::buffer::DmaBuffer;
 use crate::directory::{FileGroup, FileId};
 use crate::file::DISK_ALIGN;
@@ -273,7 +275,7 @@ impl LogFileWriter {
 
     async fn try_reset_to_last_successful_post(&self) -> io::Result<()> {
         self.file.truncate(self.last_successful_sync_pos).await?;
-        self.file.fsync().await
+        self.file.sync(FSyncMode::Data).await
     }
 
     pub(self) async fn write_log_inner(
@@ -336,6 +338,8 @@ impl LogFileWriter {
             tracing::trace!("waiting for inflight IOP to complete");
             complete_iop(iop).await?;
         }
+
+        self.file.sync(FSyncMode::Data).await?;
 
         self.last_successful_sync_pos = next_safe_pos;
 

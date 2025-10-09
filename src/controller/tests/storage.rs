@@ -271,12 +271,12 @@ async fn test_write_commit_rolls_back_on_page_file_error(
 }
 
 #[rstest::rstest]
-#[case::fsync_fail("file::rw::fsync", "1*return(-5)->off")]
+#[case::fsync_fail("file::rw::sync", "1*return(-5)->off")]
 #[case::ftruncate_fail("file::rw::truncate", "1*return(-5)->off")]
 #[should_panic(
     expected = "ABORT CALL ACTIVATED: WAL file could not be reset to the last successful write, cause: Some(Os { code: 5, kind: Uncategorized, message: \"Input/output error\" })"
 )]
-#[case::fsync_fail_retry_exceeds_limit("file::rw::fsync", "4*return(-5)->off")]
+#[case::fsync_fail_retry_exceeds_limit("file::rw::sync", "4*return(-5)->off")]
 #[should_panic(
     expected = "ABORT CALL ACTIVATED: WAL file could not be reset to the last successful write, cause: Some(Os { code: 5, kind: Uncategorized, message: \"Input/output error\" })"
 )]

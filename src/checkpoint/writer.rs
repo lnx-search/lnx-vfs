@@ -1,6 +1,8 @@
 use std::io;
 use std::sync::Arc;
 
+use i2o2::opcode::FSyncMode;
+
 use crate::buffer::ALLOC_PAGE_SIZE;
 use crate::directory::FileGroup;
 use crate::layout::{PageFileId, file_metadata, page_metadata};
@@ -75,6 +77,7 @@ pub async fn write_checkpoint(
     )?;
 
     file.write_buffer(&mut buffer, 0).await?;
+    file.sync(FSyncMode::Data).await?;
 
     Ok(())
 }

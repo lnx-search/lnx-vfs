@@ -408,7 +408,7 @@ impl<'controller> PageDataWriter<'controller> {
             self.flush_buffer().await?;
         }
 
-        self.process_completed_iops()?;
+        self.process_completed_iops().await?;
 
         Ok(())
     }
@@ -438,6 +438,8 @@ impl<'controller> PageDataWriter<'controller> {
                 return Err(short_write_err().into());
             }
         }
+
+        self.page_file.sync().await?;
 
         Ok((self.alloc_tx, self.metadata_pages))
     }
@@ -500,7 +502,7 @@ impl<'controller> PageDataWriter<'controller> {
         Ok(())
     }
 
-    fn process_completed_iops(&mut self) -> io::Result<()> {
+    async fn process_completed_iops(&mut self) -> io::Result<()> {
         while let Some(iop) = self.inflight_iops.pop_front() {
             match file::try_get_reply(&iop.reply) {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -514,6 +516,19 @@ impl<'controller> PageDataWriter<'controller> {
                 Ok(_) => {},
             }
         }
+
+        while self.inflight_iops.len() >= 100 {
+            let next_iop = match self.inflight_iops.pop_front() {
+                Some(iop) => iop,
+                None => break,
+            };
+
+            let result = file::wait_for_reply(next_iop.reply).await?;
+            if result < next_iop.expected_len {
+                return Err(short_write_err());
+            }
+        }
+
         Ok(())
     }
 

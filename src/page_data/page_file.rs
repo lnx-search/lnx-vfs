@@ -1,6 +1,8 @@
 use std::io;
 use std::sync::Arc;
 
+use i2o2::opcode::FSyncMode;
+
 use crate::buffer::DmaBuffer;
 use crate::directory::{FileGroup, FileId};
 use crate::file::DynamicGuard;
@@ -277,6 +279,11 @@ impl PageFile {
         };
 
         Ok(reply)
+    }
+
+    /// Sync the underlying page file ensuring writes are durable.
+    pub async fn sync(&self) -> io::Result<()> {
+        self.file.sync(FSyncMode::Data).await
     }
 
     /// Encodes the provided page buffer data and either checksums or encrypts the buffers

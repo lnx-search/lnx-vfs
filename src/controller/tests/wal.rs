@@ -247,7 +247,7 @@ async fn test_wal_file_reset_becomes_sealed_and_rotates() {
 }
 
 #[rstest::rstest]
-#[case::fsync_fail("file::rw::fsync")]
+#[case::fsync_fail("file::rw::sync")]
 #[case::ftruncate_fail("file::rw::truncate")]
 #[tokio::test]
 async fn test_wal_file_abort_hook_triggered_after_reset_retry(
@@ -294,7 +294,7 @@ async fn test_wal_file_abort_hook_triggered_after_reset_retry(
     expected = "ABORT CALL ACTIVATED: WAL file could not be reset to the last successful write, cause: Some(Os { code: 2, kind: NotFound, message: \"No such file or directory\" })"
 )]
 async fn test_wal_file_abort_hook_triggered_after_reset_retry_fail(
-    #[values("file::rw::fsync", "file::rw::truncate")] reset_component_failure: &str,
+    #[values("file::rw::sync", "file::rw::truncate")] reset_component_failure: &str,
 ) {
     let _ = tracing_subscriber::fmt::try_init();
 

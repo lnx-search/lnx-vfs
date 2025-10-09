@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use i2o2::TryGetResultError;
+use i2o2::opcode::FSyncMode;
 
 use super::directory::{FileId, RingFile};
 use crate::buffer::DmaBuffer;
@@ -246,14 +247,12 @@ impl File<RW> {
     }
 
     /// Sync the file via a `fsync` call.
-    pub async fn fsync(&self) -> io::Result<()> {
+    pub async fn sync(&self, mode: FSyncMode) -> io::Result<()> {
         #[cfg(test)]
-        fail::fail_point!("file::rw::fsync", crate::utils::parse_io_error_return);
+        fail::fail_point!("file::rw::sync", crate::utils::parse_io_error_return);
 
-        let op = i2o2::opcode::Fsync::new(
-            i2o2::types::Fixed(self.file_ref.ring_id()),
-            i2o2::opcode::FSyncMode::Full,
-        );
+        let op =
+            i2o2::opcode::Fsync::new(i2o2::types::Fixed(self.file_ref.ring_id()), mode);
 
         let reply = unsafe {
             self.handle

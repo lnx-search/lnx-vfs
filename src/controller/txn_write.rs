@@ -126,6 +126,8 @@ impl<'c> StorageWriteTxn<'c> {
             alloc.commit();
         }
 
+        self.is_complete = true;
+
         Ok(())
     }
 
