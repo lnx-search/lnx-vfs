@@ -8,7 +8,7 @@ use crate::directory::{FileGroup, FileId};
 use crate::file::DynamicGuard;
 use crate::layout::file_metadata::Encryption;
 use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageFileId, PageId, encrypt, file_metadata, integrity};
+use crate::layout::{PageFileId, PageId, encrypt, file_metadata};
 use crate::page_data::{
     CONTEXT_BUFFER_SIZE,
     DISK_PAGE_SIZE,
@@ -17,6 +17,8 @@ use crate::page_data::{
     page_associated_data,
 };
 use crate::{ctx, file, utils};
+
+const MAX_PAGE_FILE_SIZE: u64 = (MAX_NUM_PAGES * DISK_PAGE_SIZE) as u64;
 
 #[derive(Debug, thiserror::Error)]
 /// An error that prevented the system from opening a page file.
@@ -72,6 +74,23 @@ pub enum ReadPageError {
     #[error("short read")]
     /// A short read occurred and should be retried.
     ShortRead,
+}
+
+#[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
+/// Configuration options for the page file.
+pub struct PageFileConfig {
+    /// Whether the system should pre-allocate the entire file's disk capacity.
+    ///
+    /// Defaults to `false`.
+    pub preallocate_file: bool,
+}
+
+impl Default for PageFileConfig {
+    fn default() -> Self {
+        Self {
+            preallocate_file: false,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -141,6 +160,8 @@ impl PageFile {
                 .unwrap_err())
         });
 
+        let config: PageFileConfig = ctx.config_opt().unwrap_or_default();
+
         let mut buffer = ctx.alloc::<{ file_metadata::HEADER_SIZE }>();
 
         let header_associated_data =
@@ -160,6 +181,10 @@ impl PageFile {
         )?;
 
         file.write_buffer(&mut buffer, 0).await?;
+
+        if config.preallocate_file {
+            file.allocate(0, MAX_PAGE_FILE_SIZE).await?;
+        }
 
         Ok(Self::new(ctx, file, id, file_metadata::HEADER_SIZE as u64))
     }

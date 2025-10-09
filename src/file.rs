@@ -246,6 +246,29 @@ impl File<RW> {
         Ok(())
     }
 
+    /// Pre-allocate the file with a given capacity for `len` bytes.
+    pub async fn allocate(&self, offset: u64, len: u64) -> io::Result<()> {
+        #[cfg(test)]
+        fail::fail_point!("file::rw::allocate", crate::utils::parse_io_error_return);
+
+        let op = i2o2::opcode::Fallocate::new(
+            i2o2::types::Fixed(self.file_ref.ring_id()),
+            0,
+            offset,
+            len,
+        );
+
+        let reply = unsafe {
+            self.handle
+                .submit_async(op, None)
+                .await
+                .map_err(io::Error::other)?
+        };
+
+        wait_for_reply(reply).await?;
+        Ok(())
+    }
+
     /// Sync the file via a `fsync` call.
     pub async fn sync(&self, mode: FSyncMode) -> io::Result<()> {
         #[cfg(test)]

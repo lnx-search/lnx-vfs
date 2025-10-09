@@ -11,7 +11,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("starting benchmark");
 
     run_bench(1000, 2 << 10).await?;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
     run_bench(100, 2 << 20).await?;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
     run_bench(10, 2 << 30).await?;
 
     tracing::info!("complete");

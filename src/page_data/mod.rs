@@ -8,6 +8,7 @@ pub use self::page_file::{
     CreatePageFileError,
     OpenPageFileError,
     PageFile,
+    PageFileConfig,
     ReadPageError,
     SubmitWriterError,
 };

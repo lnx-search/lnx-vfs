@@ -80,7 +80,7 @@ impl WalController {
     ///
     /// A new WAL file will automatically be created.
     pub async fn create(ctx: Arc<ctx::Context>) -> Result<WalController, WalError> {
-        let config = ctx.config();
+        let config: WalConfig = ctx.config_opt().unwrap_or_default();
         let writer = create_new_wal_file(ctx.clone()).await?;
         tracing::info!(file_id = ?writer.file_id(), "created new WAL writer");
         Ok(Self {

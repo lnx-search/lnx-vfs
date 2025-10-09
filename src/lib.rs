@@ -42,6 +42,7 @@ pub use self::transaction::FileSystemTransaction;
 /// Configuration options for the VFS components.
 pub mod config {
     pub use crate::controller::{CacheConfig, WalConfig};
+    pub use crate::page_data::PageFileConfig;
 }
 
 #[cfg(feature = "bench-internal")]
