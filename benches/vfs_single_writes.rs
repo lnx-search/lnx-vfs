@@ -10,9 +10,9 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("starting benchmark");
 
-    // run_bench(1000, 2 << 10).await?;
-    // run_bench(100, 2 << 20).await?;
-    run_bench(3, 2 << 30).await?;
+    run_bench(1000, 2 << 10).await?;
+    run_bench(100, 2 << 20).await?;
+    run_bench(10, 2 << 30).await?;
 
     tracing::info!("complete");
 
