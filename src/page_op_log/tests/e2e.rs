@@ -1,5 +1,6 @@
 use crate::ctx;
 use crate::directory::FileGroup;
+use crate::page_op_log::LogFileWriter;
 use crate::page_op_log::reader::{LogDecodeError, LogFileReader};
 
 #[rstest::rstest]
@@ -38,4 +39,27 @@ async fn test_reader_can_decode_writer_output(
         }
     }
     assert_eq!(decoded_entries, num_entries);
+}
+
+#[tokio::test]
+async fn test_pre_allocate() {
+    let ctx = ctx::Context::for_test(false).await;
+    let file = ctx.make_tmp_rw_file(FileGroup::Wal).await;
+
+    let writer = LogFileWriter::create(ctx.clone(), file.clone())
+        .await
+        .expect("write log file with new header");
+    assert_eq!(writer.position(), 4096);
+
+    writer
+        .allocate(8096)
+        .await
+        .expect("writer should allocate N bytes");
+    let file = writer.into_file();
+    let len = file.get_len().await.unwrap();
+    assert_eq!(len, 8096);
+
+    let _reader = LogFileReader::open(ctx.clone(), file.into())
+        .await
+        .expect("open reader on written file");
 }
