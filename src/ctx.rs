@@ -71,9 +71,21 @@ impl ContextBuilder {
 
         let directory = SystemDirectory::open(&self.base_path).await?;
 
+        let cipher = if let Some(encryption_key) = self.encryption_key {
+            let keys = super::encryption_file::load_encryption_keys(
+                &self.base_path,
+                &encryption_key,
+            )
+            .await
+            .map_err(io::Error::other)?;
+            Some(keys.encryption_cipher)
+        } else {
+            None
+        };
+
         let num_arena_pages = self.io_memory / ALLOC_PAGE_SIZE;
         let ctx = Context {
-            cipher: None,
+            cipher,
             arena_allocator: ArenaAllocator::new(num_arena_pages),
             directory,
             configs: parking_lot::RwLock::new(BTreeMap::new()),

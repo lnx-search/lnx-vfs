@@ -38,6 +38,7 @@ use self::layout::PageGroupId;
 pub use self::page_data::CreatePageFileError;
 use self::page_data::ReadPageError;
 pub use self::transaction::FileSystemTransaction;
+pub use self::encryption_file::change_password;
 
 /// Configuration options for the VFS components.
 pub mod config {
