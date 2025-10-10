@@ -12,7 +12,7 @@ use crate::directory::FileGroup;
 use crate::layout::log::LogOp;
 use crate::{ctx, file, page_op_log};
 
-const SYNC_COALESCE_DURATION: Duration = Duration::from_millis(5);
+const SYNC_COALESCE_DURATION: Duration = Duration::from_millis(2);
 
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 /// Configuration options for the WAL controller.
@@ -22,6 +22,10 @@ pub struct WalConfig {
     pub max_wal_file_pool_size: usize,
     /// The maximum size of a WAL file writer before it is rotated.
     pub soft_max_wal_size: u64,
+    /// Whether the system should pre-allocate the entire file's disk capacity.
+    ///
+    /// Defaults to `false`.
+    pub preallocate_file: bool,
 }
 
 impl Default for WalConfig {
@@ -29,6 +33,7 @@ impl Default for WalConfig {
         Self {
             max_wal_file_pool_size: 5,
             soft_max_wal_size: 2 << 30,
+            preallocate_file: false,
         }
     }
 }
@@ -81,7 +86,7 @@ impl WalController {
     /// A new WAL file will automatically be created.
     pub async fn create(ctx: Arc<ctx::Context>) -> Result<WalController, WalError> {
         let config: WalConfig = ctx.config_opt().unwrap_or_default();
-        let writer = create_new_wal_file(ctx.clone()).await?;
+        let writer = create_new_wal_file(&config, ctx.clone()).await?;
         tracing::info!(file_id = ?writer.file_id(), "created new WAL writer");
         Ok(Self {
             ctx,
@@ -365,19 +370,25 @@ impl WalController {
         }
 
         tracing::debug!(assigned_op_stamp = op_stamp, "creating new WAL file");
-        create_new_wal_file(self.ctx.clone())
+        create_new_wal_file(&self.config, self.ctx.clone())
             .await
             .map_err(WalError::RotateError)
     }
 }
 
 async fn create_new_wal_file(
+    config: &WalConfig,
     ctx: Arc<ctx::Context>,
 ) -> Result<page_op_log::LogFileWriter, page_op_log::LogOpenWriteError> {
     let directory = ctx.directory();
     let file_id = directory.create_new_atomic_file(FileGroup::Wal).await?;
     let file = directory.get_rw_file(FileGroup::Wal, file_id).await?;
     let writer = page_op_log::LogFileWriter::create(ctx.clone(), file).await?;
+
+    if config.preallocate_file {
+        writer.allocate(config.soft_max_wal_size).await?;
+    }
+
     directory
         .persist_atomic_file(FileGroup::Wal, file_id)
         .await?;

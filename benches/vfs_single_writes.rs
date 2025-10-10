@@ -1,7 +1,7 @@
 use std::cmp;
 use std::time::{Duration, Instant};
 
-use lnx_vfs::config::{CacheConfig, WalConfig};
+use lnx_vfs::config::{CacheConfig, PageFileConfig, WalConfig};
 use lnx_vfs::{ContextBuilder, VirtualFileSystem};
 
 #[tokio::main]
@@ -10,22 +10,28 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("starting benchmark");
 
-    run_bench(1000, 2 << 10).await?;
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    for pre_allocate in [false, true] {
+        run_bench(pre_allocate, 1000, 2 << 10).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
 
-    run_bench(100, 2 << 20).await?;
-    tokio::time::sleep(Duration::from_secs(10)).await;
+        run_bench(pre_allocate, 100, 2 << 20).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
 
-    run_bench(10, 2 << 30).await?;
+        run_bench(pre_allocate, 10, 2 << 30).await?;
+    }
 
     tracing::info!("complete");
 
     Ok(())
 }
 
-async fn run_bench(num_iters: u64, file_size: usize) -> anyhow::Result<()> {
+async fn run_bench(
+    pre_allocate: bool,
+    num_iters: u64,
+    file_size: usize,
+) -> anyhow::Result<()> {
     tracing::info!(
-        "starting run - {num_iters} iters, {} per file",
+        "starting run (pre_allocate={pre_allocate}) - {num_iters} iters, {} per file",
         humanize(file_size as u64)
     );
 
@@ -36,6 +42,9 @@ async fn run_bench(num_iters: u64, file_size: usize) -> anyhow::Result<()> {
     ctx.set_config(CacheConfig {
         memory_allowance: 0,
         disable_gc_worker: true,
+    });
+    ctx.set_config(PageFileConfig {
+        preallocate_file: pre_allocate,
     });
     let vfs = VirtualFileSystem::open(ctx).await?;
 

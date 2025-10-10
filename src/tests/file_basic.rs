@@ -63,7 +63,6 @@ async fn test_file_write(tempdir: tempfile::TempDir) {
     assert_eq!(&buffer[..13], b"Hello, world!");
 }
 
-
 #[rstest::rstest]
 #[tokio::test]
 async fn test_file_allocate(tempdir: tempfile::TempDir) {
@@ -72,7 +71,10 @@ async fn test_file_allocate(tempdir: tempfile::TempDir) {
         .expect("directory should be created");
 
     let file_id = directory.create_new_file(FileGroup::Pages).await.unwrap();
-    let file = directory.get_rw_file(FileGroup::Pages, file_id).await.unwrap();
+    let file = directory
+        .get_rw_file(FileGroup::Pages, file_id)
+        .await
+        .unwrap();
 
     file.allocate(0, 4096)
         .await
@@ -89,17 +91,16 @@ async fn test_file_truncate(tempdir: tempfile::TempDir) {
         .expect("directory should be created");
 
     let file_id = directory.create_new_file(FileGroup::Pages).await.unwrap();
-    let file = directory.get_rw_file(FileGroup::Pages, file_id).await.unwrap();
-
-    file.truncate(4096)
+    let file = directory
+        .get_rw_file(FileGroup::Pages, file_id)
         .await
-        .expect("file should allocate 4kB");
+        .unwrap();
+
+    file.truncate(4096).await.expect("file should allocate 4kB");
     let len = file.get_len().await.unwrap();
     assert_eq!(len, 4096);
 
-    file.truncate(0)
-        .await
-        .expect("file should allocate 4kB");
+    file.truncate(0).await.expect("file should allocate 4kB");
     let len = file.get_len().await.unwrap();
     assert_eq!(len, 0);
 }

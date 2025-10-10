@@ -114,6 +114,13 @@ impl LogFileWriter {
         ))
     }
 
+    /// Allocate a given capacity in the WAL.
+    ///
+    /// This reserves a given amount of bytes on the WAL file.
+    pub async fn allocate(&self, len: u64) -> io::Result<()> {
+        self.file.allocate(0, len).await
+    }
+
     /// Create a new [LogFileWriter] using the provided file context, file and offset.
     pub(super) fn new(
         ctx: Arc<ctx::Context>,
