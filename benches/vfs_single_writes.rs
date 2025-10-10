@@ -38,7 +38,10 @@ async fn run_bench(
     let tmp_dir = tempfile::tempdir_in("./test-data")?;
     let builder = ContextBuilder::new(tmp_dir.path());
     let ctx = builder.open().await?;
-    ctx.set_config(WalConfig::default());
+    ctx.set_config(WalConfig {
+        preallocate_file: true,
+        ..Default::default()
+    });
     ctx.set_config(CacheConfig {
         memory_allowance: 0,
         disable_gc_worker: true,
@@ -82,7 +85,7 @@ async fn run_bench(
     write_time /= num_iters as u32;
 
     tracing::info!(
-        "{num_iters} iters took {elapsed:?}, \
+        "   {num_iters} iters took {elapsed:?}, \
         {per_file:?}/iter {}/s \
         {commit_time:?} on commit, \
         {write_time:?} on write",

@@ -69,6 +69,18 @@ as a total failure and must be retried in their entirety.
 
 Page files should be created via the [atomic API in the directory system](#atomic-file-creation).
 
+> [!CAUTION]
+> Please be aware that page files are concurrently written by _different_ writers and may as a result,
+> issue separate `fdatasync` requests _before_ other writes have completed.
+> 
+> This is not an issue as long as `O_DIRECT` does in fact, bypass the file system cache, however, we cannot
+> guarantee this even though we make sure all of our buffers are correctly aligned, etc... For this reason
+> it is best to assume we _might_ one day be in a situation where either via a bug or file system implementation,
+> we _may_ be hitting the file system cache and therefore should apply the same rules with `fsync` errors.
+> 
+> This means if an `fsync` error occurs during writes, _all_ inflight writes that have _not_ already been confirmed as 
+> durable via an `fdatasync` _must_ fail and assume that their write IO has not safely made it to durable storage. 
+
 #### Checkpoint file IO
 
 Checkpoints must be created via the [atomic API in the directory system](#atomic-file-creation), once
@@ -95,6 +107,12 @@ from being completed.
    - If the operation continues to fail, the process must abort. 
      - This is because we cannot ensure the memory state remains consistent with the disk state.
 
+**Notes on reusing WAL files:**
+
+- Before a WAL file can be reused, it must first be set back marked as atomic again and go through the same 
+  initialisation steps as when it was created. This is to prevent crashes mid re-init of existing files causing
+  corruption and preventing the system from starting (even if we do not lose data, because the system has no way
+  of knowing that itself.)
 
 ### Atomic file creation
 
@@ -106,7 +124,6 @@ We create "atomic" files by following the given set of steps:
 - *Allow downstream system to initialise the file with content*.
 - `fdatasync` file
 - `rename` file, removing the `.atomic` suffix.
-- `fsync` file
 - `fsync` parent directory.
 
 ### Data layout
