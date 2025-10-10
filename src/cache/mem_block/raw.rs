@@ -161,21 +161,6 @@ impl RawMutPagePtr {
         unsafe { std::slice::from_raw_parts_mut(self.span.ptr as *mut _, self.span.len) }
     }
 
-    /// Join two contiguous pages writes together.
-    ///
-    /// `self` becomes a new single mutable slice spanning multiple pages.
-    ///
-    /// # Safety
-    ///
-    /// The two pointers must belong to the same block of virtual memory.
-    pub(super) unsafe fn unsplit(&mut self, other: Self) -> Result<(), Self> {
-        unsafe {
-            self.span
-                .unsplit(other.span)
-                .map_err(|inner| Self { span: inner })
-        }
-    }
-
     /// Returns the number of pages this pointer spans.
     pub(super) fn pages_spanned(&self) -> usize {
         self.span.pages_spanned()
@@ -218,21 +203,6 @@ impl RawPagePtr {
         unsafe { std::slice::from_raw_parts(self.span.ptr, self.span.len) }
     }
 
-    /// Join two contiguous pages reads together.
-    ///
-    /// `self` becomes a new single slice spanning multiple pages.
-    ///
-    /// # Safety
-    ///
-    /// The two pointers must belong to the same block of virtual memory.
-    pub(super) unsafe fn unsplit(&mut self, other: Self) -> Result<(), Self> {
-        unsafe {
-            self.span
-                .unsplit(other.span)
-                .map_err(|inner| Self { span: inner })
-        }
-    }
-
     /// Returns the number of pages this pointer spans.
     pub(super) fn pages_spanned(&self) -> usize {
         self.span.pages_spanned()
@@ -247,27 +217,6 @@ struct SpanningPagePtr<T> {
 }
 
 impl<T> SpanningPagePtr<T> {
-    /// # Safety
-    ///
-    /// The two pointers must belong to the same block of virtual memory.
-    unsafe fn unsplit(&mut self, other: Self) -> Result<(), Self> {
-        let slf_page_end = unsafe { self.ptr.add(self.len) };
-        let other_page_end = unsafe { other.ptr.add(other.len) };
-
-        if slf_page_end == other.ptr {
-            // `self` is the head of the slice.
-            self.len += other.len;
-            Ok(())
-        } else if other_page_end == self.ptr {
-            // `self` is the tail of the slice.
-            self.ptr = other.ptr;
-            self.len += other.len;
-            Ok(())
-        } else {
-            Err(other)
-        }
-    }
-
     fn pages_spanned(&self) -> usize {
         self.len / self.page_size as usize
     }
@@ -276,7 +225,6 @@ impl<T> SpanningPagePtr<T> {
 struct VirtualMemory {
     mem: memmap2::MmapMut,
     collapsable: bool,
-    huge: bool,
 }
 
 impl VirtualMemory {
@@ -288,29 +236,19 @@ impl VirtualMemory {
             return Ok(Self {
                 mem,
                 collapsable: false,
-                huge: true,
             });
         }
 
         let collapsable = Advice::Collapse.is_supported();
         if let Ok(mem) = try_open_huge(num_pages, page_size) {
-            return Ok(Self {
-                mem,
-                collapsable,
-                huge: true,
-            });
+            return Ok(Self { mem, collapsable });
         }
 
         let mem = try_open_std(num_pages, page_size)?;
-        Ok(Self {
-            mem,
-            collapsable,
-            huge: false,
-        })
+        Ok(Self { mem, collapsable })
     }
 
     fn collapse(&self) -> io::Result<()> {
-        // TODO: If `huge: true`, can this even collapse say 32KB HP into 64KB HP?
         if self.collapsable {
             self.mem.advise(Advice::Collapse)
         } else {
@@ -500,31 +438,5 @@ mod tests {
                 "memory should be zeroed"
             );
         }
-    }
-
-    #[test]
-    fn test_ptr_unsplit() {
-        let pages = RawVirtualMemoryPages::allocate(4, PageSize::Std8KB)
-            .expect("virtual memory pages should be created");
-
-        let mut ptr1 = pages.get_mut_page(0);
-        let ptr2 = pages.get_mut_page(1);
-        assert!(unsafe { ptr1.unsplit(ptr2).is_ok() });
-        assert_eq!(ptr1.pages_spanned(), 2);
-
-        let mut ptr1 = pages.get_mut_page(0);
-        let ptr2 = pages.get_mut_page(2);
-        assert!(unsafe { ptr1.unsplit(ptr2).is_err() });
-        assert_eq!(ptr1.pages_spanned(), 1);
-
-        let mut ptr1 = pages.read_pages(0..1);
-        let ptr2 = pages.read_pages(1..2);
-        assert!(unsafe { ptr1.unsplit(ptr2).is_ok() });
-        assert_eq!(ptr1.pages_spanned(), 2);
-
-        let mut ptr1 = pages.read_pages(0..1);
-        let ptr2 = pages.read_pages(2..3);
-        assert!(unsafe { ptr1.unsplit(ptr2).is_err() });
-        assert_eq!(ptr1.pages_spanned(), 1);
     }
 }

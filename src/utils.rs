@@ -1,53 +1,8 @@
-use std::path::Path;
+use std::mem;
 use std::sync::Arc;
-use std::{io, mem};
 
 use crate::buffer::ALLOC_PAGE_SIZE;
 use crate::page_data::DISK_PAGE_SIZE;
-
-/// Adds an `expect_or_abort()` unwrap method to results and options.
-///
-/// This will abort the process when in release mode or otherwise panic like normal when testing.
-///
-/// This is primarily used to ensure correctness in the state where an error in production
-/// should be treated as a fatal error (but still want to be tested in debug mode.)
-pub(crate) trait AbortingExpect {
-    /// The resulting output from the unwrap.
-    type Output;
-
-    /// Unwrap the inner value or abort.
-    ///
-    /// This is primarily used to ensure correctness in the state where an error in production
-    /// should be treated as a fatal error (but still want to be tested in debug mode.)
-    fn expect_or_abort(self, msg: &str) -> Self::Output;
-}
-
-impl<T, E> AbortingExpect for Result<T, E>
-where
-    E: std::fmt::Debug,
-{
-    type Output = T;
-
-    #[inline]
-    fn expect_or_abort(self, msg: &str) -> Self::Output {
-        match self {
-            Ok(inner) => inner,
-            Err(err) => abort_system(msg, Some(&err)),
-        }
-    }
-}
-
-impl<T> AbortingExpect for Option<T> {
-    type Output = T;
-
-    #[inline]
-    fn expect_or_abort(self, msg: &str) -> Self::Output {
-        match self {
-            Some(inner) => inner,
-            None => abort_system(msg, Some(&"null value was encountered")),
-        }
-    }
-}
 
 #[macro_export]
 /// Assert a given condition is `true` otherwise, abort.
@@ -141,49 +96,21 @@ pub(super) fn align_down(value: usize, align: usize) -> usize {
     (value / align) * align
 }
 
-pub(super) fn create_file(
-    path: &Path,
-    allow_existing: bool,
-) -> io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    options.read(true);
-
-    if allow_existing {
-        options.create(true);
-    } else {
-        options.create_new(true);
-    }
-
-    let file = options.open(path)?;
-
-    #[cfg(unix)]
-    {
-        let parent = path.parent().unwrap();
-        std::fs::OpenOptions::new()
-            .read(true)
-            .open(parent)?
-            .sync_all()?;
-    }
-
-    Ok(file)
-}
-
 #[cfg(test)]
-pub(crate) fn parse_io_error_return<T>(value: Option<String>) -> Result<T, io::Error> {
+pub(crate) fn parse_io_error_return<T>(
+    value: Option<String>,
+) -> Result<T, std::io::Error> {
     let Some(value) = value else {
-        return Err(io::Error::other("standard fail point error"));
+        return Err(std::io::Error::other("standard fail point error"));
     };
     let error_code = value
         .parse::<i32>()
         .expect("invalid io error code provided");
-    Err(io::Error::from_raw_os_error(-error_code))
+    Err(std::io::Error::from_raw_os_error(-error_code))
 }
 
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests {
-    use std::io::ErrorKind;
-
     use super::*;
 
     #[test]
@@ -220,19 +147,5 @@ mod tests {
     fn test_single_or_shared_none_variant_panics() {
         let mut single: SingleOrShared<()> = SingleOrShared::None;
         single.share();
-    }
-
-    #[test]
-    fn test_create_file_helper() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let fp = dir.path().join("test1");
-        create_file(&fp, true).expect("create file that doesn't exist should work");
-
-        let error = create_file(&fp, false)
-            .expect_err("allow existing should prevent file being created");
-        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
-
-        create_file(&fp, true).expect("file should be over written");
     }
 }

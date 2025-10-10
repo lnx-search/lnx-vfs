@@ -173,9 +173,9 @@ impl LogFileWriter {
         self.sealed
     }
 
-    #[inline]
+    #[cfg(test)]
     /// Returns the sequence ID the writer is sitting at.
-    pub fn current_sequence_id(&self) -> u32 {
+    pub(crate) fn current_sequence_id(&self) -> u32 {
         self.next_sequence_id - 1
     }
 

@@ -34,6 +34,7 @@ impl PageFileAllocator {
         self.page_files.read().len()
     }
 
+    #[cfg(test)]
     /// Returns the amount of capacity the allocator has in pages across
     /// all page files.
     pub(super) fn capacity(&self) -> usize {
@@ -45,6 +46,7 @@ impl PageFileAllocator {
         total
     }
 
+    #[cfg(test)] // TODO: Do we ever want to remove page files? Probably not?
     /// Remove an existing page file from the page file allocator if it exists.
     pub(super) fn remove_page_file(&self, id: PageFileId) {
         let mut lock = self.page_files.write();

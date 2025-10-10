@@ -73,6 +73,7 @@ impl CacheLayer {
         }
     }
 
+    #[allow(unused)] // TODO: This is a useful method we may need at some point.
     #[tracing::instrument("cache::dirty_page_range", skip(self))]
     /// Dirty all pages in the cache for the given file.
     ///

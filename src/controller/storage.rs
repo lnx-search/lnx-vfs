@@ -301,11 +301,6 @@ impl Deref for ReadRef {
     }
 }
 
-struct VolatileMetadataState {
-    metadata_controller: MetadataController,
-    wal_controller: WalController,
-}
-
 /// Removes all WAL files currently in the directory.
 async fn remove_all_wal_files(ctx: &ctx::Context) -> io::Result<()> {
     let directory = ctx.directory();

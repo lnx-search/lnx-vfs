@@ -1,9 +1,8 @@
 use std::io;
 
 use crate::directory::FileGroup;
-use crate::layout::log::{FreeOp, LogOp, WriteOp};
-use crate::layout::page_metadata::PageMetadata;
-use crate::layout::{PageFileId, PageGroupId, PageId, file_metadata, log};
+use crate::layout::log::{FreeOp, LogOp};
+use crate::layout::{PageGroupId, file_metadata, log};
 use crate::page_op_log::reader::LogFileReader;
 use crate::page_op_log::{MetadataHeader, op_log_associated_data};
 use crate::{ctx, file};
@@ -179,44 +178,4 @@ async fn setup_file_with_header(
     file.write_buffer(&mut header_buffer, 0)
         .await
         .expect("Failed to write header");
-}
-
-fn fill_buffer_with_blocks(
-    ctx: &ctx::Context,
-    file: &file::RWFile,
-    buffer: &mut Vec<u8>,
-    num_blocks: usize,
-) {
-    let mut offset = 0;
-    for page_id in 0..num_blocks {
-        let sequence_id = page_id as u32;
-        let transaction_id = sequence_id as u64;
-        let associated_data = op_log_associated_data(file.id(), 1, sequence_id, offset);
-
-        let ops = vec![LogOp::Write(WriteOp {
-            page_file_id: PageFileId(0),
-            page_group_id: PageGroupId(1),
-            altered_pages: vec![PageMetadata {
-                group: PageGroupId(1),
-                revision: 0,
-                next_page_id: PageId::TERMINATOR,
-                id: PageId(page_id as u32),
-                data_len: 0,
-                context: [1; 40],
-            }],
-        })];
-
-        let mut tmp_buffer = Vec::new();
-        log::encode_log_block(
-            ctx.cipher(),
-            &associated_data,
-            transaction_id,
-            &ops,
-            &mut tmp_buffer,
-        )
-        .expect("encode header");
-
-        buffer.extend_from_slice(&tmp_buffer);
-        offset += tmp_buffer.len() as u64;
-    }
 }

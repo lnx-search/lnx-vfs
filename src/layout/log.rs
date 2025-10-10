@@ -15,7 +15,6 @@ use crate::utils;
 pub const HEADER_SIZE: usize =
     size_of::<u64>() + size_of::<u64>() + size_of::<[u8; 40]>();
 const BUFFER_ALIGN: usize = align_of::<Vec<LogOp>>();
-const DISK_ALIGN: usize = 512;
 
 /// Try to decode a set of transaction operations from the provided buffer.
 ///
