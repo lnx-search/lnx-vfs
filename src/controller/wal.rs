@@ -271,7 +271,7 @@ impl WalController {
     pub async fn prepare_checkpoint(&self) -> Result<u64, WalError> {
         let mut writer = self.active_writer.lock().await;
         let old_writer_op_stamp = self.op_stamp();
-        let new_writer = self.rotate_writer().await?;
+        let new_writer = self.get_new_writer().await?;
         let old_writer = mem::replace(&mut *writer, new_writer);
         self.add_writer_to_checkpoint_pending(old_writer, old_writer_op_stamp);
         Ok(old_writer_op_stamp)
@@ -300,7 +300,7 @@ impl WalController {
                 "max size reached for WAL or has become sealed, rotating WAL file",
             );
             let current_op_stamp = self.op_stamp();
-            let new_writer = self.rotate_writer().await?;
+            let new_writer = self.get_new_writer().await?;
             let old_writer = mem::replace(&mut *writer, new_writer);
             self.add_writer_to_checkpoint_pending(old_writer, current_op_stamp);
         }
@@ -314,15 +314,21 @@ impl WalController {
             self.config.max_wal_file_pool_size - num_free_writers
         };
 
+        let file_id = file.id();
+        let directory = self.ctx.directory();
         if num_to_repopulate > 0 {
+            // Used to ensure WAL files can never be in a broken state unless some external
+            // factor has corrupted the file.
+            directory.make_file_atomic(FileGroup::Wal, file_id).await?;
             let writer =
                 page_op_log::LogFileWriter::create(self.ctx.clone(), file).await?;
+            directory
+                .persist_atomic_file(FileGroup::Wal, file_id)
+                .await?;
             let mut free_writers = self.free_writers.lock();
             free_writers.push_back(writer);
         } else {
-            let file_id = file.id();
             drop(file);
-            let directory = self.ctx.directory();
             directory.remove_file(FileGroup::Wal, file_id).await?;
         }
 
@@ -357,7 +363,7 @@ impl WalController {
     }
 
     /// Gets a free WAL writer or creates a new log file & writer.
-    async fn rotate_writer(&self) -> Result<page_op_log::LogFileWriter, WalError> {
+    async fn get_new_writer(&self) -> Result<page_op_log::LogFileWriter, WalError> {
         let op_stamp = self.next_op_stamp();
         tracing::info!(assigned_op_stamp = op_stamp, "rotating WAL file");
 

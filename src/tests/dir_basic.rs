@@ -345,3 +345,31 @@ async fn test_directory_fmt_debug(tempdir: tempfile::TempDir) {
         format!("SystemDirectory(path={})", tempdir.path().display())
     );
 }
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_directory_make_file_atomic(tempdir: tempfile::TempDir) {
+    let directory = SystemDirectory::open(tempdir.path())
+        .await
+        .expect("directory should be created");
+
+    let path = tempdir.path().join(FileGroup::Wal.folder_name());
+
+    let file_id = directory.create_new_file(FileGroup::Wal).await.unwrap();
+    let files = super::list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.wal.lnx"]);
+
+    directory
+        .make_file_atomic(FileGroup::Wal, file_id)
+        .await
+        .unwrap();
+    let files = super::list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.wal.lnx.atomic"]);
+
+    directory
+        .persist_atomic_file(FileGroup::Wal, file_id)
+        .await
+        .unwrap();
+    let files = super::list_files(&path).unwrap();
+    assert_eq!(files, &["0000001000-1000.wal.lnx"]);
+}

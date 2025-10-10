@@ -155,6 +155,22 @@ impl SystemDirectoryInner {
         Ok(FileId(file_id))
     }
 
+    /// Make an existing file in the target group gain the additional behaviour
+    /// that it will be automatically removed and not persisted unless
+    /// [Self::persist_atomic_file] is called.
+    ///
+    /// NOTE: This does not prevent the file from being retrieved via the normal
+    /// `get_*` APIs while the file is still being used.
+    pub async fn make_file_atomic(
+        &self,
+        group: FileGroup,
+        file_id: FileId,
+    ) -> io::Result<()> {
+        let mut directory = self.groups[group.idx()].write().await;
+        directory.make_file_atomic(file_id.0).await?;
+        Ok(())
+    }
+
     /// Persist an atomic file ensuring that it will not be removed by the system automatically
     /// on recovery.
     ///
@@ -338,6 +354,22 @@ impl FileGroupDirectory {
         }
 
         Ok(assigned_id)
+    }
+
+    /// Make an existing file an atomic file.
+    async fn make_file_atomic(&mut self, file_id: u32) -> io::Result<()> {
+        if self.atomic_files.contains(&file_id) {
+            self.directory_file.sync().await?;
+            return Ok(());
+        }
+
+        let old_file_path = self.file_path(file_id, false);
+        let new_file_path = self.file_path(file_id, true);
+
+        rename_file(&old_file_path, &new_file_path).await?;
+        self.atomic_files.insert(file_id);
+
+        Ok(())
     }
 
     pub(self) async fn create_new_file_inner(
