@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use lnx_vfs::config::{CacheConfig, PageFileConfig, WalConfig};
 use lnx_vfs::{ContextBuilder, VirtualFileSystem};
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
