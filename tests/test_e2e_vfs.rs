@@ -3,7 +3,7 @@ use lnx_vfs::{ContextBuilder, VirtualFileSystem, config};
 
 #[rstest::rstest]
 #[tokio::test]
-async fn test_e2e_run_vfs(
+async fn test_e2e_run_vfs_read_write(
     #[values(false, true)] encryption: bool,
     #[values(0, 128 << 10, 30 << 20)] io_memory: usize,
 ) -> anyhow::Result<()> {
