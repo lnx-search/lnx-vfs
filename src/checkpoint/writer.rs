@@ -76,6 +76,7 @@ pub async fn write_checkpoint(
         &mut buffer[..file_metadata::HEADER_SIZE],
     )?;
 
+    file.allocate(0, buffer.len() as u64).await?;
     file.write_buffer(&mut buffer, 0).await?;
     file.sync(FSyncMode::Data).await?;
 
