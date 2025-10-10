@@ -19,7 +19,10 @@ fn test_decode_encryption_keys_wrong_password() {
 
     let err = decode_encryption_keys("example2", &buffer)
         .expect_err("decode keys should fail failed");
-    assert_eq!(err.to_string(), "failed to decrypt data");
+    assert_eq!(
+        err.to_string(),
+        "decryption error, is the password correct?"
+    );
 }
 
 #[test]
@@ -34,7 +37,10 @@ fn test_rencode_encryption_keys() {
 
     let err = decode_encryption_keys("example1", &buffer)
         .expect_err("decode keys should fail failed");
-    assert_eq!(err.to_string(), "failed to decrypt data");
+    assert_eq!(
+        err.to_string(),
+        "decryption error, is the password correct?"
+    );
 
     let keys2 = decode_encryption_keys("example2", &buffer).expect("decode keys failed");
     assert_eq!(keys1.authentication_key, keys2.authentication_key);

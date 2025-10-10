@@ -17,7 +17,7 @@ pub enum DecodeKeysError {
     #[error(transparent)]
     /// A failure to deserialize the key struct data to bytes.
     Deserialize(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
+    #[error("decryption error, is the password correct?")]
     /// The serialized buffer was unable to be decrypted.
     DecryptionFailed(#[from] encrypt::DecryptError),
 }

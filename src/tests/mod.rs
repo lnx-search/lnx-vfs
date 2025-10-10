@@ -5,6 +5,7 @@ mod allocator_alloc_behaviour;
 mod cache_layer;
 mod dir_basic;
 mod dir_fault_injection;
+mod encryption_file;
 mod encryption_key;
 mod file_basic;
 mod file_fault_injection;
