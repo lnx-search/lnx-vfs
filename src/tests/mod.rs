@@ -3,6 +3,7 @@ use std::path::Path;
 
 mod allocator_alloc_behaviour;
 mod cache_layer;
+mod ctx;
 mod dir_basic;
 mod dir_fault_injection;
 mod encryption_file;

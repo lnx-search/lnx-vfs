@@ -109,6 +109,12 @@ pub struct Context {
     tmp_dir: std::sync::Arc<tempfile::TempDir>,
 }
 
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Context(encryption={:?})", self.get_encryption_status())
+    }
+}
+
 impl Context {
     #[cfg(test)]
     /// Create a new file context for testing.
@@ -259,6 +265,12 @@ impl Context {
 mod tests {
     use super::*;
     use crate::buffer::{ALLOC_PAGE_SIZE, BufferKind};
+
+    #[tokio::test]
+    async fn test_encryption_debug_fmt() {
+        let ctx = Context::for_test(false).await;
+        assert_eq!(format!("{ctx:?}"), "Context(encryption=Disabled)");
+    }
 
     #[tokio::test]
     async fn test_encryption_status() {
