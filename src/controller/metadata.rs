@@ -315,7 +315,8 @@ impl MetadataController {
     /// checkpoint then a new checkpoint file is not created.
     pub async fn checkpoint(&self) -> Result<usize, WriteCheckpointError> {
         let mut num_checkpointed_files = 0;
-        for (page_file_id, page_table) in self.page_tables.pin().iter() {
+        let tables = self.page_tables.pin_owned();
+        for (page_file_id, page_table) in tables.iter() {
             if !page_table.has_changed() {
                 continue;
             }

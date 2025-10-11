@@ -427,6 +427,8 @@ async fn test_storage_read(
         .await
         .expect("read page group");
     assert_eq!(read_ref.as_ref(), expected_buffer);
+    let dbg_view = format!("{read_ref:?}");
+    assert!(dbg_view.starts_with("ReadRef("));
 }
 
 async fn write_group(controller: &StorageController, group: PageGroupId, size: u64) {

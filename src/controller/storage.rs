@@ -1,7 +1,8 @@
-use std::io;
+use std::{future, io, mem};
 use std::ops::{Deref, Range};
 use std::sync::Arc;
-
+use std::time::Duration;
+use parking_lot::Mutex;
 use super::group_lock::GroupLocks;
 use super::metadata::{MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
@@ -18,6 +19,8 @@ use crate::page_data::{
     ReadPageError,
 };
 use crate::{cache, ctx};
+
+const DEFAULT_WAL_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, thiserror::Error)]
 /// An error preventing the [StorageController] from
@@ -42,13 +45,32 @@ pub enum OpenStorageControllerError {
     PageFileCreate(#[from] CreatePageFileError),
 }
 
+#[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
+/// Configuration options for the storage controller.
+pub struct StorageConfig {
+    /// The time that should elapse between WAL checkpoints.
+    ///
+    /// If this is `None` the checkpointing is disabled.
+    pub wal_checkpoint_interval: Option<Duration>,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            wal_checkpoint_interval: Some(DEFAULT_WAL_CHECKPOINT_INTERVAL),
+        }
+    }
+}
+
 /// The [StorageController] manages persisting updates to pages of data.
 pub struct StorageController {
+    config: StorageConfig,
     metadata_controller: MetadataController,
     wal_controller: WalController,
     page_file_controller: PageFileController,
     cache_controller: CacheController,
     group_locks: GroupLocks,
+    active_checkpoint_task: Mutex<tokio::task::JoinHandle<()>>,
 }
 
 impl StorageController {
@@ -58,7 +80,9 @@ impl StorageController {
     /// storage directory and checkpoint any WAL files before returning.
     pub async fn open(
         ctx: Arc<ctx::Context>,
-    ) -> Result<Self, OpenStorageControllerError> {
+    ) -> Result<Arc<Self>, OpenStorageControllerError> {
+        let config: StorageConfig = ctx.config_opt().unwrap_or_default();
+
         let metadata_controller = MetadataController::open(ctx.clone()).await?;
 
         // Checkpoint the controller so we can clean up any existing WAL files.
@@ -75,13 +99,55 @@ impl StorageController {
             PageFileController::open(ctx.clone(), &metadata_controller).await?;
         let cache_controller = CacheController::new(&ctx);
 
-        Ok(Self {
+        let slf = Arc::new(Self {
+            config,
             metadata_controller,
             wal_controller,
             page_file_controller,
             cache_controller,
             group_locks: GroupLocks::default(),
-        })
+            active_checkpoint_task: Mutex::new(tokio::spawn(future::ready(()))),
+        });
+        slf.check_checkpoint_task().await;
+        Ok(slf)
+    }
+
+    // Clippy is wrong, we drop the guard explicitly before the await.
+    #[allow(clippy::await_holding_lock)]
+    async fn check_checkpoint_task(self: &Arc<Self>)  {
+        let checkpoint_interval = match self.config.wal_checkpoint_interval {
+            None => return,
+            Some(interval) => interval,
+        };
+
+        let Some(mut guard) = self.active_checkpoint_task.try_lock() else { return };
+        if !guard.is_finished() {
+            return;
+        }
+
+        let this = self.clone();
+        let new_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(checkpoint_interval).await;
+                if let Err(err) = this.checkpoint().await {
+                    tracing::error!(error = %err, "failed to run checkpointing job");
+                }
+            }
+        });
+
+        let task = mem::replace(&mut *guard, new_task);
+        drop(guard);
+
+        if let Err(err) = task.await {
+            tracing::error!(error = %err, "checkpoint task panicked");
+        }
+    }
+
+    async fn checkpoint(&self) -> Result<(), CheckpointError> {
+        let op_stamp = self.wal_controller.prepare_checkpoint().await?;
+        self.metadata_controller.checkpoint().await?;
+        self.wal_controller.recycle_writers(op_stamp).await?;
+        Ok(())
     }
 
     #[inline]
@@ -311,6 +377,16 @@ impl Deref for ReadRef {
     fn deref(&self) -> &Self::Target {
         &self.inner[self.offset..][..self.len]
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum CheckpointError {
+    #[error("failed to checkpoint metadata: {0}")]
+    CheckpointMetadata(#[from] WriteCheckpointError),
+    #[error("failed to prepare WAL for checkpointing: {0}")]
+    PrepareCheckpoint(#[from] WalError),
+    #[error("failed to recycle WAL files: {0}")]
+    RecycleWalFiles(#[from] io::Error),
 }
 
 /// Removes all WAL files currently in the directory.
