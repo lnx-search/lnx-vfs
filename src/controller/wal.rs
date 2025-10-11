@@ -32,7 +32,7 @@ impl Default for WalConfig {
     fn default() -> Self {
         Self {
             max_wal_file_pool_size: 5,
-            soft_max_wal_size: 2 << 30,
+            soft_max_wal_size: 1 << 30,
             preallocate_file: false,
         }
     }
