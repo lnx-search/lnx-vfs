@@ -34,14 +34,10 @@ impl sealed::Sealed for RW {}
 
 /// Directory mode.
 pub struct Dir;
-impl DirMode for Dir {}
 impl sealed::Sealed for Dir {}
 
 /// The file mode.
 pub trait FileMode: sealed::Sealed {}
-
-/// The directory mode.
-pub trait DirMode: sealed::Sealed {}
 
 /// An open file backed by the i2o2 scheduler.
 pub struct File<M> {
