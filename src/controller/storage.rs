@@ -329,13 +329,8 @@ impl StorageController {
             match op {
                 LogOp::Write(op) => {
                     self.cache_controller.remove_layer(op.page_group_id);
-                    if !self
-                        .metadata_controller
-                        .contains_page_table(op.page_file_id)
-                    {
-                        self.metadata_controller
-                            .create_blank_page_table(op.page_file_id);
-                    }
+                    self.metadata_controller
+                        .create_blank_page_table_if_not_exists(op.page_file_id);
                     self.metadata_controller.assign_pages_to_group(
                         op.page_file_id,
                         op.page_group_id,

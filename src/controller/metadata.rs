@@ -109,6 +109,12 @@ impl MetadataController {
         self.insert_page_table(page_file_id, PageTable::default())
     }
 
+    /// Creates a new blank page table if it does not already exist.
+    pub fn create_blank_page_table_if_not_exists(&self, page_file_id: PageFileId) {
+        let tables = self.page_tables.pin();
+        tables.get_or_insert_with(page_file_id, PageTable::default);
+    }
+
     /// Returns whether a given page file & its page table
     /// exists within the controller.
     pub fn contains_page_table(&self, page_file_id: PageFileId) -> bool {
