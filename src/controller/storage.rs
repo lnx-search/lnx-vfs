@@ -1,9 +1,10 @@
 use std::ops::{Deref, Range};
 use std::sync::Arc;
 use std::time::Duration;
-use std::{future, io, mem};
+use std::{io, mem};
 
 use parking_lot::Mutex;
+use tokio::sync::oneshot;
 
 use super::group_lock::GroupLocks;
 use super::metadata::{MetadataController, OpenMetadataControllerError};
@@ -72,7 +73,7 @@ pub struct StorageController {
     page_file_controller: PageFileController,
     cache_controller: CacheController,
     group_locks: GroupLocks,
-    active_checkpoint_task: Mutex<tokio::task::JoinHandle<()>>,
+    active_checkpoint_task: Mutex<CheckpointTask>,
 }
 
 impl StorageController {
@@ -101,6 +102,7 @@ impl StorageController {
             PageFileController::open(ctx.clone(), &metadata_controller).await?;
         let cache_controller = CacheController::new(&ctx);
 
+        let (kill_switch, _) = oneshot::channel();
         let slf = Arc::new(Self {
             config,
             metadata_controller,
@@ -108,7 +110,10 @@ impl StorageController {
             page_file_controller,
             cache_controller,
             group_locks: GroupLocks::default(),
-            active_checkpoint_task: Mutex::new(tokio::spawn(future::ready(()))),
+            active_checkpoint_task: Mutex::new(CheckpointTask {
+                handle: tokio::spawn(async move {}),
+                _kill_switch: kill_switch,
+            }),
         });
         slf.check_checkpoint_task().await;
         Ok(slf)
@@ -125,24 +130,35 @@ impl StorageController {
         let Some(mut guard) = self.active_checkpoint_task.try_lock() else {
             return;
         };
-        if !guard.is_finished() {
+        if !guard.handle.is_finished() {
             return;
         }
 
         let this = self.clone();
-        let new_task = tokio::spawn(async move {
+        let (tx, rx) = oneshot::channel();
+        let new_handle = tokio::spawn(async move {
+            tokio::pin!(rx);
             loop {
-                tokio::time::sleep(checkpoint_interval).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(checkpoint_interval) => {},
+                    _ = &mut rx => return,
+                }
+
                 if let Err(err) = this.checkpoint().await {
                     tracing::error!(error = %err, "failed to run checkpointing job");
                 }
             }
         });
 
+        let new_task = CheckpointTask {
+            handle: new_handle,
+            _kill_switch: tx,
+        };
+
         let task = mem::replace(&mut *guard, new_task);
         drop(guard);
 
-        if let Err(err) = task.await {
+        if let Err(err) = task.handle.await {
             tracing::error!(error = %err, "checkpoint task panicked");
         }
     }
@@ -354,6 +370,11 @@ impl StorageController {
 
         Ok(())
     }
+}
+
+struct CheckpointTask {
+    handle: tokio::task::JoinHandle<()>,
+    _kill_switch: oneshot::Sender<()>,
 }
 
 #[derive(Clone)]
