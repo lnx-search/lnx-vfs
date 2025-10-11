@@ -103,11 +103,6 @@ impl<'block> PreparedRead<'block> {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("outstanding operations prevent read completion")]
-/// The read cannot be finished because one of the prerequisites has not been met.
-pub struct OutstandingWrites;
-
 /// A read reference to a span of pages.
 ///
 /// This is an owned reference because it contains a guard that prevents
