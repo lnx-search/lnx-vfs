@@ -55,7 +55,7 @@ pub struct EncryptionKeys {
     /// The encryption cipher key.
     pub encryption_cipher: encrypt::Cipher,
     /// The authentication key.
-    pub authentication_key: [u8; 32],
+    pub _authentication_key: [u8; 32],
 }
 
 impl std::fmt::Debug for EncryptionKeys {
@@ -76,7 +76,7 @@ pub fn decode_encryption_keys(
 
     Ok(EncryptionKeys {
         encryption_cipher: cipher,
-        authentication_key: key_data.authentication_key,
+        _authentication_key: key_data.authentication_key,
     })
 }
 

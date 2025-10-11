@@ -12,7 +12,7 @@ async fn test_generation_and_load_keys_file(tempdir: tempfile::TempDir) {
         .await
         .expect("generate new keys");
 
-    assert_eq!(keys1.authentication_key, keys2.authentication_key);
+    assert_eq!(keys1._authentication_key, keys2._authentication_key);
 }
 
 #[rstest::rstest]
@@ -38,5 +38,5 @@ async fn test_change_password_keys_file(tempdir: tempfile::TempDir) {
         .await
         .expect("generate new keys");
 
-    assert_eq!(keys1.authentication_key, keys2.authentication_key);
+    assert_eq!(keys1._authentication_key, keys2._authentication_key);
 }

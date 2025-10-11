@@ -2,7 +2,7 @@
 
 mod arena;
 mod buffer;
-mod cache;
+pub mod cache;
 mod checkpoint;
 pub mod coalesce;
 mod controller;
@@ -61,7 +61,7 @@ impl VirtualFileSystem {
     /// Open the virtual file system using the given [Context].
     pub async fn open(ctx: Context) -> Result<Self, OpenStorageControllerError> {
         let ctx = Arc::new(ctx);
-        let storage_controller = StorageController::open(ctx).await.map(Arc::new)?;
+        let storage_controller = StorageController::open(ctx).await?;
         Ok(Self { storage_controller })
     }
 

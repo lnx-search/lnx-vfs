@@ -74,7 +74,7 @@ impl GenerationTicketMachine {
     pub(super) fn increment_ticket_id(&self) -> u64 {
         let ticket_id = self.ticket_counter.fetch_add(1, Ordering::Relaxed);
 
-        if ticket_id % TICKETS_PER_GENERATION == 0 {
+        if ticket_id.is_multiple_of(TICKETS_PER_GENERATION) {
             self.advance_generation();
         }
 

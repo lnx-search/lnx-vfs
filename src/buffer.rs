@@ -12,6 +12,7 @@ const MIN_ALIGN: usize = 4096;
 /// The page size allocated in memory.
 pub const ALLOC_PAGE_SIZE: usize = 4096;
 
+#[cfg(test)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 /// The type of memory that backs the buffer.
 pub enum BufferKind {
@@ -73,11 +74,13 @@ impl DmaBuffer {
         }
     }
 
+    #[cfg(test)]
     /// Returns the capacity of the buffer.
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
+    #[cfg(test)]
     /// Returns the backing memory type of the buffer.
     pub fn kind(&self) -> BufferKind {
         match &self.inner {

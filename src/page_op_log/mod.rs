@@ -9,7 +9,7 @@ mod writer;
 
 use rand::RngCore;
 
-pub use self::reader::{LogDecodeError, LogFileReader, LogOpenReadError};
+pub use self::reader::{LogFileReader, LogOpenReadError};
 pub use self::writer::{LogFileWriter, LogOpenWriteError};
 use crate::directory::FileId;
 use crate::layout::file_metadata::Encryption;

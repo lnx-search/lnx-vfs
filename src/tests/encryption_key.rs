@@ -43,7 +43,7 @@ fn test_rencode_encryption_keys() {
     );
 
     let keys2 = decode_encryption_keys("example2", &buffer).expect("decode keys failed");
-    assert_eq!(keys1.authentication_key, keys2.authentication_key);
+    assert_eq!(keys1._authentication_key, keys2._authentication_key);
 }
 
 #[test]

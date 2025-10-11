@@ -212,7 +212,7 @@ impl VirtualMemoryBlock {
         let permit = self.issue_new_free_permit(permit.page);
 
         let state = self.state_at(permit.page);
-        state.mark_dirty(&guard, permit.ticket_id);
+        state.mark_dirty(guard, permit.ticket_id);
 
         Ok(permit)
     }

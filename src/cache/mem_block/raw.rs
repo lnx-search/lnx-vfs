@@ -38,13 +38,7 @@ pub enum PageSize {
 
 impl Debug for PageSize {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PageSize::Std8KB => write!(f, "8KB"),
-            PageSize::Std32KB => write!(f, "32KB"),
-            PageSize::Std64KB => write!(f, "64KB"),
-            PageSize::Std128KB => write!(f, "128KB"),
-            PageSize::Huge2MB => write!(f, "2MB"),
-        }
+        <Self as Display>::fmt(self, f)
     }
 }
 
@@ -82,6 +76,7 @@ impl RawVirtualMemoryPages {
         Ok(Self { memory, page_size })
     }
 
+    #[cfg(test)]
     /// Returns the number of pages this memory contains.
     pub(super) fn num_pages(&self) -> usize {
         self.memory.len() / self.page_size as usize
@@ -161,11 +156,13 @@ impl RawMutPagePtr {
         unsafe { std::slice::from_raw_parts_mut(self.span.ptr as *mut _, self.span.len) }
     }
 
+    #[cfg(test)]
     /// Returns the number of pages this pointer spans.
     pub(super) fn pages_spanned(&self) -> usize {
         self.span.pages_spanned()
     }
 
+    #[cfg(test)]
     /// Returns the length of the page in bytes.
     pub(super) fn len(&self) -> usize {
         self.span.len
@@ -279,6 +276,7 @@ impl VirtualMemory {
         }
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.mem.len()
     }

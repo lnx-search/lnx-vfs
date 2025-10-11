@@ -75,7 +75,7 @@ impl<T> SingleOrShared<T> {
 pub(crate) const fn disk_to_alloc_pages(disk_pages: usize) -> usize {
     const {
         assert!(
-            DISK_PAGE_SIZE % ALLOC_PAGE_SIZE == 0,
+            DISK_PAGE_SIZE.is_multiple_of(ALLOC_PAGE_SIZE),
             "disk page size must be a multiple of the alloc page size"
         );
         assert!(
@@ -84,8 +84,7 @@ pub(crate) const fn disk_to_alloc_pages(disk_pages: usize) -> usize {
         );
     };
     let total_size = disk_pages * DISK_PAGE_SIZE;
-    let num_alloc_pages = total_size / ALLOC_PAGE_SIZE;
-    num_alloc_pages
+    total_size / ALLOC_PAGE_SIZE
 }
 
 pub(super) fn align_up(value: usize, align: usize) -> usize {

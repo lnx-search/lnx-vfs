@@ -1,8 +1,10 @@
-use std::{future, io, mem};
 use std::ops::{Deref, Range};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{future, io, mem};
+
 use parking_lot::Mutex;
+
 use super::group_lock::GroupLocks;
 use super::metadata::{MetadataController, OpenMetadataControllerError};
 use super::wal::{WalController, WalError};
@@ -114,13 +116,15 @@ impl StorageController {
 
     // Clippy is wrong, we drop the guard explicitly before the await.
     #[allow(clippy::await_holding_lock)]
-    async fn check_checkpoint_task(self: &Arc<Self>)  {
+    async fn check_checkpoint_task(self: &Arc<Self>) {
         let checkpoint_interval = match self.config.wal_checkpoint_interval {
             None => return,
             Some(interval) => interval,
         };
 
-        let Some(mut guard) = self.active_checkpoint_task.try_lock() else { return };
+        let Some(mut guard) = self.active_checkpoint_task.try_lock() else {
+            return;
+        };
         if !guard.is_finished() {
             return;
         }

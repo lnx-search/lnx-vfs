@@ -17,7 +17,6 @@ use super::utils::SingleOrShared;
 /// This arena can be cheaply cloned, it is guarded by a lock internally.
 pub struct ArenaAllocator {
     allocator: Arc<Mutex<Fragment>>,
-    size: usize,
 }
 
 impl ArenaAllocator {
@@ -36,7 +35,6 @@ impl ArenaAllocator {
 
         Self {
             allocator: Arc::new(Mutex::new(fragment)),
-            size: num_pages * ALLOC_PAGE_SIZE,
         }
     }
 
@@ -56,15 +54,17 @@ impl ArenaAllocator {
         })
     }
 
+    #[cfg(test)]
     /// Returns the pointer to the memory block the arena allocates on.
     pub fn mem_ptr(&self) -> *mut u8 {
         let mut lock = self.allocator.lock();
         lock.mem.as_mut_ptr()
     }
 
+    #[cfg(test)]
     /// Returns the total size of the memory block the arena allocates on.
     pub fn mem_size(&self) -> usize {
-        self.size
+        self.allocator.lock().mem.len()
     }
 }
 

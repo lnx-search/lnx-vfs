@@ -16,7 +16,7 @@ use crate::page_data::{
     MAX_SINGLE_IOP_NUM_PAGES,
     page_associated_data,
 };
-use crate::{ctx, file, utils};
+use crate::{ctx, file};
 
 const MAX_PAGE_FILE_SIZE: u64 = (MAX_NUM_PAGES * DISK_PAGE_SIZE) as u64;
 
@@ -76,21 +76,13 @@ pub enum ReadPageError {
     ShortRead,
 }
 
-#[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, Clone, Default, serde_derive::Serialize, serde_derive::Deserialize)]
 /// Configuration options for the page file.
 pub struct PageFileConfig {
     /// Whether the system should pre-allocate the entire file's disk capacity.
     ///
     /// Defaults to `false`.
     pub preallocate_file: bool,
-}
-
-impl Default for PageFileConfig {
-    fn default() -> Self {
-        Self {
-            preallocate_file: false,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -155,7 +147,7 @@ impl PageFile {
     ) -> Result<Self, CreatePageFileError> {
         #[cfg(test)]
         fail::fail_point!("page_file::create", |err| {
-            Err(utils::parse_io_error_return::<()>(err)
+            Err(crate::utils::parse_io_error_return::<()>(err)
                 .map_err(CreatePageFileError::IO)
                 .unwrap_err())
         });

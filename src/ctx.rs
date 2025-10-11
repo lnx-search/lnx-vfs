@@ -185,7 +185,7 @@ impl Context {
     pub(crate) fn alloc<const N: usize>(&self) -> buffer::DmaBuffer {
         const {
             assert!(
-                N % ALLOC_PAGE_SIZE == 0,
+                N.is_multiple_of(ALLOC_PAGE_SIZE),
                 "buffer size is not aligned to a 4kb size"
             )
         };

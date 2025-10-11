@@ -127,7 +127,7 @@ pub fn encode_log_block(
     encoder = writer.into_inner();
     buffer = encoder.finish().map_err(EncodeLogBlockError::Compression)?;
 
-    if buffer.len() % 512 != 0 {
+    if !buffer.len().is_multiple_of(512) {
         let aligned_len = utils::align_up(buffer.len(), 512);
         buffer.resize(aligned_len, 0);
     }

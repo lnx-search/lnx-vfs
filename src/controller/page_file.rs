@@ -142,13 +142,13 @@ impl PageFileController {
             ));
         }
 
-        if let Some(user_data) = user_data {
-            if user_data.len() != page_metadata.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "user data and page metadata slices are different lengths",
-                ));
-            }
+        if let Some(user_data) = user_data
+            && user_data.len() != page_metadata.len()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "user data and page metadata slices are different lengths",
+            ));
         }
 
         let iops = page_metadata.iter().map(|page| {
