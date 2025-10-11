@@ -147,7 +147,7 @@ impl StorageController {
         }
     }
 
-    async fn checkpoint(&self) -> Result<(), CheckpointError> {
+    pub(super) async fn checkpoint(&self) -> Result<(), CheckpointError> {
         let op_stamp = self.wal_controller.prepare_checkpoint().await?;
         self.metadata_controller.checkpoint().await?;
         self.wal_controller.recycle_writers(op_stamp).await?;
@@ -288,12 +288,13 @@ impl StorageController {
     }
 
     /// Creates a new writer for a given length buffer.
-    pub fn create_writer(
-        &self,
+    pub async fn create_writer(
+        self: &Arc<Self>,
         len: u64,
-    ) -> impl Future<Output = Result<PageDataWriter<'_>, CreatePageFileError>> + '_ {
+    ) -> Result<PageDataWriter<'_>, CreatePageFileError> {
         assert!(len > 0, "length must be greater than zero");
-        self.page_file_controller.create_writer(len)
+        self.check_checkpoint_task().await;
+        self.page_file_controller.create_writer(len).await
     }
 
     #[inline]
@@ -384,7 +385,7 @@ impl Deref for ReadRef {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum CheckpointError {
+pub(super) enum CheckpointError {
     #[error("failed to checkpoint metadata: {0}")]
     CheckpointMetadata(#[from] WriteCheckpointError),
     #[error("failed to prepare WAL for checkpointing: {0}")]

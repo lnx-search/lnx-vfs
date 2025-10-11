@@ -102,4 +102,10 @@ impl VirtualFileSystem {
         self.storage_controller
             .read_group(PageGroupId(file_id), start, end)
     }
+
+    /// Returns if the file system contains the given file ID.
+    pub fn exists(&self, file_id: u64) -> bool {
+        self.storage_controller
+            .contains_page_group(PageGroupId(file_id))
+    }
 }

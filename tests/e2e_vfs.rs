@@ -31,6 +31,7 @@ async fn test_e2e_run_vfs_read_write(
     txn.add_writer(1, writer).await.context("add writer")?;
     txn.commit().await.context("commit writer")?;
 
+    assert!(vfs.exists(1));
     let result = vfs.read_file(1, 0..).await.context("read all")?;
     assert_eq!(result.as_ref(), b"Hello, world!");
 

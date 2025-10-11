@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use crate::controller::cache::CacheConfig;
-use crate::controller::storage::StorageController;
+use crate::controller::storage::{StorageConfig, StorageController};
 use crate::controller::wal::WalConfig;
 use crate::ctx;
 use crate::directory::FileGroup;
@@ -402,6 +404,7 @@ async fn test_storage_read(
     #[case] read_len: usize,
 ) {
     let ctx = ctx::Context::for_test(false).await;
+    ctx.set_config(StorageConfig::default());
     ctx.set_config(WalConfig::default());
     ctx.set_config(cache_config(cache_capacity));
     let controller = StorageController::open(ctx.clone())
@@ -431,7 +434,37 @@ async fn test_storage_read(
     assert!(dbg_view.starts_with("ReadRef("));
 }
 
-async fn write_group(controller: &StorageController, group: PageGroupId, size: u64) {
+#[tokio::test]
+async fn test_storage_checkpoint() {
+    let ctx = ctx::Context::for_test(false).await;
+    ctx.set_config(StorageConfig::default());
+    ctx.set_config(WalConfig::default());
+    ctx.set_config(cache_config(0));
+    let controller = StorageController::open(ctx.clone())
+        .await
+        .expect("controller should open");
+
+    write_group(&controller, PageGroupId(0), 128 << 10).await;
+
+    controller
+        .checkpoint()
+        .await
+        .expect("checkpoint should trigger metadata and wal file");
+
+    let directory = ctx.directory();
+
+    let file_ids = directory.list_dir(FileGroup::Wal).await;
+    assert_eq!(file_ids.len(), 2);
+
+    let file_ids = directory.list_dir(FileGroup::Metadata).await;
+    assert_eq!(file_ids.len(), 1);
+}
+
+async fn write_group(
+    controller: &Arc<StorageController>,
+    group: PageGroupId,
+    size: u64,
+) {
     let mut write_txn = controller.create_write_txn();
     let mut writer = controller.create_writer(size).await.unwrap();
 
