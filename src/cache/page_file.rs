@@ -146,9 +146,15 @@ impl CacheLayer {
     ///
     /// Unlike the maintenance task that occur during reads, this will wait
     /// for locks to become available to ensure the backlog is processed.
-    pub fn run_cleanup(&self) {
+    ///
+    /// Returns the number of pages reclaimed.
+    pub fn run_cleanup(&self) -> usize {
         self.memory.advance_generation();
-        self.pending_evictions.cleanup(&self.memory);
+        let pages_reclaimed = self.pending_evictions.cleanup(&self.memory);
+        if self.memory.try_collapse().is_ok() {
+            tracing::trace!("successfully collapsed pages");
+        }
+        pages_reclaimed
     }
 
     /// Runs any pending cache cleanup tasks.

@@ -89,12 +89,17 @@ impl PendingEvictions {
     }
 
     /// Waits for locks to become available and clears the backlog of evictions.
-    pub(super) fn cleanup(&self, memory: &VirtualMemoryBlock) {
+    pub(super) fn cleanup(&self, memory: &VirtualMemoryBlock) -> usize {
+        let mut total_pages_reclaimed = 0;
+
         let mut backlog = self.revertible_eviction_backlog.lock();
-        self.cleanup_revertible_evictions(usize::MAX, memory, &mut backlog);
+        total_pages_reclaimed +=
+            self.cleanup_revertible_evictions(usize::MAX, memory, &mut backlog);
 
         let mut dirty_pages = self.dirty_eviction_backlog.lock();
-        free_pages(usize::MAX, memory, &mut dirty_pages);
+        total_pages_reclaimed += free_pages(usize::MAX, memory, &mut dirty_pages);
+
+        total_pages_reclaimed
     }
 
     fn cleanup_revertible_evictions(
@@ -102,7 +107,7 @@ impl PendingEvictions {
         limit: usize,
         memory: &VirtualMemoryBlock,
         backlog: &mut Backlog,
-    ) {
+    ) -> usize {
         while let Ok(page) = self.incoming_revertible_evictions.try_recv() {
             backlog.pages_to_mark.push_back(PageOrRetry::Page(page));
         }
@@ -125,7 +130,7 @@ impl PendingEvictions {
             }
         }
 
-        free_pages(limit, memory, &mut backlog.pages_to_evict);
+        free_pages(limit, memory, &mut backlog.pages_to_evict)
     }
 }
 
@@ -133,7 +138,8 @@ fn free_pages(
     limit: usize,
     memory: &VirtualMemoryBlock,
     permits: &mut VecDeque<PageFreePermit>,
-) {
+) -> usize {
+    let mut num_pages_freed = 0;
     let pop_n = cmp::min(permits.len(), limit);
     for _ in 0..pop_n {
         let Some(permit) = permits.pop_front() else {
@@ -141,7 +147,9 @@ fn free_pages(
         };
 
         match memory.try_free(&permit) {
-            Ok(()) => {},
+            Ok(()) => {
+                num_pages_freed += 1;
+            },
             Err(TryFreeError::InUse | TryFreeError::Locked) => {
                 permits.push_back(permit);
             },
@@ -152,6 +160,8 @@ fn free_pages(
             },
         }
     }
+
+    num_pages_freed
 }
 
 #[derive(Default)]
