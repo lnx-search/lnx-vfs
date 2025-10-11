@@ -11,8 +11,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("starting concurrent benchmark");
 
     for pre_allocate in [false, true] {
-        for concurrency in [10, 50, 100] {
-            run_bench(pre_allocate, 1000, 2 << 10, concurrency).await?;
+        for concurrency in [10, 50] {
+            run_bench(pre_allocate, 100, 2 << 10, concurrency).await?;
             tokio::time::sleep(Duration::from_secs(10)).await;
 
             run_bench(pre_allocate, 100, 2 << 20, concurrency).await?;
@@ -37,7 +37,7 @@ async fn run_bench(
     );
 
     let tmp_dir = tempfile::tempdir_in("./test-data")?;
-    let builder = ContextBuilder::new(tmp_dir.path());
+    let builder = ContextBuilder::new(tmp_dir.path()).io_memory_arena_size(512 << 20);
     let ctx = builder.open().await?;
     ctx.set_config(WalConfig {
         preallocate_file: pre_allocate,
@@ -78,7 +78,8 @@ async fn run_bench(
 
     let elapsed = start.elapsed();
     let per_file = elapsed / num_iters as u32;
-    let bytes_per_sec = ((file_size as f32 / per_file.as_secs_f32()) * concurrency as f32) as u64;
+    let bytes_per_sec =
+        ((file_size as f32 / per_file.as_secs_f32()) * concurrency as f32) as u64;
 
     total_write_time /= concurrency as u32;
     total_commit_time /= concurrency as u32;
