@@ -76,5 +76,9 @@ name = "vfs_single_writes"
 harness = false
 
 [[bench]]
+name = "vfs_concurrent_writes"
+harness = false
+
+[[bench]]
 name = "disk_allocator"
 harness = false

@@ -8,16 +8,16 @@ use lnx_vfs::{ContextBuilder, VirtualFileSystem};
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    tracing::info!("starting benchmark");
+    tracing::info!("starting concurrent benchmark");
 
     for pre_allocate in [false, true] {
-        run_bench(pre_allocate, 1000, 2 << 10).await?;
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        for concurrency in [10, 50, 100] {
+            run_bench(pre_allocate, 1000, 2 << 10, concurrency).await?;
+            tokio::time::sleep(Duration::from_secs(10)).await;
 
-        run_bench(pre_allocate, 100, 2 << 20).await?;
-        tokio::time::sleep(Duration::from_secs(10)).await;
-
-        run_bench(pre_allocate, 10, 2 << 30).await?;
+            run_bench(pre_allocate, 100, 2 << 20, concurrency).await?;
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
     }
 
     tracing::info!("complete");
@@ -29,9 +29,10 @@ async fn run_bench(
     pre_allocate: bool,
     num_iters: u64,
     file_size: usize,
+    concurrency: usize,
 ) -> anyhow::Result<()> {
     tracing::info!(
-        "starting run (pre_allocate={pre_allocate}) - {num_iters} iters, {} per file",
+        "starting run (pre_allocate={pre_allocate}, concurrency={concurrency}) - {num_iters} iters, {} per file",
         humanize(file_size as u64)
     );
 
@@ -55,8 +56,53 @@ async fn run_bench(
     let vfs = VirtualFileSystem::open(ctx).await?;
 
     let start = Instant::now();
-    let mut commit_time = Duration::default();
+
+    let mut tasks = Vec::with_capacity(concurrency);
+    for _ in 0..concurrency {
+        let handle = tokio::spawn(write_task(vfs.clone(), num_iters, file_size));
+        tasks.push(handle);
+    }
+
+    let mut total_write_time = Duration::default();
+    let mut total_commit_time = Duration::default();
+    for handle in tasks {
+        let (write_time, commit_time) = handle.await??;
+        total_write_time += write_time;
+        total_commit_time += commit_time;
+    }
+
+    let elapsed = start.elapsed();
+    let per_file = elapsed / num_iters as u32;
+    let bytes_per_sec = (file_size as f32 / per_file.as_secs_f32()) as u64;
+
+    total_write_time /= concurrency as u32;
+    total_commit_time /= concurrency as u32;
+
+    total_write_time /= num_iters as u32;
+    total_commit_time /= num_iters as u32;
+
+    tracing::info!(
+        "   {num_iters} iters took {elapsed:?}, \
+        {per_file:?}/iter {}/s \
+        {total_commit_time:?} on commit, \
+        {total_write_time:?} on write",
+        humanize(bytes_per_sec),
+    );
+
+    Ok(())
+}
+
+fn humanize(size: u64) -> String {
+    humansize::format_size(size, humansize::DECIMAL)
+}
+
+async fn write_task(
+    vfs: VirtualFileSystem,
+    num_iters: u64,
+    file_size: usize,
+) -> anyhow::Result<(Duration, Duration)> {
     let mut write_time = Duration::default();
+    let mut commit_time = Duration::default();
 
     for file_id in 0..num_iters {
         let mut txn = vfs.begin();
@@ -80,24 +126,5 @@ async fn run_bench(
         commit_time += cmt_start.elapsed();
     }
 
-    let elapsed = start.elapsed();
-    let per_file = elapsed / num_iters as u32;
-    let bytes_per_sec = (file_size as f32 / per_file.as_secs_f32()) as u64;
-
-    commit_time /= num_iters as u32;
-    write_time /= num_iters as u32;
-
-    tracing::info!(
-        "   {num_iters} iters took {elapsed:?}, \
-        {per_file:?}/iter {}/s \
-        {commit_time:?} on commit, \
-        {write_time:?} on write",
-        humanize(bytes_per_sec),
-    );
-
-    Ok(())
-}
-
-fn humanize(size: u64) -> String {
-    humansize::format_size(size, humansize::DECIMAL)
+    Ok((write_time, commit_time))
 }
