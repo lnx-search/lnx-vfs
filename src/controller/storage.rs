@@ -293,6 +293,18 @@ pub struct ReadRef {
     len: usize,
 }
 
+impl std::fmt::Debug for ReadRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ReadRef(ptr={:?}, len={}, offset={})",
+            self.inner.as_ptr(),
+            self.len,
+            self.offset,
+        )
+    }
+}
+
 impl Deref for ReadRef {
     type Target = [u8];
 
