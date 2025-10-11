@@ -30,18 +30,28 @@ we define the current associated data for each file type here:
 
 - `file_id` - The unique file identifier.
 - `log_file_id` - A random 64-bit ID regenerated on every log rotation.
+- `sequence_id` - A monotonic ID assigned to each entry in the WAL. (Relative to the individual file.)
 - `position_in_file` - The absolute start position of the block in the file.
 
 ### Page Table Checkpoint
 
 - `file_id` - The unique file identifier.
 - `target_page_file_id` - The unique ID of the page file this checkpoint is attached to.
+- `num_changes` - The number of changes the checkpoint contains.
+- `start_pos` - The starting position of the checkpoint data.
 
 ### Page Data
 
 - `file_id` - The unique file identifier.
 - `position_in_file` - The position of the data.
+- `page_id` - The page ID within the page file.
 
 * NOTE: The data in the page data file can only be decrypted with the information from the page table, an attacker
   cannot copy another block of data.
 
+### File headers
+
+File headers have their own associated data:
+
+- `file_id` - The unique file identifier.
+- `file_group` - The file group the file belongs to, i.e. WAL, Page Data, Checkpoints.
