@@ -58,8 +58,13 @@ async fn run_bench(
     let start = Instant::now();
 
     let mut tasks = Vec::with_capacity(concurrency);
-    for _ in 0..concurrency {
-        let handle = tokio::spawn(write_task(vfs.clone(), num_iters, file_size));
+    for task_id in 0..concurrency {
+        let handle = tokio::spawn(write_task(
+            task_id as u64,
+            vfs.clone(),
+            num_iters,
+            file_size,
+        ));
         tasks.push(handle);
     }
 
@@ -73,7 +78,7 @@ async fn run_bench(
 
     let elapsed = start.elapsed();
     let per_file = elapsed / num_iters as u32;
-    let bytes_per_sec = (file_size as f32 / per_file.as_secs_f32()) as u64;
+    let bytes_per_sec = ((file_size as f32 / per_file.as_secs_f32()) * concurrency as f32) as u64;
 
     total_write_time /= concurrency as u32;
     total_commit_time /= concurrency as u32;
@@ -97,6 +102,7 @@ fn humanize(size: u64) -> String {
 }
 
 async fn write_task(
+    task_id: u64,
     vfs: VirtualFileSystem,
     num_iters: u64,
     file_size: usize,
@@ -104,7 +110,9 @@ async fn write_task(
     let mut write_time = Duration::default();
     let mut commit_time = Duration::default();
 
-    for file_id in 0..num_iters {
+    let start = num_iters * task_id;
+    let end = start + num_iters;
+    for file_id in start..end {
         let mut txn = vfs.begin();
         let mut writer = vfs.create_writer(file_size as u64).await?;
 
