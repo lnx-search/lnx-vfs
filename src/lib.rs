@@ -42,7 +42,7 @@ pub use self::transaction::FileSystemTransaction;
 
 /// Configuration options for the VFS components.
 pub mod config {
-    pub use crate::controller::{CacheConfig, WalConfig};
+    pub use crate::controller::{CacheConfig, StorageConfig, WalConfig};
     pub use crate::page_data::PageFileConfig;
 }
 
@@ -52,6 +52,7 @@ pub mod bench {
     pub use crate::disk_allocator::*;
 }
 
+#[derive(Clone)]
 /// A virtual filesystem abstraction over underlying storage.
 pub struct VirtualFileSystem {
     storage_controller: Arc<StorageController>,
