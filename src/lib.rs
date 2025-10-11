@@ -82,11 +82,11 @@ impl VirtualFileSystem {
     }
 
     /// Read the file at a given range.
-    pub async fn read_file(
+    pub fn read_file(
         &self,
         file_id: u64,
         range: impl RangeBounds<usize>,
-    ) -> Result<ReadRef, ReadPageError> {
+    ) -> impl Future<Output = Result<ReadRef, ReadPageError>> + '_ {
         let start = match range.start_bound() {
             Bound::Included(s) => Some(*s),
             Bound::Excluded(s) => Some(*s + 1),
@@ -101,6 +101,5 @@ impl VirtualFileSystem {
 
         self.storage_controller
             .read_group(PageGroupId(file_id), start, end)
-            .await
     }
 }
