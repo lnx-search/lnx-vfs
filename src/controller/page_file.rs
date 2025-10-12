@@ -32,7 +32,7 @@ const PREP_ALLOC_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_secs(5)
 };
 
-const MAX_READ_AMPLIFICATION: f32 = 1.3;
+const MAX_READ_AMPLIFICATION: f32 = 1.2;
 const MAX_READ_CONCURRENCY: usize = 128;
 
 /// The page file controller manages creation and cleanup of
