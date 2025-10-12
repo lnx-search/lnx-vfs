@@ -1,6 +1,7 @@
 mod evictions;
 mod mem_block;
 mod page_file;
+mod tracker;
 
 use std::io;
 use std::sync::Arc;

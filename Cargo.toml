@@ -24,6 +24,8 @@ smallvec = "1"
 stable_deref_trait = "1"
 hex = "0.4"
 foldhash = "0.2"
+slab = "0.4"
+hashbrown = "0.16"
 
 # Encryption at rest
 chacha20poly1305 = "0.10"
@@ -60,6 +62,11 @@ bench-internal = []
 
 [profile.bench]
 debug = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(kani)",
+] }
 
 [[bench]]
 name = "cache_writes_cold"

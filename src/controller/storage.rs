@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::{io, mem};
 
 use parking_lot::Mutex;
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::{Semaphore, oneshot};
 
 use super::group_lock::GroupLocks;
 use super::metadata::{MetadataController, OpenMetadataControllerError};
@@ -204,7 +204,8 @@ impl StorageController {
 
         // TODO: clean this state up.
         let permits = self.reader_permits_guards.pin_owned();
-        let (permit_guard, limiter) = permits.get_or_insert_with(group, || (Mutex::default(), Semaphore::new(15)));
+        let (permit_guard, limiter) =
+            permits.get_or_insert_with(group, || (Mutex::default(), Semaphore::new(15)));
         let cache_layer = self.get_or_create_cache_layer(group)?;
 
         let mut pages = Vec::new();
