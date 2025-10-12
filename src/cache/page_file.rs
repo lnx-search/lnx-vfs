@@ -40,8 +40,6 @@ impl CacheLayer {
             self.live_pages.get(&(self.layer_id, page));
         }
 
-        self.pending_evictions.try_cleanup(&self.memory);
-
         let inner = self.memory.prepare_read(page_range.clone());
 
         // SAFETY: The lifetime of this read is tied to the parent, which is kept next to the read

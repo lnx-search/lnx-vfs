@@ -144,11 +144,11 @@ impl CacheGcWorker {
     }
 
     fn run(mut self) {
-        tracing::info!("cache gc thread is starting...");
+        tracing::debug!("cache gc thread is starting...");
 
         loop {
             if self.should_exit() {
-                tracing::info!("cache gc thread is exiting");
+                tracing::debug!("cache gc thread is exiting");
                 break;
             }
 
@@ -158,7 +158,7 @@ impl CacheGcWorker {
             let elapsed = start.elapsed();
 
             if self.should_exit() {
-                tracing::info!("cache gc thread is exiting");
+                tracing::debug!("cache gc thread is exiting");
                 break;
             }
 
@@ -224,14 +224,14 @@ impl CacheGcWorker {
 
     fn log_gc_info(&mut self) {
         let elapsed = self.last_gc_info_log.elapsed();
-        if elapsed < Duration::from_secs(1) {
+        if elapsed < Duration::from_secs(10) {
             return;
         }
 
-        // let max = self.max_frees_in_window();
-        // if max == 0 {
-        //     return;
-        // }
+        let max = self.max_frees_in_window();
+        if max == 0 {
+            return;
+        }
 
         let history = self.render_history();
         tracing::info!(
