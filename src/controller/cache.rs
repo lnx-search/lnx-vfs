@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::{cmp, io};
 
+use parking_lot::Mutex;
+
 use crate::cache::{CacheLayer, PageFileCache, PageSize};
 use crate::ctx;
 use crate::layout::PageGroupId;
@@ -28,6 +30,7 @@ pub struct CacheConfig {
 pub struct CacheController {
     state: Arc<CacheState>,
     cache_layer_id_counter: AtomicU64,
+    layer_creation_lock: Mutex<()>,
 }
 
 impl CacheController {
@@ -55,6 +58,7 @@ impl CacheController {
         Self {
             state,
             cache_layer_id_counter: AtomicU64::new(0),
+            layer_creation_lock: Mutex::new(()),
         }
     }
 
@@ -65,6 +69,11 @@ impl CacheController {
         num_pages: usize,
     ) -> io::Result<Arc<CacheLayer>> {
         let layers = self.layers().pin();
+        if let Some(layer) = layers.get(&group) {
+            return Ok(layer.clone());
+        }
+
+        let _guard = self.layer_creation_lock.lock();
         if let Some(layer) = layers.get(&group) {
             return Ok(layer.clone());
         }
@@ -178,14 +187,11 @@ impl CacheGcWorker {
     /// of the cache an amount of work done in the last N cycles.
     fn wait_for_gc_cycle(&mut self, elapsed: Duration) {
         let max_num_frees = self.max_frees_in_window();
-        let last_interval = self.gc_cycle_interval;
         self.gc_cycle_interval =
             adaptive_gc_interval(self.gc_cycle_interval, max_num_frees);
         let wait_for = self.gc_cycle_interval.saturating_sub(elapsed);
         if !wait_for.is_zero() {
             std::thread::sleep(wait_for);
-        } else if elapsed > last_interval {
-            self.log_gc_slow();
         }
     }
 
@@ -218,20 +224,21 @@ impl CacheGcWorker {
 
     fn log_gc_info(&mut self) {
         let elapsed = self.last_gc_info_log.elapsed();
-        if elapsed < Duration::from_secs(10) {
+        if elapsed < Duration::from_secs(1) {
             return;
         }
 
-        let max = self.max_frees_in_window();
-        if max == 0 {
-            return;
-        }
+        // let max = self.max_frees_in_window();
+        // if max == 0 {
+        //     return;
+        // }
 
         let history = self.render_history();
-        tracing::warn!(
+        tracing::info!(
             "cache gc status interval: {:?}, last runs: {history}",
             self.gc_cycle_interval,
         );
+        self.last_gc_info_log = Instant::now();
     }
 
     fn render_history(&self) -> String {
@@ -262,8 +269,11 @@ fn adaptive_gc_interval(base_interval: Duration, num_frees: usize) -> Duration {
 
     let memory_reclaimed = num_frees * DISK_PAGE_SIZE;
     let target_ratio = GC_TARGET_RELEASE_SIZE as f64 / memory_reclaimed as f64;
-    let adjusted_interval =
+    let mut adjusted_interval =
         Duration::from_secs_f64(base_interval.as_secs_f64() * target_ratio);
+    if adjusted_interval < Duration::from_millis(4) {
+        adjusted_interval = Duration::default();
+    }
     cmp::min(adjusted_interval, GC_MAX_INTERVAL)
 }
 
