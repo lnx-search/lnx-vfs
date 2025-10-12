@@ -74,6 +74,8 @@ pub struct StorageController {
     cache_controller: CacheController,
     group_locks: GroupLocks,
     active_checkpoint_task: Mutex<CheckpointTask>,
+
+    reader_permits_guards: papaya::HashMap<PageGroupId, Mutex<()>>,
 }
 
 impl StorageController {
@@ -114,6 +116,7 @@ impl StorageController {
                 handle: tokio::spawn(async move {}),
                 _kill_switch: kill_switch,
             }),
+            reader_permits_guards: papaya::HashMap::default(),
         });
         slf.check_checkpoint_task().await;
         Ok(slf)
@@ -199,6 +202,8 @@ impl StorageController {
         let end = end.unwrap_or(lookup.total_size as usize);
         let range = start..end;
 
+        let permits = self.reader_permits_guards.pin_owned();
+        let permit_guard = permits.get_or_insert_with(group, Mutex::default);
         let cache_layer = self.get_or_create_cache_layer(group)?;
 
         let mut pages = Vec::new();
@@ -214,14 +219,9 @@ impl StorageController {
         let mut prepared_read =
             cache_layer.prepare_read(page_range.start as u32..page_range.end as u32);
 
-        let waiter = prepared_read.wait_for_signal();
-        tokio::pin!(waiter);
-
-        let mut pages_to_read = Vec::new();
-        let mut user_data = Vec::new();
+        let mut pages_to_read = Vec::with_capacity(4);
+        let mut user_data = Vec::with_capacity(4);
         loop {
-            waiter.as_mut().enable();
-
             match prepared_read.try_finish() {
                 Ok(inner) => {
                     // Final compare step to ensure reads don't accidentally return
@@ -254,16 +254,18 @@ impl StorageController {
             user_data.clear();
 
             let mut permits = Vec::new();
+            let guard = permit_guard.lock();
             for permit in prepared_read.get_outstanding_write_permits() {
                 let page_metadata = &pages[permit.page() as usize - page_range.start];
                 pages_to_read.push(*page_metadata);
                 user_data.push(permit.page() as usize);
                 permits.push(permit);
             }
+            drop(guard);
 
             if permits.is_empty() {
-                waiter.as_mut().await;
-                waiter.set(prepared_read.wait_for_signal());
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                continue;
             }
 
             let mut result = self

@@ -1,6 +1,4 @@
 use std::ops::Range;
-use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cache::{PageFileCache, PageIndex, PageSize};
 
@@ -406,60 +404,4 @@ fn test_lfu_eviction_with_locked_page() {
     assert_eq!(layer1.backlog_size(), 6);
     layer1.run_cleanup();
     assert_eq!(layer1.backlog_size(), 0);
-}
-
-#[rstest::rstest]
-#[tokio::test]
-async fn test_waiting_on_external_writes() {
-    let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
-
-    let layer = cache
-        .create_page_file_layer(1, 10)
-        .expect("create page cache layer");
-
-    let barrier1 = Arc::new(tokio::sync::Notify::new());
-    let barrier2 = barrier1.clone();
-
-    let prepared1 = layer.prepare_read(0..10);
-
-    tokio::spawn(async move {
-        let prepared2 = layer.prepare_read(0..10);
-
-        let permits = prepared2
-            .get_outstanding_write_permits()
-            .take(5)
-            .collect::<Vec<_>>();
-
-        barrier2.notified().await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        let buffer_data = vec![4; 8 << 10];
-        for permit in permits {
-            prepared2.write_page(permit, &buffer_data);
-        }
-    });
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let page_ids = prepared1
-        .get_outstanding_write_permits()
-        .map(|permit| permit.page())
-        .collect::<Vec<_>>();
-    assert_eq!(page_ids, vec![5, 6, 7, 8, 9]);
-
-    barrier1.notify_one();
-    prepared1.wait_for_signal().await;
-
-    let buffer_data = vec![4; 8 << 10];
-    let mut pages_left = Vec::new();
-    for permit in prepared1.get_outstanding_write_permits() {
-        pages_left.push(permit.page());
-        prepared1.write_page(permit, &buffer_data);
-    }
-    assert_eq!(pages_left, vec![5, 6, 7, 8, 9]);
-
-    let read_view = match prepared1.try_finish() {
-        Ok(read_view) => read_view,
-        Err(_) => panic!("read should be successful after writes have occurred"),
-    };
-    assert!(read_view.iter().all(|v| *v == 4));
 }

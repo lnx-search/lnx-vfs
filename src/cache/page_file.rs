@@ -2,9 +2,6 @@ use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, Range};
 use std::sync::Arc;
 
-use tokio::sync::Notify;
-use tokio::sync::futures::Notified;
-
 use super::mem_block::{
     PageFreePermit,
     PageIndex,
@@ -18,17 +15,6 @@ use super::mem_block::{
 };
 use super::{LayerId, LivePagesLfu, PageSize};
 use crate::cache::evictions::PendingEvictions;
-
-/// The global waker that notifies pending readers when a page has been written.
-///
-/// This might wake for page that the reader does not care about, but typically
-/// the read rate on disk is not expected to be high enough to warrant independent
-/// waker for each file (especially since that can ramp up the memory pressure on smaller cached
-/// with lots of small files.)
-///
-/// This does use a slightly sharded approach to reduce contention and incorrect wakes
-/// by taking the file ID and selecting the waker based on the hash mod of that.
-static PAGE_WRITE_WAKER: [Notify; 32] = [const { Notify::const_new() }; 32];
 
 /// The [CacheLayer] adds an in-memory LFU cache to a page file.
 ///
@@ -244,13 +230,6 @@ impl PreparedRead {
     pub fn write_page(&self, permit: PageWritePermit, bytes: &[u8]) {
         self.parent.register_page_write_in_cache(permit.page());
         self.inner.parent().write_page(permit, bytes);
-        self.get_waker().notify_waiters();
-    }
-
-    /// Returns a future that waits until a write operation has been completed on the page file.
-    pub fn wait_for_signal(&self) -> Notified<'static> {
-        let waker = self.get_waker();
-        waker.notified()
     }
 
     /// Attempt to finish the read if all pages are allocated and valid.
@@ -274,11 +253,6 @@ impl PreparedRead {
                 })
             },
         }
-    }
-
-    fn get_waker(&self) -> &'static Notify {
-        let notify_id = self.parent.layer_id as usize % PAGE_WRITE_WAKER.len();
-        &PAGE_WRITE_WAKER[notify_id]
     }
 }
 
