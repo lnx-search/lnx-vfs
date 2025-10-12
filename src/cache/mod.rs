@@ -54,7 +54,7 @@ impl PageFileCache {
     pub fn new(memory_allowance: u64, page_size: PageSize) -> Self {
         let num_pages = memory_allowance / page_size as u64;
         let target_memory_usage = num_pages * page_size as u64;
-        tracing::info!(
+        tracing::debug!(
             "page file cache has capacity for {num_pages} {page_size:?} pages ({memory_target} total)",
             memory_target =
                 humansize::format_size(target_memory_usage, humansize::DECIMAL),
@@ -107,7 +107,7 @@ impl PageFileCache {
         let (pending_evictions, tx) = PendingEvictions::new();
         let memory = VirtualMemoryBlock::allocate(num_pages, self.page_size)?;
 
-        tracing::info!(
+        tracing::debug!(
             virtual_memory_allocation = %humansize::format_size(
                 num_pages as u64 * self.page_size as u64,
                 humansize::DECIMAL,
