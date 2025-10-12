@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::{io, mem};
 
 use parking_lot::Mutex;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Semaphore};
 
 use super::group_lock::GroupLocks;
 use super::metadata::{MetadataController, OpenMetadataControllerError};
@@ -75,7 +75,7 @@ pub struct StorageController {
     group_locks: GroupLocks,
     active_checkpoint_task: Mutex<CheckpointTask>,
 
-    reader_permits_guards: papaya::HashMap<PageGroupId, Mutex<()>>,
+    reader_permits_guards: papaya::HashMap<PageGroupId, (Mutex<()>, Semaphore)>,
 }
 
 impl StorageController {
@@ -202,8 +202,9 @@ impl StorageController {
         let end = end.unwrap_or(lookup.total_size as usize);
         let range = start..end;
 
+        // TODO: clean this state up.
         let permits = self.reader_permits_guards.pin_owned();
-        let permit_guard = permits.get_or_insert_with(group, Mutex::default);
+        let (permit_guard, limiter) = permits.get_or_insert_with(group, || (Mutex::default(), Semaphore::new(15)));
         let cache_layer = self.get_or_create_cache_layer(group)?;
 
         let mut pages = Vec::new();
@@ -219,6 +220,21 @@ impl StorageController {
         let mut prepared_read =
             cache_layer.prepare_read(page_range.start as u32..page_range.end as u32);
 
+        // Optimisation in case the read is already fully cached, allowing us to skip the semaphore.
+        match prepared_read.try_finish() {
+            Ok(inner) => {
+                return Ok(ReadRef {
+                    inner,
+                    offset: read_offset,
+                    len: read_len,
+                });
+            },
+            Err(read) => {
+                prepared_read = read;
+            },
+        }
+
+        let permit = limiter.acquire().await;
         let mut pages_to_read = Vec::with_capacity(4);
         let mut user_data = Vec::with_capacity(4);
         loop {
@@ -231,6 +247,7 @@ impl StorageController {
                         .get_group_lookup(group)
                         .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
 
+                    drop(permit);
                     return if lookup != new_lookup {
                         Err(io::Error::new(
                             io::ErrorKind::Interrupted,
@@ -264,7 +281,7 @@ impl StorageController {
             drop(guard);
 
             if permits.is_empty() {
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                tokio::time::sleep(Duration::from_millis(2)).await;
                 continue;
             }
 
