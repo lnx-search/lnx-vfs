@@ -7,7 +7,6 @@ edition = "2024"
 thiserror = "2"
 tracing = "0.1"
 arc-swap = "1"
-crossbeam-channel = "0.5"
 i2o2 = "0.4"
 offset-allocator = "0.2"
 papaya = "0.2"
@@ -33,7 +32,6 @@ blake3 = "1"
 argon2 = "0.5"
 
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
-moka = { version = "0.12", features = ["sync"] }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 memmap2 = { git = "https://github.com/lnx-search/memmap2-rs.git", rev = "b4e936e" }
 
