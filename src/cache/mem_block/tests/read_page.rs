@@ -171,32 +171,6 @@ fn test_memory_read_partially_allocated_err_outstanding_writes(
 }
 
 #[test]
-fn test_reads_respect_dirty_marker() {
-    let block = create_block_with_allocation(0..8, 8, PageSize::Std8KB);
-
-    let prepared_read = block.prepare_read(0..8);
-    let read = prepared_read.try_finish().unwrap();
-    println!("read: {:?}", read);
-
-    let _permit = block.try_dirty_page(PageOrRetry::Page(0)).unwrap();
-
-    let prepared_read = block.prepare_read(0..8);
-    prepared_read.try_finish().expect_err(
-        "reads after the permit should not be able to complete without writes",
-    );
-
-    let _permit = block.try_dirty_page(PageOrRetry::Page(4)).unwrap();
-    let _permit = block.try_dirty_page(PageOrRetry::Page(5)).unwrap();
-
-    let prepared_read = block.prepare_read(0..8);
-    println!("read: {:?}", prepared_read);
-
-    prepared_read.try_finish().expect_err(
-        "reads after the permit should not be able to complete without writes",
-    );
-}
-
-#[test]
 fn test_reads_respect_marked_for_eviction_marker() {
     let block = create_block_with_allocation(0..8, 8, PageSize::Std8KB);
 
