@@ -1,10 +1,13 @@
 use std::collections::VecDeque;
 use std::hash::BuildHasher;
 use std::ops::Range;
+use std::sync::Arc;
 
 use hashbrown::hash_table::{self, HashTable};
+use parking_lot::Mutex;
 
 use super::frequency_sketch::FrequencySketch;
+use crate::cache::tracker::SharedLfuCacheTracker;
 use crate::cache::{LayerId, PageIndex};
 
 const FREQ_SLOTS: usize = 256;
@@ -61,6 +64,16 @@ impl LfuCacheTracker {
             entries,
             evicted_entries: VecDeque::new(),
         }
+    }
+
+    /// Wrap the tracker in an arc + mutex combination to share across threads.
+    pub fn into_shared(self) -> SharedLfuCacheTracker {
+        Arc::new(Mutex::new(self))
+    }
+
+    /// Returns the size of the cache in pages.
+    pub fn size(&self) -> usize {
+        self.entries.len()
     }
 
     /// Register an "access" to the given span of pages for the given [LayerId].
@@ -236,7 +249,7 @@ impl LfuCacheTracker {
             self.entries[node.prev_node as usize].next_node = node.next_node;
         }
 
-        if drop_evictions {
+        if !drop_evictions {
             self.evicted_entries
                 .push_back((node.entry.layer_id, node.entry.page));
         }
@@ -367,11 +380,11 @@ mod tests {
         assert_eq!(tracker.entries.len(), 5);
         assert_eq!(tracker.lookup.len(), 5);
 
-        tracker.remove(1, 3..5, true);
+        tracker.remove(1, 3..5, false);
         let entries = tracker.evicted_entries().drain(..).collect::<Vec<_>>();
         assert_eq!(entries, &[(1, 3), (1, 4)]);
 
-        tracker.remove(1, 0..3, false);
+        tracker.remove(1, 0..3, true);
         assert!(tracker.evicted_entries().is_empty());
     }
 }

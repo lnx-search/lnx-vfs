@@ -1,137 +1,41 @@
 use std::cmp;
 use std::collections::VecDeque;
 
-use crossbeam_channel::{self, Receiver, Sender};
-use parking_lot::Mutex;
-
+use super::PageIndex;
 use super::mem_block::{
     PageFreePermit,
-    PageIndex,
     PageOrRetry,
     PrepareRevertibleEvictionError,
     TryFreeError,
     VirtualMemoryBlock,
 };
 
-/// The minimum number of outstanding pages scheduled for a revertible  eviction that are outstanding
-/// before the system will consider running the cleanup step during a read task.
-const RUN_CLEANUP_REVERTIBLE_EVICTION_THRESHOLD: usize = 1_000;
-/// The minimum number of outstanding pages scheduled for dirty eviction that are outstanding
-/// before the system will consider running the cleanup step during a read task.
-const RUN_CLEANUP_DIRTY_EVICTION_THRESHOLD: usize = 500;
-
-/// Keeps track of pages to mark for eviction and frees
-/// pages once safe to do so.
-pub struct PendingEvictions {
-    incoming_revertible_evictions: Receiver<PageIndex>,
-    revertible_eviction_backlog: Mutex<Backlog>,
-    dirty_eviction_backlog: Mutex<VecDeque<PageFreePermit>>,
-}
-
-impl PendingEvictions {
-    pub(super) fn new() -> (Self, Sender<PageIndex>) {
-        let (tx, rx) = crossbeam_channel::unbounded();
-
-        let slf = Self {
-            incoming_revertible_evictions: rx,
-            revertible_eviction_backlog: Mutex::new(Backlog::default()),
-            dirty_eviction_backlog: Mutex::new(VecDeque::new()),
+/// Attempt to mark and cleanup any preventable evictions within the cache.
+pub(super) fn cleanup_revertible_evictions(
+    limit: usize,
+    memory: &VirtualMemoryBlock,
+    backlog: &mut EvictionBacklog,
+) -> usize {
+    // We cap the number of things we process in order to even the load on tasks.
+    for _ in 0..backlog.pages_to_mark.len() {
+        let Some(page) = backlog.pages_to_mark.pop_front() else {
+            break;
         };
-
-        (slf, tx)
-    }
-
-    pub(super) fn size(&self) -> usize {
-        let mut size = 0;
-
-        {
-            let backlog = self.revertible_eviction_backlog.lock();
-            size += backlog.pages_to_evict.len();
-            size += backlog.pages_to_mark.len();
-        }
-
-        {
-            let backlog = self.dirty_eviction_backlog.lock();
-            size += backlog.len();
-        }
-
-        size += self.incoming_revertible_evictions.len();
-        size
-    }
-
-    pub(super) fn push_page_dirty_permit(&self, permit: PageFreePermit) {
-        let mut backlog = self.dirty_eviction_backlog.lock();
-        backlog.push_back(permit);
-    }
-
-    /// Attempts to perform some cleanup maintenance on the backlog is applicable.
-    pub(super) fn try_cleanup(&self, memory: &VirtualMemoryBlock) {
-        const SMALL_FREE_LIMIT: usize = 100;
-
-        let Some(mut backlog) = self.revertible_eviction_backlog.try_lock() else {
-            return;
-        };
-
-        let total_outstanding_evictions = self.incoming_revertible_evictions.len()
-            + backlog.pages_to_mark.len()
-            + backlog.pages_to_evict.len();
-
-        if total_outstanding_evictions >= RUN_CLEANUP_REVERTIBLE_EVICTION_THRESHOLD {
-            self.cleanup_revertible_evictions(SMALL_FREE_LIMIT, memory, &mut backlog);
-        }
-
-        let Some(mut dirty_pages) = self.dirty_eviction_backlog.try_lock() else {
-            return;
-        };
-        if dirty_pages.len() >= RUN_CLEANUP_DIRTY_EVICTION_THRESHOLD {
-            free_pages(SMALL_FREE_LIMIT, memory, &mut dirty_pages);
+        match memory.try_mark_for_revertible_eviction(page) {
+            Ok(permit) => {
+                backlog.pages_to_free.push_back(permit);
+            },
+            Err(PrepareRevertibleEvictionError::PageLocked(retry)) => {
+                backlog.pages_to_mark.push_back(PageOrRetry::Retry(retry));
+            },
+            Err(PrepareRevertibleEvictionError::AlreadyFree) => {},
+            Err(PrepareRevertibleEvictionError::OperationStale) => {},
+            // Currently not possible outside of tests.
+            Err(PrepareRevertibleEvictionError::Dirty) => {},
         }
     }
 
-    /// Waits for locks to become available and clears the backlog of evictions.
-    pub(super) fn cleanup(&self, memory: &VirtualMemoryBlock) -> usize {
-        let mut total_pages_reclaimed = 0;
-
-        let mut backlog = self.revertible_eviction_backlog.lock();
-        total_pages_reclaimed +=
-            self.cleanup_revertible_evictions(usize::MAX, memory, &mut backlog);
-
-        let mut dirty_pages = self.dirty_eviction_backlog.lock();
-        total_pages_reclaimed += free_pages(usize::MAX, memory, &mut dirty_pages);
-
-        total_pages_reclaimed
-    }
-
-    fn cleanup_revertible_evictions(
-        &self,
-        limit: usize,
-        memory: &VirtualMemoryBlock,
-        backlog: &mut Backlog,
-    ) -> usize {
-        while let Ok(page) = self.incoming_revertible_evictions.try_recv() {
-            backlog.pages_to_mark.push_back(PageOrRetry::Page(page));
-        }
-
-        // We cap the number of things we process in order to even the load on tasks.
-        for _ in 0..backlog.pages_to_mark.len() {
-            let Some(page) = backlog.pages_to_mark.pop_front() else {
-                break;
-            };
-            match memory.try_mark_for_revertible_eviction(page) {
-                Ok(permit) => {
-                    backlog.pages_to_evict.push_back(permit);
-                },
-                Err(PrepareRevertibleEvictionError::PageLocked(retry)) => {
-                    backlog.pages_to_mark.push_back(PageOrRetry::Retry(retry));
-                },
-                Err(PrepareRevertibleEvictionError::AlreadyFree) => {},
-                Err(PrepareRevertibleEvictionError::Dirty) => {},
-                Err(PrepareRevertibleEvictionError::OperationStale) => {},
-            }
-        }
-
-        free_pages(limit, memory, &mut backlog.pages_to_evict)
-    }
+    free_pages(limit, memory, &mut backlog.pages_to_free)
 }
 
 fn free_pages(
@@ -150,7 +54,11 @@ fn free_pages(
             Ok(()) => {
                 num_pages_freed += 1;
             },
-            Err(TryFreeError::InUse | TryFreeError::Locked) => {
+            Err(TryFreeError::InUse) => {
+                permits.push_back(permit);
+                break;
+            },
+            Err(TryFreeError::Locked) => {
                 permits.push_back(permit);
             },
             Err(TryFreeError::PermitExpired) => {},
@@ -165,186 +73,156 @@ fn free_pages(
 }
 
 #[derive(Default)]
-struct Backlog {
+/// A set of page operations to apply at a later stage.
+pub struct EvictionBacklog {
     pages_to_mark: VecDeque<PageOrRetry>,
-    pages_to_evict: VecDeque<PageFreePermit>,
+    pages_to_free: VecDeque<PageFreePermit>,
+}
+
+impl EvictionBacklog {
+    /// Add a new page to mark for eviction.
+    pub fn mark(&mut self, page: PageIndex) {
+        self.pages_to_mark.push_back(PageOrRetry::Page(page));
+    }
+
+    /// Indicates if the backlog is empty or not.
+    ///
+    /// This includes both pages waiting to be marked and pages
+    /// to evict.
+    pub fn is_empty(&self) -> bool {
+        self.pages_to_mark.is_empty() && self.pages_to_free.is_empty()
+    }
 }
 
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests {
     use super::*;
-    use crate::cache::mem_block::PageSize;
+    use crate::cache::mem_block::{PageSize, PrepareWriteError};
 
     #[test]
-    fn test_skip_cleanup() {
+    fn test_cleanup_skips_already_free_pages() {
         let memory = VirtualMemoryBlock::allocate(8, PageSize::Std8KB).unwrap();
 
-        let (evictions, tx) = PendingEvictions::new();
-        evictions.try_cleanup(&memory);
+        let mut evictions = EvictionBacklog::default();
+        evictions.mark(0);
+        evictions.mark(2);
+        evictions.mark(3);
 
-        tx.send(0).unwrap();
-        tx.send(2).unwrap();
-        tx.send(3).unwrap();
-        evictions.try_cleanup(&memory);
+        cleanup_revertible_evictions(usize::MAX, &memory, &mut evictions);
 
-        assert_eq!(evictions.incoming_revertible_evictions.len(), 3);
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_evict
-                .len(),
-            0
-        );
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_mark
-                .len(),
-            0
-        );
-        assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 0);
+        assert!(evictions.pages_to_mark.is_empty());
+        assert!(evictions.pages_to_free.is_empty());
+        assert!(evictions.is_empty());
     }
 
     #[test]
-    fn test_run_try_cleanup() {
-        let memory = VirtualMemoryBlock::allocate(1024, PageSize::Std8KB).unwrap();
-        let data = vec![1; 8 << 10];
-        for id in 0..1000 {
-            let permit = memory.try_prepare_for_write(id).unwrap();
-            memory.write_page(permit, &data);
-        }
+    fn test_cleanup_frees_pages() {
+        let memory = VirtualMemoryBlock::allocate(8, PageSize::Std8KB).unwrap();
 
-        let (evictions, tx) = PendingEvictions::new();
-        for id in 0..1000 {
-            tx.send(id).unwrap();
-        }
+        let permit = memory.try_prepare_for_write(0).unwrap();
+        memory.write_page(permit, &[1; 8 << 10]);
+        let permit = memory.try_prepare_for_write(2).unwrap();
+        memory.write_page(permit, &[1; 8 << 10]);
 
-        evictions.try_cleanup(&memory);
+        let mut evictions = EvictionBacklog::default();
+        evictions.mark(0);
+        evictions.mark(2);
+        evictions.mark(3);
 
-        // The system will immediately try to free 100 pages.
-        assert_eq!(evictions.incoming_revertible_evictions.len(), 0);
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_evict
-                .len(),
-            900
-        );
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_mark
-                .len(),
-            0
-        );
-        assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 0);
+        cleanup_revertible_evictions(usize::MAX, &memory, &mut evictions);
 
-        evictions.cleanup(&memory);
+        assert!(evictions.pages_to_mark.is_empty());
+        assert_eq!(evictions.pages_to_free.len(), 2);
+        assert!(!evictions.is_empty());
 
-        // 92 remain because each generation is 256 ops, and we have written and expired 1000 pages
-        // so we expect that the 1 generation will be left which will still be alive.
-        assert_eq!(evictions.incoming_revertible_evictions.len(), 0);
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_evict
-                .len(),
-            92
-        );
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_mark
-                .len(),
-            0
-        );
-        assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 0);
+        memory.advance_generation();
 
-        for id in 0..164 {
-            let permit = memory.try_prepare_for_write(id).unwrap();
-            memory.write_page(permit, &data);
-        }
-
-        evictions.cleanup(&memory);
-        assert_eq!(evictions.incoming_revertible_evictions.len(), 0);
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_evict
-                .len(),
-            0
-        );
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_mark
-                .len(),
-            0
-        );
-        assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 0);
-
-        memory
-            .prepare_read(500..505)
-            .try_finish()
-            .expect_err("pages should be freed");
+        let pages_freed =
+            cleanup_revertible_evictions(usize::MAX, &memory, &mut evictions);
+        assert!(evictions.pages_to_free.is_empty());
+        assert!(evictions.is_empty());
+        assert_eq!(pages_freed, 2);
     }
 
     #[test]
-    fn test_locked_pages() {
-        let memory = VirtualMemoryBlock::allocate(1024, PageSize::Std8KB).unwrap();
-        let data = vec![1; 8 << 10];
+    fn test_marked_pages_respect_reverted_eviction() {
+        let memory = VirtualMemoryBlock::allocate(8, PageSize::Std8KB).unwrap();
+        let permit = memory.try_prepare_for_write(0).unwrap();
+        memory.write_page(permit, &[1; 8 << 10]);
 
-        for id in 0..1023 {
-            let permit = memory.try_prepare_for_write(id).unwrap();
-            memory.write_page(permit, &data);
-        }
+        let mut evictions = EvictionBacklog::default();
+        evictions.mark(0);
 
-        let (evictions, tx) = PendingEvictions::new();
+        let pages_freed =
+            cleanup_revertible_evictions(usize::MAX, &memory, &mut evictions);
+        assert_eq!(pages_freed, 0);
 
-        tx.send(0).unwrap();
-        tx.send(2).unwrap();
-        tx.send(3).unwrap();
-        tx.send(1023).unwrap();
+        memory.advance_generation();
+        let err = memory
+            .try_prepare_for_write(0)
+            .expect_err("writer should revert eviction");
+        assert!(matches!(err, PrepareWriteError::EvictionReverted));
 
-        let permit = memory.try_prepare_for_write(1023).unwrap();
+        let pages_freed =
+            cleanup_revertible_evictions(usize::MAX, &memory, &mut evictions);
+        assert!(evictions.pages_to_free.is_empty());
+        assert!(evictions.is_empty());
+        assert_eq!(pages_freed, 0);
+    }
 
-        evictions.cleanup(&memory);
-        assert_eq!(
-            evictions
-                .revertible_eviction_backlog
-                .lock()
-                .pages_to_mark
-                .len(),
-            1
-        );
+    #[test]
+    fn test_mark_pages_locked() {
+        let memory = VirtualMemoryBlock::allocate(8, PageSize::Std8KB).unwrap();
+        let permit = memory.try_prepare_for_write(0).unwrap();
 
+        let mut evictions = EvictionBacklog::default();
+        evictions.mark(0);
+
+        let pages_freed =
+            cleanup_revertible_evictions(usize::MAX, &memory, &mut evictions);
+        assert_eq!(pages_freed, 0);
+        assert_eq!(evictions.pages_to_mark.len(), 1);
+        assert!(evictions.pages_to_free.is_empty());
         drop(permit);
+
+        let pages_freed =
+            cleanup_revertible_evictions(usize::MAX, &memory, &mut evictions);
+        assert_eq!(pages_freed, 0);
+        assert!(evictions.pages_to_mark.is_empty());
+        assert!(evictions.pages_to_free.is_empty());
     }
 
     #[test]
-    fn test_evict_dirty() {
+    fn test_free_pages_respects_queue_order() {
         let memory = VirtualMemoryBlock::allocate(8, PageSize::Std8KB).unwrap();
 
-        let (evictions, _tx) = PendingEvictions::new();
-
-        let data = vec![1; 8 << 10];
-        for id in 0..8 {
-            let permit = memory.try_prepare_for_write(id).unwrap();
-            memory.write_page(permit, &data);
+        for page in 0..3 {
+            let permit = memory.try_prepare_for_write(page).unwrap();
+            memory.write_page(permit, &[1; 8 << 10]);
         }
 
-        let permit = memory.try_dirty_page(PageOrRetry::Page(0)).unwrap();
-        evictions.push_page_dirty_permit(permit);
+        let permit1 = memory
+            .try_mark_for_revertible_eviction(PageOrRetry::Page(1))
+            .unwrap();
+        memory.advance_generation();
 
-        evictions.cleanup(&memory);
-        assert_eq!(evictions.dirty_eviction_backlog.lock().len(), 1);
+        let read = memory.prepare_read(0..1).try_finish().unwrap();
+        let permit2 = memory
+            .try_mark_for_revertible_eviction(PageOrRetry::Page(2))
+            .unwrap();
+
+        // We put permit2 in front to check that the system breaks early, in the real world
+        // this can't happen, but useful for testing.
+        let mut backlog = VecDeque::new();
+        backlog.push_back(permit2);
+        backlog.push_back(permit1);
+
+        let pages_freed = free_pages(usize::MAX, &memory, &mut backlog);
+        assert_eq!(pages_freed, 0);
+        drop(read);
+
+        memory.advance_generation();
+        let pages_freed = free_pages(usize::MAX, &memory, &mut backlog);
+        assert_eq!(pages_freed, 2);
     }
 }

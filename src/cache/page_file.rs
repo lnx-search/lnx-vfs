@@ -3,18 +3,14 @@ use std::ops::{Deref, Range};
 use std::sync::Arc;
 
 use super::mem_block::{
-    PageFreePermit,
     PageIndex,
-    PageOrRetry,
     PageWritePermit,
-    PrepareDirtyEvictionError,
     PrepareWriteError,
     ReadResult,
-    TryFreeError,
     VirtualMemoryBlock,
 };
-use super::{LayerId, LivePagesLfu, PageSize};
-use crate::cache::evictions::PendingEvictions;
+use super::{LayerId, PageSize, tracker};
+use crate::cache::evictions::EvictionBacklog;
 
 /// The [CacheLayer] adds an in-memory LFU cache to a page file.
 ///
@@ -22,9 +18,8 @@ use crate::cache::evictions::PendingEvictions;
 /// for optimal caching across several page files.
 pub struct CacheLayer {
     pub(super) layer_id: LayerId,
-    pub(super) live_pages: LivePagesLfu,
+    pub(super) live_pages: tracker::SharedLfuCacheTracker,
     pub(super) memory: VirtualMemoryBlock,
-    pub(super) pending_evictions: PendingEvictions,
 }
 
 impl CacheLayer {
@@ -36,9 +31,9 @@ impl CacheLayer {
         tracing::debug!(page_range = ?page_range, "create prepared read");
 
         // Register the access within the cache's policy.
-        for page in page_range.clone() {
-            self.live_pages.get(&(self.layer_id, page));
-        }
+        self.live_pages
+            .lock()
+            .insert(self.layer_id, page_range.clone());
 
         let inner = self.memory.prepare_read(page_range.clone());
 
@@ -57,93 +52,20 @@ impl CacheLayer {
         }
     }
 
-    #[allow(unused)] // TODO: This is a useful method we may need at some point.
-    #[tracing::instrument("cache::dirty_page_range", skip(self))]
-    /// Dirty all pages in the cache for the given file.
+    /// Run the bookkeeping steps within the layer.
     ///
-    /// This method can block due to syscall and waiting on page locks to become free.
-    ///
-    /// # Deadlock warning
-    ///
-    /// This method will wait for the page locks to become free, if the same thread currently
-    /// has a reader being prepared then this can cause a deadlock.
-    ///
-    /// # Safety
-    ///
-    /// Great care must be taken when using this method, as previous _but still alive_ reads
-    /// will observe modifications that might happen as a result of the pages being dirtied.
-    ///
-    /// The behaviour is very similar to a `mmap`, and carries the same safety risks,
-    /// if `read1` occurs observing data of a full array of `4`s, then the pages are dirtied
-    /// and new data is written filling parts with `2`s. `read1` will observe the partial change
-    /// and now be in an undefined state for the application using it.
-    ///
-    /// NOTE: The act of dirtying the page while a reader is active does not cause immediate UB
-    ///       as readers will not observe any change. However, any writes to the dirtied pages
-    ///       afterward while older readers are still active will be UB.
-    pub unsafe fn dirty_page_range(&self, range: Range<PageIndex>) {
-        tracing::debug!("dirty pages");
-
-        let mut retries = Vec::new();
-        for page in range {
-            self.live_pages.invalidate(&(self.layer_id, page));
-
-            match self.memory.try_dirty_page(PageOrRetry::Page(page)) {
-                Ok(permit) => {
-                    tracing::trace!("adding page free op to backlog");
-                    self.free_or_add_to_backlog(permit);
-                },
-                Err(
-                    PrepareDirtyEvictionError::AlreadyFree
-                    | PrepareDirtyEvictionError::AlreadyDirty
-                    | PrepareDirtyEvictionError::OperationStale,
-                ) => {},
-                Err(PrepareDirtyEvictionError::PageLocked(retry)) => {
-                    tracing::trace!(retry = ?retry, "page locked");
-                    retries.push(retry);
-                },
-            }
-        }
-
-        tracing::trace!(num_retries = retries.len(), "considering pages for retry");
-
-        for retry in retries {
-            match self.memory.dirty_page(PageOrRetry::Retry(retry)) {
-                Ok(permit) => {
-                    self.free_or_add_to_backlog(permit);
-                },
-                Err(
-                    PrepareDirtyEvictionError::AlreadyFree
-                    | PrepareDirtyEvictionError::AlreadyDirty
-                    | PrepareDirtyEvictionError::OperationStale,
-                ) => {},
-                Err(PrepareDirtyEvictionError::PageLocked(_)) => {
-                    unreachable!(
-                        "dirty_page should not happen as locks are acquired by blocking"
-                    );
-                },
-            }
-        }
-    }
-
-    /// Run the cleanup step explicitly to clean up pages.
-    ///
-    /// Unlike the maintenance task that occur during reads, this will wait
-    /// for locks to become available to ensure the backlog is processed.
-    ///
-    /// Returns the number of pages reclaimed.
-    pub fn run_cleanup(&self) -> usize {
+    /// This advanced the generation and attempts to collapse pages of memory
+    /// into huge pages to reduce load on the kernel if possible.
+    pub fn run_bookkeeping(&self) {
         self.memory.advance_generation();
-        let pages_reclaimed = self.pending_evictions.cleanup(&self.memory);
         if self.memory.try_collapse().is_ok() {
             tracing::trace!("successfully collapsed pages");
         }
-        pages_reclaimed
     }
 
-    /// Runs any pending cache cleanup tasks.
-    pub fn run_cache_tasks(&self) {
-        self.live_pages.run_pending_tasks();
+    /// Process any outstanding items in the provided [EvictionBacklog].
+    pub fn process_evictions(&self, backlog: &mut EvictionBacklog) -> usize {
+        super::evictions::cleanup_revertible_evictions(usize::MAX, &self.memory, backlog)
     }
 
     #[inline]
@@ -157,37 +79,15 @@ impl CacheLayer {
     pub fn page_size(&self) -> PageSize {
         self.memory.page_size()
     }
-
-    #[inline]
-    /// Returns the size of the backlog.
-    ///
-    /// This contains freeing operations which cannot currently take place
-    /// due to locks or readers in use.
-    pub fn backlog_size(&self) -> usize {
-        self.pending_evictions.size()
-    }
-
-    fn free_or_add_to_backlog(&self, permit: PageFreePermit) {
-        match self.memory.try_free(&permit) {
-            Ok(()) => {},
-            Err(TryFreeError::PermitExpired) => {},
-            Err(TryFreeError::InUse | TryFreeError::Locked | TryFreeError::Io(_)) => {
-                self.pending_evictions.push_page_dirty_permit(permit);
-            },
-        }
-    }
-
-    fn register_page_write_in_cache(&self, page_id: PageIndex) {
-        self.live_pages.insert((self.layer_id, page_id), ());
-    }
 }
 
 impl Drop for CacheLayer {
     fn drop(&mut self) {
-        for page in 0..self.memory.num_pages() {
-            self.live_pages
-                .invalidate(&(self.layer_id, page as PageIndex));
-        }
+        self.live_pages.lock().remove(
+            self.layer_id,
+            0..self.memory.num_pages() as PageIndex,
+            true,
+        );
     }
 }
 
@@ -216,17 +116,13 @@ impl PreparedRead {
                 Ok(permit) => Some(permit),
                 Err(PrepareWriteError::Locked) => None,
                 Err(PrepareWriteError::AlreadyAllocated) => None,
-                Err(PrepareWriteError::EvictionReverted) => {
-                    self.parent.register_page_write_in_cache(*page);
-                    None
-                },
+                Err(PrepareWriteError::EvictionReverted) => None,
             }
         })
     }
 
     /// Write the provided byte array to the page guarded by the permit.
     pub fn write_page(&self, permit: PageWritePermit, bytes: &[u8]) {
-        self.parent.register_page_write_in_cache(permit.page());
         self.inner.parent().write_page(permit, bytes);
     }
 

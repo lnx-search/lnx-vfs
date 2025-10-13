@@ -3,25 +3,17 @@ mod mem_block;
 mod page_file;
 mod tracker;
 
-use std::io;
+use std::collections::VecDeque;
 use std::sync::Arc;
+use std::{io, mem};
 
-use moka::notification::RemovalCause;
-use moka::policy::EvictionPolicy;
-use parking_lot::Mutex;
-
-use self::evictions::PendingEvictions;
 use self::mem_block::VirtualMemoryBlock;
 pub use self::mem_block::{PageIndex, PageSize, PageWritePermit, PreparedRead};
 pub use self::page_file::{CacheLayer, ReadRef};
+use crate::cache::tracker::LfuCacheTracker;
 
 /// A unique identifier for a cache layer.
 pub type LayerId = u64;
-
-type LivePagesLfu =
-    moka::sync::Cache<(LayerId, PageIndex), (), foldhash::fast::RandomState>;
-type LayerEvictionSenders =
-    foldhash::HashMap<LayerId, crossbeam_channel::Sender<PageIndex>>;
 
 /// The page file cache
 ///
@@ -39,10 +31,9 @@ type LayerEvictionSenders =
 /// within the bounds set constantly.
 ///
 pub struct PageFileCache {
-    live_pages: LivePagesLfu,
+    live_pages: tracker::SharedLfuCacheTracker,
     num_pages: u64,
     page_size: PageSize,
-    layer_eviction_senders: Arc<Mutex<LayerEvictionSenders>>,
 }
 
 impl PageFileCache {
@@ -61,40 +52,13 @@ impl PageFileCache {
                 humansize::format_size(target_memory_usage, humansize::DECIMAL),
         );
 
-        let layer_eviction_senders =
-            Arc::new(Mutex::new(LayerEvictionSenders::default()));
-
-        let live_pages = moka::sync::Cache::builder()
-            .max_capacity(num_pages)
-            .eviction_listener({
-                let layer_eviction_senders = layer_eviction_senders.clone();
-                move |key: Arc<(LayerId, PageIndex)>, _, cause| {
-                    if !matches!(cause, RemovalCause::Size | RemovalCause::Expired) {
-                        return;
-                    }
-
-                    let (file_id, page) = key.as_ref();
-
-                    let mut lock = layer_eviction_senders.lock();
-                    let did_error = if let Some(tx) = lock.get(file_id) {
-                        tx.send(*page).is_err()
-                    } else {
-                        return;
-                    };
-
-                    if did_error {
-                        lock.remove(file_id);
-                    }
-                }
-            })
-            .eviction_policy(EvictionPolicy::tiny_lfu())
-            .build_with_hasher(foldhash::fast::RandomState::default());
+        let live_pages =
+            LfuCacheTracker::with_capacity(num_pages as usize).into_shared();
 
         Self {
             num_pages,
             live_pages,
             page_size,
-            layer_eviction_senders,
         }
     }
 
@@ -105,7 +69,6 @@ impl PageFileCache {
         layer_id: LayerId,
         num_pages: usize,
     ) -> io::Result<Arc<CacheLayer>> {
-        let (pending_evictions, tx) = PendingEvictions::new();
         let memory = VirtualMemoryBlock::allocate(num_pages, self.page_size)?;
 
         tracing::debug!(
@@ -119,16 +82,21 @@ impl PageFileCache {
             "creating new layer"
         );
 
-        self.register_file_layer_with_listener(layer_id, tx);
-
         let layer = CacheLayer {
             layer_id,
             live_pages: self.live_pages.clone(),
             memory,
-            pending_evictions,
         };
 
         Ok(Arc::new(layer))
+    }
+
+    /// Take the currently queued up evictions from the cache.
+    ///
+    /// These evictions need to be processed by the caller.
+    pub fn take_cache_evictions(&mut self) -> VecDeque<(LayerId, PageIndex)> {
+        let mut lock = self.live_pages.lock();
+        mem::take(lock.evicted_entries())
     }
 
     #[inline]
@@ -145,28 +113,19 @@ impl PageFileCache {
 
     #[inline]
     /// Returns the approximate amount of memory used by the cache.
-    pub fn pages_used(&self) -> u64 {
-        self.live_pages.entry_count()
+    pub fn pages_used(&self) -> usize {
+        self.live_pages.lock().size()
     }
 
     #[inline]
     /// Returns the approximate amount of memory used by the cache.
     pub fn memory_used(&self) -> u64 {
-        self.live_pages.weighted_size()
+        self.pages_used() as u64 * self.page_size() as u64
     }
 
     #[inline]
     /// Returns the page size used by the cache.
     pub fn page_size(&self) -> PageSize {
         self.page_size
-    }
-
-    fn register_file_layer_with_listener(
-        &self,
-        layer_id: LayerId,
-        tx: crossbeam_channel::Sender<PageIndex>,
-    ) {
-        let mut lock = self.layer_eviction_senders.lock();
-        lock.insert(layer_id, tx);
     }
 }
