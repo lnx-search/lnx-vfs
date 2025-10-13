@@ -1,6 +1,8 @@
 mod evictions;
 mod mem_block;
 mod page_file;
+#[cfg(all(test, not(feature = "test-miri")))]
+mod tests;
 mod tracker;
 
 use std::collections::VecDeque;
