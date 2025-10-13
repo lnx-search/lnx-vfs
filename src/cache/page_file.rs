@@ -75,12 +75,16 @@ impl CacheLayer {
         unsafe { self.memory.force_reset() }
     }
 
-    /// Run the bookkeeping steps within the layer.
+    /// Advance the GC generation for the cache layer.
     ///
-    /// This advanced the generation and attempts to collapse pages of memory
-    /// into huge pages to reduce load on the kernel if possible.
-    pub fn run_bookkeeping(&self) {
+    /// This allows old reads to be cleaned up despite a low activity on
+    /// the cache layer.
+    pub fn advance_gc_generation(&self) {
         self.memory.advance_generation();
+    }
+
+    /// Attempt to collapse memory pages from 4KB to THP.
+    pub fn try_collapse_memory(&self) {
         if self.memory.try_collapse().is_ok() {
             tracing::trace!("successfully collapsed pages");
         }

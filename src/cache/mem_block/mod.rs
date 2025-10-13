@@ -130,7 +130,7 @@ impl VirtualMemoryBlock {
         }
 
         // If there is a chance a reader may still be accessing the page, we abort.
-        if permit.ticket_id >= self.ticket_machine.oldest_alive_ticket() {
+        if permit.ticket_id >= dbg!(self.ticket_machine.oldest_alive_ticket()) {
             return Err(TryFreeError::InUse);
         }
 
@@ -423,6 +423,7 @@ pub enum PrepareRevertibleEvictionError {
 /// at a later stage without breaking ordering of events.
 pub struct EvictRetry(PageFreePermit);
 
+#[derive(Debug)]
 /// An enum selecting either a page to evict or a retry value.
 pub enum PageOrRetry {
     /// Apply a new operation to the page with no existing retry.

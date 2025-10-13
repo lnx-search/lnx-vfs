@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::{io, mem};
 
+pub use self::evictions::EvictionBacklog;
 use self::mem_block::VirtualMemoryBlock;
 pub use self::mem_block::{PageIndex, PageSize, PageWritePermit, PreparedRead};
 pub use self::page_file::{CacheLayer, ReadRef};

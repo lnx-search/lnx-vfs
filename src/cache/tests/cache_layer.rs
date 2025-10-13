@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::cache::evictions::EvictionBacklog;
 use crate::cache::{PageFileCache, PageIndex, PageSize};
 
 #[rstest::rstest]
@@ -203,7 +204,7 @@ fn test_lfu_does_not_evict_within_capacity() {
     assert!(evicted.is_empty());
 }
 
-#[rstest::rstest]
+#[test]
 fn test_lfu_does_evict_when_capacity_exceeded() {
     let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
 
@@ -227,4 +228,37 @@ fn test_lfu_does_evict_when_capacity_exceeded() {
         Err(_) => panic!("read should be successful after writes have occurred"),
     };
     assert!(read_view.iter().all(|v| *v == 4));
+}
+
+#[test]
+fn test_evictions_and_bookkeeping_ran() {
+    let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(1, 6)
+        .expect("create page cache layer");
+
+    let prepared = layer.prepare_read(0..6);
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+
+    let evictions = cache.take_cache_evictions();
+    let mut backlog = EvictionBacklog::default();
+    for (_, page) in evictions {
+        backlog.mark(page);
+    }
+
+    layer.process_evictions(&mut backlog);
+    assert_eq!(backlog.size(), 2);
+
+    layer.advance_gc_generation();
+
+    drop(prepared);
+    layer.process_evictions(&mut backlog);
+    dbg!(&backlog);
+    assert!(backlog.is_empty());
+
+    layer.try_collapse_memory();
 }

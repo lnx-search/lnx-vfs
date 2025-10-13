@@ -72,7 +72,7 @@ fn free_pages(
     num_pages_freed
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 /// A set of page operations to apply at a later stage.
 pub struct EvictionBacklog {
     pages_to_mark: VecDeque<PageOrRetry>,
@@ -91,6 +91,11 @@ impl EvictionBacklog {
     /// to evict.
     pub fn is_empty(&self) -> bool {
         self.pages_to_mark.is_empty() && self.pages_to_free.is_empty()
+    }
+
+    /// Returns the size of the backlog.
+    pub fn size(&self) -> usize {
+        self.pages_to_mark.len() + self.pages_to_free.len()
     }
 }
 
