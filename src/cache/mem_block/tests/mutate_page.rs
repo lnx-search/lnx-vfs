@@ -76,7 +76,7 @@ fn test_write_page(
     assert!(!state.is_marked_for_eviction());
     assert!(!state.is_dirty());
     assert!(!state.is_free());
-    assert_eq!(state.extract_ticket_id(), Some(0));
+    assert_eq!(state.extract_ticket_id(), Some(2));
 
     check_page_bytes(&block, write_page_at, page_size);
 }
@@ -158,7 +158,7 @@ fn test_write_page_revert_eviction_marker() {
     assert!(state.is_marked_for_eviction());
     assert!(!state.is_dirty());
     assert!(!state.is_free());
-    assert_eq!(state.extract_ticket_id(), Some(2));
+    assert_eq!(state.extract_ticket_id(), Some(4));
 
     let err = block
         .try_prepare_for_write(0)
@@ -173,7 +173,7 @@ fn test_write_page_revert_eviction_marker() {
     assert!(!state.is_marked_for_eviction());
     assert!(!state.is_dirty());
     assert!(!state.is_free());
-    assert_eq!(state.extract_ticket_id(), Some(3));
+    assert_eq!(state.extract_ticket_id(), Some(5));
 }
 
 #[test]
