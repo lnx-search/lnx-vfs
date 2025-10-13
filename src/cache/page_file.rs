@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Formatter};
+use std::io;
 use std::ops::{Deref, Range};
 use std::sync::Arc;
 
@@ -50,6 +51,28 @@ impl CacheLayer {
             parent: self.clone(),
             inner: inner_with_static_lifetime,
         }
+    }
+
+    /// Reset the state of the memory map, freeing all pages.
+    ///
+    /// This will evict all entries from the cache as well as handing back the memory
+    /// to the OS.
+    ///
+    /// # Safety
+    /// This method cannot be used if there are any reads or writes currently still referencing
+    /// the cache layer, this method does _not_ protect against any kinds of race conditions
+    /// or prevent you from freeing data that while a read is taking place.
+    ///
+    /// This method is primarily designed to be used for testing and resetting the mmap state
+    /// once you know there are no more possible users.
+    pub unsafe fn reset(&self) -> io::Result<()> {
+        self.live_pages.lock().remove(
+            self.layer_id,
+            0..self.memory.num_pages() as PageIndex,
+            true,
+        );
+
+        unsafe { self.memory.force_reset() }
     }
 
     /// Run the bookkeeping steps within the layer.

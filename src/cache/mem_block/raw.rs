@@ -105,6 +105,18 @@ impl RawVirtualMemoryPages {
         unsafe { self.memory.free(start, self.page_size as usize) }
     }
 
+    /// Marks all pages as available to be reclaimed by the OS.
+    ///
+    /// # Safety
+    /// The caller must ensure that no reads still access any pages
+    /// and that no subsequent reads take place on any page until a write op
+    /// has completed for the page.
+    ///
+    /// This is because after a free operation, the memory is considered uninitialized.
+    pub(super) unsafe fn free_all(&self) -> io::Result<()> {
+        unsafe { self.memory.free(0, self.memory.len()) }
+    }
+
     /// Get mutable pointer access to a given page.
     pub(super) fn get_mut_page(&self, page: PageIndex) -> RawMutPagePtr {
         let span = self.get_spanning_ptr(page..page + 1);
@@ -276,7 +288,6 @@ impl VirtualMemory {
         }
     }
 
-    #[cfg(test)]
     fn len(&self) -> usize {
         self.mem.len()
     }

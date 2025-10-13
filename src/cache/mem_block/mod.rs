@@ -79,6 +79,34 @@ impl VirtualMemoryBlock {
         self.inner.try_collapse()
     }
 
+    /// Forcefully free all pages currently allocated in the memory block.
+    ///
+    /// WARNING: This does not perform _any_ checks that any reads or writes
+    /// are currently in flight or hold references to the memory about to be affected.
+    ///
+    /// This can _easily_ cause UB if there are any readers or writes still active
+    /// on this block.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that there are ZERO readers or writes referencing
+    /// any part of the memory, this includes any reads or writes about to be performed.
+    ///
+    /// This operation does _not_ synchronise or serialize with any other operations meaning
+    /// no other part of the system is aware of the change being made to the memory.
+    pub unsafe fn force_reset(&self) -> io::Result<()> {
+        unsafe {
+            self.inner.free_all()?;
+        }
+
+        for state in self.state.iter() {
+            let lock = state.acquire_lock();
+            state.mark_free(&lock);
+        }
+
+        Ok(())
+    }
+
     /// Attempt to free the target page.
     ///
     /// This call may fail if any one of the following is true:

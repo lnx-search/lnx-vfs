@@ -94,7 +94,7 @@ impl PageFileCache {
     /// Take the currently queued up evictions from the cache.
     ///
     /// These evictions need to be processed by the caller.
-    pub fn take_cache_evictions(&mut self) -> VecDeque<(LayerId, PageIndex)> {
+    pub fn take_cache_evictions(&self) -> VecDeque<(LayerId, PageIndex)> {
         let mut lock = self.live_pages.lock();
         mem::take(lock.evicted_entries())
     }
