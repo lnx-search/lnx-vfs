@@ -71,7 +71,7 @@ impl VirtualMemoryBlock {
     /// This is used to prevent infrequently accessed files from
     /// never cleaning up their memory.
     pub fn advance_generation(&self) {
-        self.ticket_machine.advance_generation()
+        self.ticket_machine.force_advance_generation()
     }
 
     /// Attempt to collapse the memory pages into transparent huge pages.

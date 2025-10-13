@@ -82,7 +82,13 @@ impl GenerationTicketMachine {
     }
 
     /// Replace the current active generation with the next generation.
-    pub(super) fn advance_generation(&self) {
+    pub(super) fn force_advance_generation(&self) {
+        self.ticket_counter
+            .fetch_add(TICKETS_PER_GENERATION, Ordering::Relaxed);
+        self.advance_generation()
+    }
+
+    fn advance_generation(&self) {
         let generation = self.shared_state.replace_generation();
         self.active_generation.store(generation);
     }
@@ -252,12 +258,15 @@ mod tests {
         let guard = machine.get_next_ticket();
         assert_eq!(guard.generation.generation_id, 0);
 
-        machine.advance_generation();
+        machine.force_advance_generation();
         drop(guard);
 
         let guard = machine.get_next_ticket();
         assert_eq!(guard.generation.generation_id, 1);
         assert_eq!(machine.oldest_alive_ticket(), TICKETS_PER_GENERATION);
+
+        let ticket = machine.increment_ticket_id();
+        assert_eq!(ticket, 258);
     }
 
     #[test]
