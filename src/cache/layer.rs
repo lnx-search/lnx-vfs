@@ -127,6 +127,12 @@ pub struct PreparedRead {
     inner: super::mem_block::PreparedRead<'static>,
 }
 
+impl Debug for PreparedRead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        <super::mem_block::PreparedRead<'_> as Debug>::fmt(&self.inner, f)
+    }
+}
+
 impl PreparedRead {
     /// Produces an iterator of [PageWritePermit] for any of the pages
     /// with outstanding writes that are able to acquire the individual page locks.

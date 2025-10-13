@@ -76,6 +76,34 @@ fn test_prepare_read_range_handling(#[case] page_range: Range<PageIndex>) {
     assert_eq!(read_view.as_ref(), &expected_buffer);
 }
 
+#[test]
+fn test_read_clone_and_debug() {
+    let cache = PageFileCache::new(32 << 10, PageSize::Std8KB);
+
+    let layer = cache
+        .create_page_file_layer(1, 4)
+        .expect("create page cache layer");
+
+    let prepared = layer.prepare_read(0..4);
+    let buffer_data = vec![4; 8 << 10];
+    for permit in prepared.get_outstanding_write_permits() {
+        prepared.write_page(permit, &buffer_data);
+    }
+    assert_eq!(format!("{prepared:?}"), "PreparedRead(page_range=0..4)");
+
+    let read = prepared.try_finish().unwrap();
+    assert_eq!(
+        format!("{read:?}"),
+        format!("ReadRef(start={:?}, len=32768)", read.as_ptr()),
+    );
+
+    let read_clone = read.clone();
+    assert!(std::ptr::addr_eq(read.as_ptr(), read_clone.as_ptr()));
+
+    drop(read);
+    assert!(read_clone.as_ref().iter().all(|v| *v == 4));
+}
+
 #[rstest::rstest]
 #[case::start(&[0])]
 #[case::end(&[9])]

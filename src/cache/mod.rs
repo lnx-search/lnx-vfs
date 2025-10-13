@@ -1,6 +1,6 @@
 mod evictions;
+mod layer;
 mod mem_block;
-mod page_file;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
 mod tracker;
@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::{io, mem};
 
 pub use self::evictions::EvictionBacklog;
+pub use self::layer::{CacheLayer, ReadRef};
 use self::mem_block::VirtualMemoryBlock;
 pub use self::mem_block::{PageIndex, PageSize, PageWritePermit, PreparedRead};
-pub use self::page_file::{CacheLayer, ReadRef};
 use crate::cache::tracker::LfuCacheTracker;
 
 /// A unique identifier for a cache layer.
