@@ -40,6 +40,7 @@ pub mod page_metadata;
 #[cfg(all(test, not(feature = "test-miri")))]
 mod tests;
 
+#[repr(transparent)]
 #[derive(
     Debug,
     Copy,

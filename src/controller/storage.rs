@@ -179,6 +179,16 @@ impl StorageController {
         self.metadata_controller.contains_page_group(group)
     }
 
+    #[inline]
+    /// Returns a list of all groups within the file system
+    /// that match the given predicate.
+    pub fn find_groups<F>(&self, predicate: F) -> Vec<PageGroupId>
+    where
+        F: FnMut(PageGroupId) -> bool,
+    {
+        self.metadata_controller.find_groups(predicate)
+    }
+
     /// Create a new storage write transaction.
     pub fn create_write_txn(&self) -> super::txn_write::StorageWriteTxn<'_> {
         super::txn_write::StorageWriteTxn::new(self)

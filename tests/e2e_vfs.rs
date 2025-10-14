@@ -35,6 +35,12 @@ async fn test_e2e_run_vfs_read_write(
     let result = vfs.read_file(1, 0..).await.context("read all")?;
     assert_eq!(result.as_ref(), b"Hello, world!");
 
+    let files = vfs.list_files();
+    assert_eq!(files, [1]);
+
+    let files = vfs.find_files(|id| id == 1);
+    assert_eq!(files, [1]);
+
     Ok(())
 }
 

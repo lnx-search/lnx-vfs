@@ -24,6 +24,7 @@ mod transaction;
 mod utils;
 
 use std::collections::Bound;
+use std::mem;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
@@ -108,5 +109,28 @@ impl VirtualFileSystem {
     pub fn exists(&self, file_id: u64) -> bool {
         self.storage_controller
             .contains_page_group(PageGroupId(file_id))
+    }
+
+    /// List all files within the file system.
+    pub fn list_files(&self) -> Vec<u64> {
+        self.find_files(|_| true)
+    }
+
+    /// Find & collect all files that match the provided predicate.
+    pub fn find_files<F>(&self, mut predicate: F) -> Vec<u64>
+    where
+        F: FnMut(u64) -> bool,
+    {
+        let groups = self
+            .storage_controller
+            .find_groups(|group| predicate(group.0));
+
+        let mut groups = mem::ManuallyDrop::new(groups);
+        let ptr = groups.as_mut_ptr();
+        let len = groups.len();
+        let capacity = groups.capacity();
+
+        // SAFETY: PageGroupId is repr(transparent)
+        unsafe { Vec::from_raw_parts(ptr.cast(), len, capacity) }
     }
 }

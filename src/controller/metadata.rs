@@ -128,6 +128,21 @@ impl MetadataController {
         lookup.contains_key(&page_group_id)
     }
 
+    /// Returns a list of page groups that match the given predicate.
+    pub fn find_groups<F>(&self, mut predicate: F) -> Vec<PageGroupId>
+    where
+        F: FnMut(PageGroupId) -> bool,
+    {
+        let lookup = self.lookup_table.pin();
+        let mut groups = Vec::new();
+        for group in lookup.keys() {
+            if predicate(*group) {
+                groups.push(*group);
+            }
+        }
+        groups
+    }
+
     /// Crates a [page_file_allocator::PageFileAllocator] for each existing page file
     /// and sets the allocator to represent its current state.
     ///
