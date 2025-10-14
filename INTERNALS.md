@@ -6,7 +6,7 @@
 - `io_uring` is enabled.
 - The maximum required alignment for `O_DIRECT` is `4KB`.
 - The file system is not insane.
-
+- That async tasks will not be cancelled outside of shutdown.
 
 ## Implementation Assumptions
 
