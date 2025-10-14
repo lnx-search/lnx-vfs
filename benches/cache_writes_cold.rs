@@ -77,7 +77,7 @@ fn bench_cold_page_writes(
         let true_pages_read = page_range.len();
 
         // unsafe { layer.dirty_page_range(page_range.clone()) };
-        layer.run_bookkeeping();
+        layer.advance_gc_generation();
 
         let start = Instant::now();
         let result = black_box(do_write_layer(

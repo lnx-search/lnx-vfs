@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::{cmp, io};
 
+use foldhash::{HashMap, HashMapExt};
 use parking_lot::Mutex;
 
-use crate::cache::{CacheLayer, PageFileCache, PageSize};
+use crate::cache::{CacheLayer, EvictionBacklog, LayerId, PageFileCache, PageSize};
 use crate::ctx;
 use crate::layout::PageGroupId;
 use crate::page_data::DISK_PAGE_SIZE;
@@ -13,9 +14,9 @@ use crate::page_data::DISK_PAGE_SIZE;
 const GC_TARGET_RELEASE_SIZE: usize = 500 << 20;
 const GC_MAX_INTERVAL: Duration = Duration::from_secs(1);
 const GC_TRACE_N_COUNTS: usize = 5;
+const MEMORY_COLLAPSE_INTERVAL: Duration = Duration::from_secs(30);
 
-type LayerMap =
-    papaya::HashMap<PageGroupId, Arc<CacheLayer>, foldhash::fast::RandomState>;
+type LayerMap<K> = papaya::HashMap<K, Arc<CacheLayer>, foldhash::fast::RandomState>;
 
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 /// Configuration options for the cache controller.
@@ -29,6 +30,7 @@ pub struct CacheConfig {
 /// The cache controller manages the caching layer for IO.
 pub struct CacheController {
     state: Arc<CacheState>,
+    group_to_layer: LayerMap<PageGroupId>,
     cache_layer_id_counter: AtomicU64,
     layer_creation_lock: Mutex<()>,
 }
@@ -44,7 +46,7 @@ impl CacheController {
 
         let state = Arc::new(CacheState {
             cache,
-            layers: LayerMap::default(),
+            gc_layers: LayerMap::default(),
         });
 
         if !config.disable_gc_worker {
@@ -57,6 +59,7 @@ impl CacheController {
 
         Self {
             state,
+            group_to_layer: LayerMap::default(),
             cache_layer_id_counter: AtomicU64::new(0),
             layer_creation_lock: Mutex::new(()),
         }
@@ -68,7 +71,7 @@ impl CacheController {
         group: PageGroupId,
         num_pages: usize,
     ) -> io::Result<Arc<CacheLayer>> {
-        let layers = self.layers().pin();
+        let layers = self.group_to_layer.pin();
         if let Some(layer) = layers.get(&group) {
             return Ok(layer.clone());
         }
@@ -82,14 +85,22 @@ impl CacheController {
         let new_layer = self
             .cache()
             .create_page_file_layer(new_layer_id, num_pages)?;
-        Ok(layers.get_or_insert(group, new_layer).clone())
+
+        let layer = layers.get_or_insert(group, new_layer).clone();
+
+        if layer.id() == new_layer_id {
+            let gc_layers = self.state.gc_layers.pin();
+            gc_layers.insert(layer.id(), layer.clone());
+        }
+
+        Ok(layer)
     }
 
     /// Reassign the cache layer from one-page group to another.
     ///
     /// If the `old_group` layer does not exist, no new layer is assigned to the new group.
     pub fn reassign_layer(&self, old_group: PageGroupId, new_group: PageGroupId) {
-        let layers = self.layers().pin();
+        let layers = self.group_to_layer.pin();
         let Some(layer) = layers.remove(&old_group) else {
             return;
         };
@@ -98,16 +109,20 @@ impl CacheController {
 
     /// Remove the cache layer for a given page group if it exists.
     pub fn remove_layer(&self, group: PageGroupId) {
-        let layers = self.layers().pin();
-        layers.remove(&group);
+        let layers = self.group_to_layer.pin();
+        let maybe_layer = layers.remove(&group).map(|layer| layer.id());
+        drop(layers);
+
+        let Some(layer_id) = maybe_layer else {
+            return;
+        };
+
+        let layers = self.state.gc_layers.pin();
+        layers.remove(&layer_id);
     }
 
     fn next_cache_layer_id(&self) -> u64 {
         self.cache_layer_id_counter.fetch_add(1, Ordering::Relaxed)
-    }
-
-    fn layers(&self) -> &LayerMap {
-        &self.state.layers
     }
 
     fn cache(&self) -> &PageFileCache {
@@ -117,15 +132,18 @@ impl CacheController {
 
 struct CacheState {
     cache: PageFileCache,
-    layers: LayerMap,
+    gc_layers: LayerMap<LayerId>,
 }
 
 struct CacheGcWorker {
-    last_gc_warning_log: Instant,
     last_gc_info_log: Instant,
+    last_memory_collapse: Instant,
 
     gc_cycle_interval: Duration,
     state: Arc<CacheState>,
+    layer_backlogs: HashMap<LayerId, EvictionBacklog>,
+    backlogs_to_remove: Vec<LayerId>,
+    pages_in_backlog: usize,
 
     last_n_counts: [usize; GC_TRACE_N_COUNTS],
     last_n_cursor: usize,
@@ -134,10 +152,13 @@ struct CacheGcWorker {
 impl CacheGcWorker {
     fn new(state: Arc<CacheState>) -> Self {
         Self {
-            last_gc_warning_log: Instant::now(),
             last_gc_info_log: Instant::now(),
+            last_memory_collapse: Instant::now(),
             gc_cycle_interval: GC_MAX_INTERVAL,
             state,
+            layer_backlogs: HashMap::new(),
+            backlogs_to_remove: Vec::new(),
+            pages_in_backlog: 0,
             last_n_counts: [0; GC_TRACE_N_COUNTS],
             last_n_cursor: 0,
         }
@@ -171,16 +192,57 @@ impl CacheGcWorker {
     }
 
     fn run_gc_cycle(&mut self) {
-        let mut total_pages_reclaimed = 0;
-
         let evictions = self.state.cache.take_cache_evictions();
 
-        let layers = self.state.layers.pin();
-        for layer in layers.values() {
-            // layer.run_cache_tasks();
-            // total_pages_reclaimed += layer.run_bookkeeping();
+        let mut backlog = &mut EvictionBacklog::default();
+        let mut last_layer_id: Option<LayerId> = None;
+        for (layer_id, page) in evictions {
+            let can_reuse = last_layer_id.map(|id| id == layer_id).unwrap_or_default();
+
+            if !can_reuse {
+                backlog = self.layer_backlogs.entry(layer_id).or_default();
+                last_layer_id = Some(layer_id);
+            }
+
+            self.pages_in_backlog += 1;
+            backlog.mark(page);
+        }
+
+        let mut did_collapse = false;
+        let mut total_pages_reclaimed = 0;
+        let layers = self.state.gc_layers.pin();
+        for (layer_id, backlog) in self.layer_backlogs.iter_mut() {
+            let layer = match layers.get(layer_id) {
+                Some(layer) => layer,
+                None => {
+                    self.backlogs_to_remove.push(*layer_id);
+                    continue;
+                },
+            };
+
+            layer.advance_gc_generation();
+            total_pages_reclaimed += layer.process_evictions(backlog);
+
+            if backlog.is_empty() {
+                self.backlogs_to_remove.push(*layer_id);
+            }
+
+            if self.last_memory_collapse.elapsed() >= MEMORY_COLLAPSE_INTERVAL {
+                layer.try_collapse_memory();
+                did_collapse = true;
+            }
         }
         drop(layers);
+
+        if did_collapse {
+            self.last_memory_collapse = Instant::now();
+        }
+
+        while let Some(layer_id) = self.backlogs_to_remove.pop() {
+            self.layer_backlogs.remove(&layer_id);
+        }
+
+        self.pages_in_backlog -= total_pages_reclaimed;
         self.write_last_num_frees(total_pages_reclaimed);
     }
 
@@ -209,20 +271,6 @@ impl CacheGcWorker {
             max_frees = cmp::max(max_frees, n);
         }
         max_frees
-    }
-
-    fn log_gc_slow(&mut self) {
-        let elapsed = self.last_gc_warning_log.elapsed();
-        if elapsed < Duration::from_secs(3) {
-            return;
-        }
-
-        let history = self.render_history();
-        tracing::warn!(
-            "cache gc cannot keep up! interval: {:?}, last runs: {history}",
-            self.gc_cycle_interval,
-        );
-        self.last_gc_warning_log = Instant::now();
     }
 
     fn log_gc_info(&mut self) {
@@ -322,7 +370,7 @@ mod tests {
         let cache = PageFileCache::new(128 << 10, PageSize::Std32KB);
         let state = Arc::new(CacheState {
             cache,
-            layers: Default::default(),
+            gc_layers: Default::default(),
         });
         CacheGcWorker::new(state)
     }
@@ -375,28 +423,75 @@ mod tests {
         // being lost.
     }
 
-    #[tokio::test]
-    async fn test_cache_frees_memory() {
+    #[test]
+    fn test_cache_frees_memory() {
         let mut worker = create_empty_worker();
 
-        let layer = worker.state.cache.create_page_file_layer(1, 3).unwrap();
-        let layers = worker.state.layers.pin();
-        layers.insert(PageGroupId(1), layer.clone());
+        let layer = worker.state.cache.create_page_file_layer(1, 8).unwrap();
+        let layers = worker.state.gc_layers.pin();
+        layers.insert(1, layer.clone());
         drop(layers);
 
-        let prepared = layer.prepare_read(0..1);
+        let prepared = layer.prepare_read(0..8);
         for permit in prepared.get_outstanding_write_permits() {
             prepared.write_page(permit, &vec![1; 32 << 10]);
         }
-        let read = match prepared.try_finish() {
-            Err(_) => unreachable!(),
-            Ok(read) => read,
-        };
-        drop(read);
-
-        // unsafe { layer.dirty_page_range(0..1) };
+        drop(prepared);
 
         worker.run_gc_cycle();
-        // assert_eq!(layer.backlog_size(), 0);
+        assert!(worker.backlogs_to_remove.is_empty());
+        assert_eq!(worker.layer_backlogs.len(), 1);
+        assert_eq!(worker.pages_in_backlog, 4);
+
+        worker.run_gc_cycle();
+        assert!(worker.layer_backlogs.is_empty());
+        assert_eq!(worker.pages_in_backlog, 0);
+    }
+
+    #[tokio::test]
+    async fn test_controller_updates_shared_maps() {
+        let ctx = ctx::Context::for_test(false).await;
+        ctx.set_config(CacheConfig {
+            memory_allowance: 128 << 10,
+            disable_gc_worker: false,
+        });
+
+        let controller = CacheController::new(&ctx);
+
+        let layer = controller.get_or_create_layer(PageGroupId(1), 2).unwrap();
+        assert!(
+            controller
+                .group_to_layer
+                .pin()
+                .contains_key(&PageGroupId(1))
+        );
+        assert!(controller.state.gc_layers.pin().contains_key(&layer.id()));
+
+        controller.reassign_layer(PageGroupId(1), PageGroupId(2));
+        assert!(
+            !controller
+                .group_to_layer
+                .pin()
+                .contains_key(&PageGroupId(1))
+        );
+        assert!(
+            controller
+                .group_to_layer
+                .pin()
+                .contains_key(&PageGroupId(2))
+        );
+        assert!(controller.state.gc_layers.pin().contains_key(&layer.id()));
+
+        controller.remove_layer(PageGroupId(1));
+        assert!(controller.state.gc_layers.pin().contains_key(&layer.id()));
+
+        controller.remove_layer(PageGroupId(2));
+        assert!(
+            !controller
+                .group_to_layer
+                .pin()
+                .contains_key(&PageGroupId(2))
+        );
+        assert!(!controller.state.gc_layers.pin().contains_key(&layer.id()));
     }
 }

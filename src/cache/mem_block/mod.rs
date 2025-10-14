@@ -130,7 +130,7 @@ impl VirtualMemoryBlock {
         }
 
         // If there is a chance a reader may still be accessing the page, we abort.
-        if permit.ticket_id >= dbg!(self.ticket_machine.oldest_alive_ticket()) {
+        if permit.ticket_id >= self.ticket_machine.oldest_alive_ticket() {
             return Err(TryFreeError::InUse);
         }
 
@@ -376,26 +376,6 @@ pub enum TryFreeError {
     ///
     /// This should be retried.
     Io(io::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-/// The system could not schedule a page eviction due to a given reason.
-pub enum PrepareDirtyEvictionError {
-    #[error("page locked")]
-    /// The page is currently locked and cannot be marked.
-    ///
-    /// A retry value is provided if the operation wants to retry.
-    PageLocked(EvictRetry),
-    #[error("operation is stale")]
-    /// The operation attempting to be applied is stale and newer operations
-    /// have since superseded it.
-    OperationStale,
-    #[error("page already free")]
-    /// The page is already free.
-    AlreadyFree,
-    #[error("page already dirty")]
-    /// The page is already marked as dirty.
-    AlreadyDirty,
 }
 
 #[derive(Debug, thiserror::Error)]

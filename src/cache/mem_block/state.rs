@@ -36,6 +36,7 @@ impl PageStateEntry {
         self.flags.set_revertible_eviction(ticket_id);
     }
 
+    #[allow(unused)]
     /// Mark the page as dirty.
     pub(super) fn mark_dirty(&self, _guard: &PageWriteLockGuard, ticket_id: u64) {
         self.flags.set_eviction(ticket_id);

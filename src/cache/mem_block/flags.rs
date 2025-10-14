@@ -47,6 +47,7 @@ impl AtomicPageFlags {
             .store(pack_ticket_id(PAGE_ALLOCATED, ticket_id), Ordering::Relaxed);
     }
 
+    #[allow(unused)]
     pub(super) fn set_eviction(&self, ticket_id: u64) {
         self.0.store(
             pack_ticket_id(PAGE_EVICTION_SCHEDULED, ticket_id),
