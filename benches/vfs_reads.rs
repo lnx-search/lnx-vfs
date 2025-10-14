@@ -19,10 +19,10 @@ async fn main() -> anyhow::Result<()> {
     for file_size in [5 << 30, 10 << 30] {
         tracing::info!("Running bench: {}", humanize(file_size));
 
-        for read_concurrency in [1, 10, 25, 50] {
+        for read_concurrency in [1, 25, 50] {
             tracing::info!("    Running concurrency={read_concurrency}");
 
-            for cache_size in [0, 2 << 30, 6 << 30] {
+            for cache_size in [2 << 30, 6 << 30] {
                 run_bench(file_size, read_concurrency, cache_size).await?;
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }

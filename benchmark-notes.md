@@ -74,3 +74,38 @@ complete
 > 
 > One very interesting thing however is the concurrency having a net-negative performance impact, unfortunately
 > profiling this is tricky.
+
+
+## Post moka-removal benches - 2025-10-14
+
+The above benchmarks are before we removed moka, once we implemented a custom cache and then wrapped it in a mutex,
+we saw some very big gains to the read performance.
+
+> [!NOTE]  
+> One thing to node is the rate of the requests is so high now the memory usage goes above the cache size,
+> since the system cannot free the pages before new reads hit it and expire the eviction.
+
+```shell
+starting benchmark
+Running bench: 5.37 GB
+    Running concurrency=1
+       cache size: 2.15 GB, result: 9.787717053s per reader 10.62 GB/s
+       cache size: 6.44 GB, result: 2.549728861s per reader 40.85 GB/s
+    Running concurrency=25
+       cache size: 2.15 GB, result: 24.020964274s per reader 109.09 GB/s
+       cache size: 6.44 GB, result: 10.034491125s per reader 260.58 GB/s
+    Running concurrency=50
+       cache size: 2.15 GB, result: 38.489019408s per reader 136.30 GB/s
+       cache size: 6.44 GB, result: 12.819887969s per reader 408.29 GB/s
+Running bench: 10.74 GB
+    Running concurrency=1
+       cache size: 2.15 GB, result: 19.24550986s per reader 5.47 GB/s
+       cache size: 6.44 GB, result: 12.964350779s per reader 8.04 GB/s
+    Running concurrency=25
+       cache size: 2.15 GB, result: 36.400605358s per reader 71.93 GB/s
+       cache size: 6.44 GB, result: 35.127687673s per reader 74.51 GB/s
+    Running concurrency=50
+       cache size: 2.15 GB, result: 69.883044855s per reader 74.94 GB/s
+       cache size: 6.44 GB, result: 60.184298085s per reader 87.08 GB/s
+complete
+```
