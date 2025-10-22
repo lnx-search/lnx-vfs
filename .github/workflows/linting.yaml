@@ -34,6 +34,6 @@ jobs:
           cache-all-crates: true
           cache-workspace-crates: true
       - name: "Run Clippy"
-        run: cargo +nightly clippy --check
+        run: cargo +nightly clippy -- -Dclippy::todo
 
 
