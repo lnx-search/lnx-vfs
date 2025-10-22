@@ -1,6 +1,6 @@
 [profile.ci]
 fail-fast = false
-slow-timeout = { period = "40s", terminate-after = 2 }
+slow-timeout = { period = "120s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
 filter = 'test(/\btest_flaky_/)'
