@@ -83,6 +83,7 @@ impl PageFileController {
         Ok(slf)
     }
 
+    #[allow(unused)] // TODO: Implement
     /// Returns the number of page files managed by the controller.
     pub fn num_page_files(&self) -> usize {
         self.page_files.read().len()

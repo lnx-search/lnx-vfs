@@ -365,6 +365,7 @@ impl MetadataController {
         Ok(num_checkpointed_files)
     }
 
+    #[allow(unused)] // TODO: Implement
     /// Returns the number of files to be cleaned up.
     pub fn num_files_to_cleanup(&self) -> usize {
         self.files_to_cleanup.lock().len()

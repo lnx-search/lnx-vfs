@@ -78,6 +78,7 @@ impl PageFileAllocator {
         None
     }
 
+    #[allow(unused)] // TODO: Implement
     /// Free a set of pages in the target page file, starting from `start_page_id` and
     /// freeing `span_len` number of pages after it (including itself.)
     ///

@@ -136,6 +136,7 @@ pub struct SystemDirectoryInner {
 }
 
 impl SystemDirectoryInner {
+    #[allow(unused)] // TODO: Implement
     /// Create a new file in the target group.
     pub async fn create_new_file(&self, group: FileGroup) -> io::Result<FileId> {
         let mut directory = self.groups[group.idx()].write().await;
@@ -185,6 +186,7 @@ impl SystemDirectoryInner {
         Ok(())
     }
 
+    #[allow(unused)] // TODO: Implement
     /// Resolve the file path of a target file.
     pub async fn resolve_file_path(&self, group: FileGroup, file_id: FileId) -> PathBuf {
         let directory = self.groups[group.idx()].write().await;
@@ -232,6 +234,7 @@ impl SystemDirectoryInner {
         directory.list_dir().map(FileId).collect()
     }
 
+    #[allow(unused)] // TODO: Implement
     /// Counts the number of currently open files in the directory.
     pub async fn num_open_files(&self, group: FileGroup) -> usize {
         let directory = self.groups[group.idx()].read().await;
@@ -321,6 +324,7 @@ impl FileGroupDirectory {
         self.files.keys().copied()
     }
 
+    #[allow(unused)] // TODO: Implement
     /// Returns the number of open files within the directory.
     fn num_open_files(&self) -> usize {
         self.files.len()
