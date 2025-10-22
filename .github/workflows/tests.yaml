@@ -20,16 +20,6 @@ jobs:
           toolchain: nightly
           cache-all-crates: true
           cache-workspace-crates: true
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        with:
-          version: "v0.12.0"
-      - name: Configure sccache
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Install nextest
@@ -42,8 +32,6 @@ jobs:
           PR_NUMBER: ${{ github.event.number }}
           RUST_LOG: debug
           MINIMUM_COVERAGE: 90
-          SCCACHE_GHA_ENABLED: on
-          RUSTC_WRAPPER: sccache
         run: |
           cargo llvm-cov nextest --profile ci \
             --fail-under-functions $MINIMUM_COVERAGE \
@@ -63,8 +51,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_LOG: debug
-          SCCACHE_GHA_ENABLED: on
-          RUSTC_WRAPPER: sccache
         run: |
           cargo nextest run --profile ci --workspace --features test-huge-pages
 
