@@ -18,7 +18,7 @@ mod page_data;
 mod page_file_allocator;
 mod page_op_log;
 mod stream_reader;
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests;
 mod transaction;
 mod utils;

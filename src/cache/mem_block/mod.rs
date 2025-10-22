@@ -2,7 +2,7 @@ mod flags;
 mod prepared;
 mod raw;
 mod state;
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests;
 mod ticket;
 

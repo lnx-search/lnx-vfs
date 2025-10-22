@@ -139,7 +139,7 @@ where
     }
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

@@ -658,7 +658,7 @@ fn short_write_err() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "short write occurred")
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::buffer::ALLOC_PAGE_SIZE;

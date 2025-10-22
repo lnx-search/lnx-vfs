@@ -67,7 +67,7 @@ pub fn encrypt_in_place(
     Ok(())
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use chacha20poly1305::KeyInit;
 

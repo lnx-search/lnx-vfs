@@ -328,7 +328,7 @@ fn adaptive_gc_interval(base_interval: Duration, num_frees: usize) -> Duration {
     cmp::min(adjusted_interval, GC_MAX_INTERVAL)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

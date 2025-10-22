@@ -99,7 +99,7 @@ impl EvictionBacklog {
     }
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::cache::mem_block::{PageSize, PrepareWriteError};

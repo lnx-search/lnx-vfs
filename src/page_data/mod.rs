@@ -1,6 +1,6 @@
 mod encode;
 mod page_file;
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests;
 mod utils;
 

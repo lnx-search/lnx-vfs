@@ -287,6 +287,7 @@ mod tests {
     }
 
     // This test was ported from Caffeine.
+    #[cfg(not(miri))]
     #[test]
     fn heavy_hitters() {
         let mut sketch = FrequencySketch::default();

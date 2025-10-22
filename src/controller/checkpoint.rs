@@ -289,7 +289,7 @@ fn reconstruct_lookup_table_from_pages(
     }
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::layout::PageId;
@@ -378,7 +378,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, not(feature = "test-miri"), feature = "bench-lib-unstable"))]
+#[cfg(all(test, not(miri), feature = "bench-lib-unstable"))]
 mod benches {
     extern crate test;
 

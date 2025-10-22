@@ -127,7 +127,7 @@ fn crc32_hash_components(associated_data: &[u8], buffer: &[u8]) -> u32 {
     hasher.finalize()
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

@@ -313,7 +313,7 @@ fn try_open_std(num_pages: usize, page_size: PageSize) -> io::Result<memmap2::Mm
     map_options.map_anon()
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
