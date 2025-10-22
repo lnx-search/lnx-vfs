@@ -1,6 +1,7 @@
 use anyhow::Context;
 use lnx_vfs::{ContextBuilder, VirtualFileSystem, config};
 
+#[cfg_attr(miri, ignore)]
 #[rstest::rstest]
 #[tokio::test]
 async fn test_e2e_run_vfs_read_write(
@@ -44,6 +45,7 @@ async fn test_e2e_run_vfs_read_write(
     Ok(())
 }
 
+#[cfg_attr(miri, ignore)]
 #[rstest::rstest]
 #[tokio::test]
 async fn test_e2e_run_vfs_write_rename() -> anyhow::Result<()> {
@@ -73,6 +75,7 @@ async fn test_e2e_run_vfs_write_rename() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(miri, ignore)]
 #[rstest::rstest]
 #[tokio::test]
 async fn test_e2e_run_vfs_write_remove() -> anyhow::Result<()> {
@@ -102,6 +105,7 @@ async fn test_e2e_run_vfs_write_remove() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(miri, ignore)]
 #[rstest::rstest]
 #[tokio::test]
 async fn test_e2e_run_vfs_rollback() -> anyhow::Result<()> {

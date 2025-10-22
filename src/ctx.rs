@@ -261,7 +261,7 @@ impl Context {
     }
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::buffer::{ALLOC_PAGE_SIZE, BufferKind};

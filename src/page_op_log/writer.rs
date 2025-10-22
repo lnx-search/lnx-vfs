@@ -501,7 +501,7 @@ fn sanity_check_log_values(transaction_id: u64, ops: &[LogOp]) {
     }
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::directory::FileGroup;

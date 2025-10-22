@@ -1,4 +1,4 @@
-#[cfg(all(test, not(feature = "test-miri"), feature = "bench-lib-unstable"))]
+#[cfg(all(test, not(miri), feature = "bench-lib-unstable"))]
 mod benches;
 mod cache;
 mod checkpoint;
@@ -6,7 +6,7 @@ mod group_lock;
 mod metadata;
 mod page_file;
 mod storage;
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests;
 mod txn_write;
 mod wal;

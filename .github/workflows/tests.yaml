@@ -1,0 +1,76 @@
+name: "Tests"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - ".idea/**"
+  workflow_dispatch:
+
+jobs:
+  test-all:
+    name: Generate Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Setup Toolchain"
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          cache-all-crates: true
+          cache-workspace-crates: true
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Generate PR code coverage
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
+          RUST_LOG: debug
+          MINIMUM_COVERAGE: 90
+        run: |
+          cargo llvm-cov nextest --profile ci \
+            --fail-under-functions $MINIMUM_COVERAGE \
+            --fail-under-lines $MINIMUM_COVERAGE \
+            --fail-under-regions $MINIMUM_COVERAGE \
+            --workspace
+          
+          echo "# Coverage Summary" >> report.md
+          echo "\`\`\`" >> report.md
+          cargo llvm-cov report --summary-only >> report.md
+          echo "\`\`\`" >> report.md
+          
+          gh pr comment $PR_NUMBER --create-if-none --edit-last --body-file ./report.md
+
+      - name: Test commit
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUST_LOG: debug
+        # No huge pages unfortunately
+        run: |
+          cargo nextest run --profile ci --workspace
+
+  miri-tests:
+    name: Run MIRI tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Setup Toolchain"
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: miri
+          toolchain: nightly
+          cache-all-crates: true
+          cache-workspace-crates: true
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run Miri
+        env:
+          RUSTFLAGS: ""
+        run: cargo +nightly miri nextest run --workspace --profile miri

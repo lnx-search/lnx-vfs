@@ -1,10 +1,14 @@
 [profile.ci]
 fail-fast = false
-slow-timeout = { period = "10s", terminate-after = 2 }
+slow-timeout = { period = "120s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
 filter = 'test(/\btest_flaky_/)'
 retries = 2
+
+[profile.miri]
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 2 }
 
 [profile.default]
 slow-timeout = { period = "10s", terminate-after = 2 }

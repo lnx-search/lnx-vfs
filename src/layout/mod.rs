@@ -30,14 +30,14 @@
 //! Overall the total overhead of the file is roughly ~98MB (128KB + 32MB + 65MB.)
 //!
 
-#[cfg(all(test, not(feature = "test-miri"), feature = "bench-lib-unstable"))]
+#[cfg(all(test, not(miri), feature = "bench-lib-unstable"))]
 mod benches;
 pub mod encrypt;
 pub mod file_metadata;
 pub mod integrity;
 pub mod log;
 pub mod page_metadata;
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests;
 
 #[repr(transparent)]

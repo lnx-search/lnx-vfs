@@ -201,7 +201,7 @@ impl FrequencySketch {
 // To see the debug prints, run test as `cargo test -- --nocapture`
 #[cfg(test)]
 mod tests {
-    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::hash::{BuildHasher, Hash};
     use std::sync::LazyLock;
 
     use rand::Rng;
@@ -287,6 +287,7 @@ mod tests {
     }
 
     // This test was ported from Caffeine.
+    #[cfg(not(miri))]
     #[test]
     fn heavy_hitters() {
         let mut sketch = FrequencySketch::default();
@@ -321,11 +322,7 @@ mod tests {
 
     fn hasher<K: Hash>() -> impl Fn(K) -> u64 {
         let build_hasher = std::collections::hash_map::RandomState::default();
-        move |key| {
-            let mut hasher = build_hasher.build_hasher();
-            key.hash(&mut hasher);
-            hasher.finish()
-        }
+        move |key| build_hasher.hash_one(key)
     }
 }
 

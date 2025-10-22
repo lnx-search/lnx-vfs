@@ -108,7 +108,7 @@ pub(crate) fn parse_io_error_return<T>(
     Err(std::io::Error::from_raw_os_error(-error_code))
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

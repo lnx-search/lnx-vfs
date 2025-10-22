@@ -230,6 +230,7 @@ impl WalController {
         self.op_stamp.load(Ordering::Acquire)
     }
 
+    #[allow(unused)] // TODO: Implement
     #[inline]
     /// Returns the number of writers which are free and ready
     /// to be reused.
@@ -237,6 +238,7 @@ impl WalController {
         self.free_writers.lock().len()
     }
 
+    #[allow(unused)] // TODO: Implement
     #[inline]
     /// Returns the number of writers which are waiting for a checkpoint
     /// operation to complete them.
@@ -244,12 +246,14 @@ impl WalController {
         self.checkpoint_pending_writers.lock().len()
     }
 
+    #[allow(unused)] // TODO: Implement
     #[inline]
     /// The total number of write operations the controller has seen.
     pub fn total_write_operations(&self) -> u64 {
         self.total_write_operations.load(Ordering::Relaxed)
     }
 
+    #[allow(unused)] // TODO: Implement
     #[inline]
     /// The total number of write operations that have been coalesced.
     pub fn total_coalesced_write_operations(&self) -> u64 {
@@ -257,6 +261,7 @@ impl WalController {
             .load(Ordering::Relaxed)
     }
 
+    #[allow(unused)] // TODO: Implement
     #[inline]
     /// The total number of write operations that have failed because a coalesced call
     /// failed.

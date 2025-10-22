@@ -1,0 +1,39 @@
+name: "Lint Project"
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  check-formatting:
+    name: Cargo Fmt Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: rustfmt
+      - run: cargo +nightly fmt --all --check
+
+  check-clippy:
+    name: Cargo Clippy Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Setup Toolchain"
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+          toolchain: nightly
+          cache-all-crates: true
+          cache-workspace-crates: true
+      - name: "Run Clippy"
+        run: cargo +nightly clippy -- -Dclippy::todo
+
+

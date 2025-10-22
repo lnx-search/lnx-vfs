@@ -83,6 +83,7 @@ impl PageFileController {
         Ok(slf)
     }
 
+    #[allow(unused)] // TODO: Implement
     /// Returns the number of page files managed by the controller.
     pub fn num_page_files(&self) -> usize {
         self.page_files.read().len()
@@ -658,7 +659,7 @@ fn short_write_err() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "short write occurred")
 }
 
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::buffer::ALLOC_PAGE_SIZE;

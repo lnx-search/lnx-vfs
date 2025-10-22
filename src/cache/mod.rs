@@ -1,7 +1,7 @@
 mod evictions;
 mod layer;
 mod mem_block;
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests;
 mod tracker;
 

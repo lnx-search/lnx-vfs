@@ -1,9 +1,9 @@
 //! The operations log tracks changes to pages in the data files.
 
-#[cfg(all(test, not(feature = "test-miri"), feature = "bench-lib-unstable"))]
+#[cfg(all(test, not(miri), feature = "bench-lib-unstable"))]
 mod benches;
 mod reader;
-#[cfg(all(test, not(feature = "test-miri")))]
+#[cfg(all(test, not(miri)))]
 mod tests;
 mod writer;
 
