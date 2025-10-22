@@ -7,7 +7,7 @@ edition = "2024"
 thiserror = "2"
 tracing = "0.1"
 arc-swap = "1"
-i2o2 = "0.4"
+i2o2 = "0.5"
 offset-allocator = "0.2"
 papaya = "0.2"
 lz4_flex = "0.11"
@@ -45,7 +45,7 @@ anyhow = "1"
 divan = "0.1"
 
 fail = { version = "0.5", features = ["failpoints"] }
-i2o2 = { version = "0.4", features = ["fail"] }
+i2o2 = { version = "0.5", features = ["fail"] }
 tokio = { version = "1", features = ["full"] }
 
 [features]
