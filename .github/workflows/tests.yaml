@@ -51,8 +51,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUST_LOG: debug
+        # No huge pages unfortunately
         run: |
-          cargo nextest run --profile ci --workspace --features test-huge-pages
+          cargo nextest run --profile ci --workspace
 
   miri-tests:
     name: Generate Code Coverage
