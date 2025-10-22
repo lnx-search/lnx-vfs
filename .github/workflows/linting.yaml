@@ -1,0 +1,25 @@
+name: "Lint Project"
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  check-formatting:
+    name: Cargo Fmt Check
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo +nightly fmt --all --check
+
+  check-clippy:
+    name: Cargo Clippy Check
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo +nightly fmt --all --check
+
+

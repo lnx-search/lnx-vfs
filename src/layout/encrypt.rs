@@ -125,7 +125,7 @@ mod tests {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
         let cipher = XChaCha20Poly1305::new(&key);
 
-        let err = decrypt_in_place(&cipher, b"", &mut [], &mut []).unwrap_err();
+        let err = decrypt_in_place(&cipher, b"", &mut [], &[]).unwrap_err();
         assert_eq!(err.to_string(), DecryptError.to_string());
     }
 
