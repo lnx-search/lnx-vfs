@@ -37,7 +37,7 @@ jobs:
             --fail-under-functions $MINIMUM_COVERAGE \
             --fail-under-lines $MINIMUM_COVERAGE \
             --fail-under-regions $MINIMUM_COVERAGE \
-            --workspace --features test-huge-pages
+            --workspace
           
           echo "# Coverage Summary" >> report.md
           echo "\`\`\`" >> report.md
@@ -56,7 +56,7 @@ jobs:
           cargo nextest run --profile ci --workspace
 
   miri-tests:
-    name: Generate Code Coverage
+    name: Run MIRI tests
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -71,4 +71,6 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run Miri
+        env:
+          RUSTFLAGS: ""
         run: cargo +nightly miri nextest run --workspace --profile miri
